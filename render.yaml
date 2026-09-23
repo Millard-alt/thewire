@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: the-wire
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 4000
+      - key: JWT_SECRET
+        generateValue: true
+      - key: THEME
+        sync: false
+      - key: OWNER_NAME
+        value: Millard
+      - key: OWNER_USERNAME
+        value: millard
+      # Set these in the Render dashboard (Values tab) after deploying:
+      - key: OWNER_PASSWORD
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: ONESIGNAL_APP_ID
+        sync: false
+      - key: ONESIGNAL_REST_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+    # Keeps uploaded photos across restarts while using the built-in file storage.
+    disk:
+      name: wire-uploads
+      mountPath: /app/backend/uploads
+      sizeGB: 1

@@ -1,0 +1,24 @@
+{
+  "name": "the-wire-backend",
+  "version": "1.0.0",
+  "description": "Backend API + static host for The Wire (Nakuru Press Club)",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "check-db": "node scripts/check-db.js",
+    "test": "node tests/run.cjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.3.0",
+    "cloudinary": "^2.11.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.23.0"
+  }
+}
