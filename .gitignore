@@ -26,3 +26,6 @@ diag*.mjs
 check-*.mjs
 verify-*.mjs
 test-auth.mjs
+
+# Vercel import sheet - contains real credentials, never commit
+vercel-env.txt
