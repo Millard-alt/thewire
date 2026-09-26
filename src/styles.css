@@ -607,6 +607,34 @@
       white-space: nowrap;
       padding: 0.4rem 0.7rem;
     }
+
+    /*
+    PHONE: SCROLL THE PAGE, DON'T LOCK IT
+    The desktop shell pins itself to 100dvh and scrolls an inner pane, with the
+    document body locked. That works on iOS but is hostile on Android: the URL
+    bar collapse animates the dynamic viewport *while* the body is
+    overflow:hidden, so the shell ends up taller than the visible area with the
+    bottom unreachable. `overscroll-behavior: contain` compounds it by stopping
+    the scroll chain from escaping to the document.
+
+    On phones we therefore unlock the body, let the shell grow to its content,
+    and hand scrolling back to the browser. Sticky bars keep the controls
+    reachable, and the tab strip collapses to a single scrollable row so it can
+    never occupy a meaningful slice of the screen.
+    */
+    .admin-layout {
+      min-height: 0;
+    }
+    .admin-body {
+      /* No inner scroller on a phone - the document is the scroller. */
+      overflow-y: visible;
+      overscroll-behavior: auto;
+      /* Anchor scrolling must clear the sticky bars. */
+      scroll-margin-top: 1rem;
+    }
+    /* The remaining phone overrides (document scroll lock, shell height, sticky
+       nav and the single-row tab strip) are declared at the end of this layer,
+       after the desktop rules they need to beat. */
   }
   @media (min-width: 64rem) {
     .admin-layout {
@@ -704,8 +732,25 @@
     display: block;
   }
 
-  /* Lock page scroll behind the workspace so only the panel scrolls. */
+  /* Lock page scroll behind the workspace so only the panel scrolls.
+     NOTE: this is deliberately declared BEFORE the phone media query further
+     down. Both rules have identical specificity, so source order decides — with
+     the lock last it always won and Android could never scroll the workspace. */
   body.admin-active {
+    overflow: hidden;
+  }
+
+  /*
+    MODAL SCROLL LOCK
+
+    Applied by openDialog() in dom.js. This used to be set as an inline
+    `document.body.style.overflow = 'hidden'`, which outranks every stylesheet
+    rule — so a lock left over from a dialog that was still open when the Owner
+    Control Center mounted could never be cleared, and the workspace was
+    unscrollable on a phone. As a class it sits in the normal cascade and yields
+    to the phone media query below, where the document is the scroller again.
+  */
+  body.dialog-locked {
     overflow: hidden;
   }
 
@@ -790,6 +835,67 @@
     .admin-body .overflow-x-auto {
       overflow-x: auto;
       -webkit-overflow-scrolling: touch;
+    }
+  }
+
+  /*
+  PHONE: UNLOCK THE DOCUMENT AND SHRINK THE TAB STRIP
+  This block is last in the layer on purpose. The desktop scroll lock and the
+  tab-strip rules above share this layer and specificity, so the last
+  declaration is the one that applies — these phone overrides have to come
+  after them to take effect at all.
+
+  Two problems it solves, both reported on Android but harmless on iOS:
+
+  1. The desktop design pins the shell to 100dvh and scrolls an inner pane.
+     Android animates the dynamic viewport as its URL bar collapses/expands,
+     so a body with `overflow: hidden` ends up with content below the fold that
+     nothing can reach. Here the document becomes the scroller again.
+
+  2. Ten tabs wrapped onto four rows and swallowed half the screen. The list is
+     one horizontally-scrolling row, so it can never take more than a line.
+  */
+  @media (max-width: 63.999rem) {
+    body.admin-active {
+      overflow: auto;
+      overscroll-behavior-y: contain;
+    }
+    .admin-shell {
+      height: auto;
+      min-height: 100svh;
+      overflow: visible;
+    }
+    .admin-body {
+      overflow-y: visible;
+      overscroll-behavior: auto;
+    }
+    .admin-nav {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      max-height: none;
+      overflow: visible;
+      padding: 0.4rem 0.6rem;
+    }
+    .admin-nav__list {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      gap: 0.35rem;
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .admin-nav__list::-webkit-scrollbar {
+      display: none;
+    }
+    .admin-tab {
+      width: auto;
+      flex: 0 0 auto;
+      white-space: nowrap;
+      padding: 0.35rem 0.65rem;
+      font-size: 0.7rem;
     }
   }
 }

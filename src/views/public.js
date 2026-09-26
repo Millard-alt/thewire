@@ -583,15 +583,38 @@ export function initPublicInteractions() {
   const searchInput = byId('search-input');
   searchInput?.addEventListener('input', (event) => runSearch(event.target.value));
 
-  // Mobile navigation disclosure
+  // Mobile navigation disclosure.
+  //
+  // The list ships in the markup with `flex`, so before this ran it was visible
+  // on a phone from first paint — the menu "auto-opened" on every page load and
+  // the toggle only reacted to the *next* click. State is therefore applied on
+  // init, and re-applied when the viewport crosses the desktop breakpoint so a
+  // rotate/resize can never leave the links stranded in the wrong mode.
   const mobileToggle = byId('mobile-nav-toggle');
   const links = byId('primary-links');
   if (mobileToggle && links) {
+    const desktop = window.matchMedia('(min-width: 48rem)');
+
+    const setOpen = (open) => {
+      mobileToggle.setAttribute('aria-expanded', String(open));
+      links.classList.toggle('hidden', !open);
+      links.classList.toggle('flex', open);
+    };
+
+    // Collapsed on phones, always visible from the `md` breakpoint up.
+    const sync = () => setOpen(desktop.matches);
+    sync();
+
     mobileToggle.addEventListener('click', () => {
-      const expanded = mobileToggle.getAttribute('aria-expanded') === 'true';
-      mobileToggle.setAttribute('aria-expanded', String(!expanded));
-      links.classList.toggle('hidden', expanded);
-      links.classList.toggle('flex', !expanded);
+      setOpen(mobileToggle.getAttribute('aria-expanded') !== 'true');
     });
+
+    // Tapping a link should dismiss the sheet rather than leave it covering
+    // the article the reader just asked to see.
+    links.addEventListener('click', (event) => {
+      if (event.target.closest('a, button') && !desktop.matches) setOpen(false);
+    });
+
+    desktop.addEventListener('change', sync);
   }
 }

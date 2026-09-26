@@ -39,6 +39,7 @@ import {
   byId,
   openDialog,
   closeDialog,
+  releaseDialogLocks,
   showToast,
   formatEditionDate
 } from '../lib/dom.js';
@@ -824,7 +825,7 @@ function renderMediaTab() {
                   data-next="${item.inGallery ? '0' : '1'}"
                   aria-pressed="${item.inGallery}"
                 >
-                  <i class="fa-solid ${item.inGallery ? fa-eyeSlash() : faImages()}" aria-hidden="true"></i>
+                  <i class="fa-solid ${item.inGallery ? faEyeSlash() : faImages()}" aria-hidden="true"></i>
                   ${item.inGallery ? 'In gallery' : 'Add to gallery'}
                 </button>
                 <button class="btn btn-quiet" data-action="media-delete"
@@ -1571,7 +1572,13 @@ function shellMarkup() {
 
       <div class="admin-layout">
         <nav class="admin-nav no-print" aria-label="Workspace sections">
-          ${tabButtons}
+          <!--
+          The tab strip lives in its own element so the stylesheet can make it a
+          single horizontally-scrolling row on a phone. Without this wrapper the
+          tabs are direct children of a block-level <nav> and stack full-width,
+          which pushed the panel content off-screen.
+          -->
+          <div class="admin-nav__list" role="tablist">${tabButtons}</div>
         </nav>
         <main id="admin-tab-body" class="admin-body" tabindex="-1"></main>
       </div>
@@ -1615,6 +1622,14 @@ export function openAdmin() {
   publication?.classList.add('hidden');
   document.body.classList.add('admin-active');
   isMounted = true;
+
+  /*
+    The workspace is a full-screen app shell that must be scrollable, so clear
+    any modal scroll lock still registered from the sign-in dialog. Without this
+    the shell inherited a stale `overflow: hidden` and the page could not be
+    scrolled at all on Android.
+  */
+  releaseDialogLocks();
 
   attachAdminListeners();
 
@@ -2316,7 +2331,9 @@ function handleClick(event) {
 
     /* --- media --- */
     case 'media-gallery': {
-      const want = target.dataset.next === '1';
+      // Read off `trigger`, not a destructured local — `next` is not one of the
+      // names pulled out of `trigger.dataset` above.
+      const want = trigger.dataset.next === '1';
       guard(async () => {
         const item = await store.setGalleryItem(id, want);
         if (item) {

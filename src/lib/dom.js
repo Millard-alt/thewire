@@ -104,6 +104,18 @@ const FOCUSABLE =
 
 let openDialogCount = 0;
 
+/**
+ * Drop every outstanding dialog scroll lock.
+ *
+ * The Owner Control Center is a full-screen view that mounts while dialogs may
+ * still be registered in the counter. Without this reset the stale lock keeps
+ * the page unscrollable, which is what made the workspace unusable on Android.
+ */
+export function releaseDialogLocks() {
+  openDialogCount = 0;
+  document.body.classList.remove('dialog-locked');
+}
+
 /** Keep Tab focus inside the dialog. */
 function trapFocus(dialog, event) {
   const nodes = Array.from(dialog.querySelectorAll(FOCUSABLE)).filter(
@@ -144,7 +156,19 @@ export function openDialog(target, { initialFocus } = {}) {
     card.classList.add('animate-modal-in');
   }
 
-  if (openDialogCount === 0) document.body.style.overflow = 'hidden';
+  /*
+  Scroll lock for open dialogs.
+
+  This used to be an inline `document.body.style.overflow = 'hidden'`. An inline
+  style outranks every stylesheet rule, so if a dialog was still open when the
+  Owner Control Center mounted, the lock survived and the workspace could never
+  be scrolled on a phone — the page looked frozen with half the screen hidden
+  behind the tab strip.
+
+  A class is used instead so the cascade can resolve it, and the counter is
+  clearable via releaseDialogLocks() when a full-screen view takes over.
+  */
+  if (openDialogCount === 0) document.body.classList.add('dialog-locked');
   openDialogCount += 1;
 
   const focusTarget = initialFocus
@@ -165,7 +189,7 @@ export function closeDialog(target) {
   dialog.classList.remove('animate-backdrop-in');
 
   openDialogCount = Math.max(0, openDialogCount - 1);
-  if (openDialogCount === 0) document.body.style.overflow = '';
+  if (openDialogCount === 0) document.body.classList.remove('dialog-locked');
 
   const returnId = dialog.dataset.returnFocus;
   if (returnId) document.getElementById(returnId)?.focus?.();
