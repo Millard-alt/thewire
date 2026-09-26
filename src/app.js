@@ -143,6 +143,57 @@ function initReaderNavigation() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 
+  /**
+   * Section links (Latest, Today's Pick, Weekly, Gallery, Assignments, Masthead).
+   *
+   * These are plain `href="#id"` anchors and rely on the browser's native
+   * fragment scrolling. That silently does nothing whenever the element they
+   * point at is not visible: on the credits page the whole publication view is
+   * `hidden`, and the Owner workspace is a fixed overlay that covers the page.
+   * So we have to reveal the right view first, then scroll ourselves.
+   */
+  document.addEventListener('click', (event) => {
+    const link = event.target.closest('a.nav-link[href^="#"]');
+    if (!link) return;
+
+    const id = link.getAttribute('href').slice(1);
+    if (!id) return;
+
+    event.preventDefault();
+
+    // The Owner panel owns the screen; dismiss it so the anchor is reachable.
+    if (isAdminOpen()) closeAdmin();
+
+    // Any section anchor belongs to the publication, so leave the credits page.
+    if (readerView !== 'publication') showReaderView('publication');
+
+    // The publication may still be painting, so retry on the next frame rather
+    // than measuring an element that does not exist yet.
+    const scrollToSection = (attempt = 0) => {
+      const target = document.getElementById(id);
+      if (!target) {
+        if (attempt < 10) requestAnimationFrame(() => scrollToSection(attempt + 1));
+        return;
+      }
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      // A sticky header would otherwise cover the heading we just scrolled to.
+      const sticky = document.querySelector('nav.sticky');
+      if (sticky) {
+        const offset = sticky.getBoundingClientRect().height + 8;
+        const top = target.getBoundingClientRect().top + window.scrollY - offset;
+        window.scrollTo({ top, behavior: 'smooth' });
+      }
+    };
+
+    scrollToSection();
+
+    // Keep the address bar honest so the link can be shared/refreshed.
+    if (window.location.hash !== `#${id}`) {
+      history.replaceState(null, '', `#${id}`);
+    }
+  });
+
   // Land on the credits page when a reader arrives with #credits in the URL.
   if (window.location.hash === '#credits') showReaderView('credits');
 }
