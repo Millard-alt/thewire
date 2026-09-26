@@ -348,33 +348,41 @@ export async function syncSubscription(subscription = getStoredSubscription()) {
       ? String(subscription.endpoint).slice(0, 500)
       : deviceId();
 
+    // Both writes go through SECURITY DEFINER functions (migration 004) rather
+    // than direct table access. Direct writes cannot work here: an upsert
+    // compiles to INSERT ... ON CONFLICT DO UPDATE and needs an UPDATE policy
+    // the table does not have, while a delete-then-insert fails differently --
+    // a non-matching DELETE under RLS removes 0 rows *without error*, so the
+    // re-insert hits 23505 duplicate key. The functions run as the table owner,
+    // so RLS does not apply to them at all.
     if (!subscription) {
-      // Only clear the record if it is one of our own local rows; never touch a
-      // real push endpoint, which belongs to the browser's push service.
-      const { error } = await client
-        .from('push_subscriptions')
-        .delete()
-        .eq('endpoint', endpoint);
+      const { error } = await client.rpc('wire_unregister_device', {
+        p_endpoint: endpoint
+      });
       if (error) throw error;
       return { removed: true };
     }
 
-    const { error } = await client
-      .from('push_subscriptions')
-      .upsert(
-        {
-          endpoint,
-          device: deviceLabel(),
-          audience: 'Everyone',
-          last_seen: new Date().toISOString()
-        },
-        { onConflict: 'endpoint' }
-      );
+    const { error } = await client.rpc('wire_register_device', {
+      p_endpoint: endpoint,
+      p_device: deviceLabel(),
+      p_audience: 'Everyone'
+    });
 
     if (error) throw error;
     return { stored: true };
   } catch (error) {
-    console.warn('[push] could not sync subscription', error);
+    // A missing RPC means migration 004 has not been applied yet. Say so
+    // plainly, because otherwise this looks like a permissions bug and sends
+    // people hunting through policies that are already correct.
+    if (/function.*wire_(un)?register_device|schema cache/i.test(error.message)) {
+      console.warn(
+        '[push] device registration is unavailable - run ' +
+          'supabase/004_device_registration.sql in the Supabase SQL Editor.'
+      );
+    } else {
+      console.warn('[push] could not sync subscription', error);
+    }
     return { error: error.message };
   }
 }
