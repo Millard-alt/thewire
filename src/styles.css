@@ -1077,3 +1077,86 @@
   }
 }
 
+/* ==========================================================================
+   Byline portraits ("sticker" style)
+   --------------------------------------------------------------------------
+   An approved staff selfie rendered as a die-cut sticker beside a byline or
+   on a Credits card. The white ring + shadow imitate a trimmed photograph, and
+   a slight rotation keeps a column of them from looking mechanical.
+   ========================================================================== */
+
+.byline-sticker {
+  display: block;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  object-fit: cover;
+  object-position: center 30%;
+  background: var(--panel-2, #f1f1ef);
+  /* the die-cut edge */
+  border: 2px solid #fff;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.18),
+    0 4px 10px rgb(0 0 0 / 0.12);
+  transform: rotate(-3deg);
+  transition: transform 0.18s ease;
+}
+
+.byline-sticker:hover {
+  transform: rotate(0deg) scale(1.06);
+}
+
+/* Credits card size. */
+.byline-sticker-lg {
+  width: 6.5rem;
+  height: 6.5rem;
+  border-width: 3px;
+  box-shadow:
+    0 2px 4px rgb(0 0 0 / 0.2),
+    0 10px 24px rgb(0 0 0 / 0.16);
+}
+
+/* Placeholder shown when a portrait is still awaiting Owner approval. */
+.byline-sticker-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-muted, #6b6b6b);
+  background: var(--panel-2, #ececea);
+  border-style: dashed;
+  border-color: var(--rule, #d6d6d2);
+  box-shadow: none;
+  transform: none;
+}
+
+/* The portrait may be tapped to open a full-size view. */
+button.byline-sticker {
+  cursor: zoom-in;
+  padding: 0;
+  border-color: #fff;
+}
+
+/* A byline: portrait + name + tail, on one line. */
+.byline-sticker-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.byline-sticker-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .byline-sticker,
+  .byline-sticker:hover {
+    transition: none;
+    transform: none;
+  }
+}
+

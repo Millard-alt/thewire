@@ -19,6 +19,7 @@ import {
   formatEditionDate
 } from '../lib/dom.js';
 import { ensureAlertPermission } from './alerts.js';
+import { bylineSticker } from '../lib/credits.js';
 
 /** A neutral placeholder for stories with no lead image. */
 const BLANK_IMAGE =
@@ -152,7 +153,7 @@ function articleCard(article, { showBody = false, size = 'md' } = {}) {
         <h3 class="mt-2 font-headline text-lg leading-tight font-black">
           <a href="${href}" class="text-link">${escapeHtml(article.title)}</a>
         </h3>
-        <p class="mt-1 text-[0.6875rem] ink-muted">By ${escapeHtml(article.author)}</p>
+        ${bylineSticker(article.author, { cls: 'mt-1 text-[0.6875rem] ink-muted' })}
         ${
           showBody
             ? `<p class="mt-2 text-sm leading-relaxed ink-muted">${escapeHtml(
@@ -400,7 +401,7 @@ function renderWeeklySlot({ label, item }) {
              <h3 class="mt-3 font-headline text-lg leading-snug font-black">
                <a href="#article-${escapeHtml(item.id)}" class="text-link">${escapeHtml(item.title)}</a>
              </h3>
-             <p class="mt-1 text-[0.6875rem] ink-muted">By ${escapeHtml(item.author)}</p>
+             ${bylineSticker(item.author, { cls: 'mt-1 text-[0.6875rem] ink-muted' })}
              <button type="button" class="btn btn-quiet mt-2 px-0" data-read="${escapeHtml(item.id)}">
                Open <i class="fa-solid fa-arrow-right text-[0.5rem]" aria-hidden="true"></i>
              </button>`

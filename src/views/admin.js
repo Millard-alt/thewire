@@ -27,6 +27,13 @@ import {
 import * as push from '../lib/push.js';
 import { uploadImage, bindImagePicker } from '../lib/upload.js';
 import {
+  listCredits,
+  listRoster,
+  setPortraitStatus,
+  isCreditsMigrationMissing,
+  setCredits
+} from '../lib/credits.js';
+import {
   escapeHtml,
   safeUrl,
   byId,
@@ -1254,6 +1261,214 @@ function assignmentEditorDialog() {
 /* -------------------------------------------------------------------------- */
 
 /** Every workspace tab: label, icon, renderer. */
+/* -------------------------------------------------------------------------- */
+/* Tab — Credits (public roster)                                               */
+/* -------------------------------------------------------------------------- */
+
+/** Capability flags the Owner can grant an editor. Kept in one place so the
+ *  labels here and the booleans written to the database cannot drift. */
+const CAPABILITIES = [
+  { key: 'write', label: 'Write dispatches', icon: 'fa-pen' },
+  { key: 'edit', label: 'Edit own stories', icon: 'fa-pen-to-square' },
+  { key: 'publish', label: 'Publish without review', icon: 'fa-upload' },
+  { key: 'broadcast', label: 'Send broadcasts', icon: 'fa-paper-plane' },
+  { key: 'assign', label: 'Assign stories', icon: 'fa-clipboard-list' },
+  { key: 'manage_media', label: 'Manage media', icon: 'fa-images' }
+];
+
+/**
+ * Roster rows are fetched asynchronously, so keep the latest result here and
+ * repaint when it lands.
+ */
+let creditsRoster = null;
+
+/**
+ * Tab renderers return an HTML string — `paintActiveTab` assigns the result to
+ * `innerHTML`. This one has an async second phase, so it returns the loading
+ * placeholder and fills itself in when the roster arrives.
+ */
+function renderCreditsTab() {
+  const body = byId('admin-tab-body');
+  if (!body) return '';
+
+  // Painting is immediate on a cached roster, async only the first time.
+  if (creditsRoster) return creditsPanel(creditsRoster);
+
+  listRoster().then((people) => {
+    creditsRoster = people;
+    if (!body.isConnected || body.dataset.tab !== 'credits') return;
+    body.innerHTML = creditsPanel(people);
+  });
+
+  return `<div class="panel-sunken p-10 text-center">
+    <i class="fa-solid fa-circle-notch spin-slow ink-muted text-xl" aria-hidden="true"></i>
+    <p class="ink-muted mt-3 text-sm">Loading the staff roster…</p>
+  </div>`;
+}
+
+function creditsPanel(people) {
+  const pending = people.filter((p) => p.portrait_status === 'pending');
+  const listed = people.filter((p) => p.credits_visible && p.portrait_status === 'approved');
+
+  return `
+    <div class="space-y-5">
+      ${panelHeader(
+        'Credits page',
+        `${listed.length} of ${people.length} on the public roster` +
+          (pending.length
+            ? ` · ${pending.length} portrait${pending.length === 1 ? '' : 's'} awaiting your approval`
+            : ''),
+        `<a class="btn btn-ghost" href="#credits" data-nav="credits">
+           <i class="fa-solid fa-eye" aria-hidden="true"></i> Preview page
+         </a>`
+      )}
+
+      <p class="panel-sunken p-4 text-xs ink-muted">
+        Someone appears on the public Credits page only when they are
+        <strong>listed</strong> <em>and</em> their portrait is
+        <strong>approved</strong>. Until both are true the page shows nothing for
+        them, and their bylines keep the plain text fallback.
+      </p>
+
+      ${
+        people.length
+          ? `<ul class="space-y-4">${people.map(creditsRow).join('')}</ul>`
+          : isCreditsMigrationMissing()
+            ? `<div class="panel-raised p-6 text-sm">
+                 <p class="flex items-center gap-2 font-bold">
+                   <i class="fa-solid fa-database ink-muted" aria-hidden="true"></i>
+                   Database migration not applied yet
+                 </p>
+                 <p class="ink-muted mt-2">
+                   The credits columns do not exist in your Supabase project, so the
+                   roster cannot be read or saved. Run
+                   <code>supabase/005_portraits_and_credits.sql</code> in the Supabase
+                   SQL Editor, then reopen this tab.
+                 </p>
+               </div>`
+            : emptyState('No staff records yet. Add someone from the Staff tab first.', 'fa-users')
+      }
+    </div>
+  `;
+}
+
+function creditsRow(person) {
+  const id = escapeHtml(person.id || '');
+  const portrait = safeUrl(person.portrait_url);
+  const status = String(person.portrait_status || 'none');
+  const listed = Boolean(person.credits_visible);
+  const perms =
+    person.permissions && typeof person.permissions === 'object' ? person.permissions : {};
+  const order = Number(person.credits_order);
+  const notListedReason =
+    listed || status === 'approved' ? '' : 'listed, but the portrait is not approved yet';
+
+  return `
+    <li class="panel-raised p-4" data-credits-row="${id}">
+      <div class="flex flex-wrap items-start gap-4">
+        <div class="relative shrink-0">
+          ${
+            portrait
+              ? `<img class="byline-sticker" src="${escapeHtml(portrait)}" alt=""
+                   width="96" height="96" loading="lazy" decoding="async" />`
+              : `<span class="byline-sticker byline-sticker-empty" aria-hidden="true">
+                   <i class="fa-solid fa-user"></i>
+                 </span>`
+          }
+          ${portraitBadge(status)}
+        </div>
+
+        <div class="min-w-0 flex-1 space-y-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="font-headline text-base font-bold">
+              ${escapeHtml(person.name || 'Unnamed staffer')}
+            </h3>
+            <span class="badge badge-neutral">${escapeHtml(person.role || 'Contributor')}</span>
+            ${listed && status === 'approved' ? '<span class="badge badge-emerald">On the page</span>' : ''}
+          </div>
+
+          <form id="credits-form-${id}" class="space-y-3" data-credits-form="${id}">
+            <div>
+              <label class="field-label" for="credits-blurb-${id}">Credits blurb</label>
+              <textarea id="credits-blurb-${id}" class="field" rows="2" maxlength="220"
+                placeholder="One line about what they do at The Wire."
+                data-credits-blurb>${escapeHtml(person.credits_blurb || '')}</textarea>
+            </div>
+
+            <div class="flex flex-wrap items-end gap-4">
+              <div class="w-28">
+                <label class="field-label" for="credits-order-${id}">Order</label>
+                <input id="credits-order-${id}" class="field" type="number" min="1" max="999"
+                  value="${order > 0 ? order : 100}" data-credits-order />
+              </div>
+              <label class="flex items-center gap-2 pb-2.5 text-xs font-semibold">
+                <input type="checkbox" class="checkbox" data-credits-visible ${listed ? 'checked' : ''} />
+                Show on the Credits page
+              </label>
+            </div>
+
+            <fieldset class="border-soft rounded p-3">
+              <legend class="px-1 text-[0.6875rem] font-bold tracking-[0.12em] uppercase">
+                Permissions
+              </legend>
+              <div class="flex flex-wrap gap-x-4 gap-y-2">
+                ${CAPABILITIES.map(
+                  (cap) => `
+                  <label class="flex items-center gap-1.5 text-xs">
+                    <input type="checkbox" class="checkbox" data-credits-perm="${cap.key}"
+                      ${perms[cap.key] ? 'checked' : ''} />
+                    <i class="fa-solid ${cap.icon} ink-muted" aria-hidden="true"></i>
+                    ${escapeHtml(cap.label)}
+                  </label>`
+                ).join('')}
+              </div>
+            </fieldset>
+
+            ${
+              notListedReason
+                ? `<p class="text-[0.6875rem] ink-muted">
+                     <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                     Not shown: ${escapeHtml(notListedReason)}.
+                   </p>`
+                : ''
+            }
+
+            <div class="flex flex-wrap gap-2 pt-1">
+              <button type="submit" class="btn btn-accent">
+                <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save
+              </button>
+              ${
+                portrait
+                  ? status === 'approved'
+                    ? `<button type="button" class="btn btn-ghost" data-action="credits-portrait"
+                        data-id="${id}" data-status="rejected">Reject portrait</button>`
+                    : `<button type="button" class="btn btn-accent" data-action="credits-portrait"
+                        data-id="${id}" data-status="approved">Approve portrait</button>`
+                  : `<span class="badge badge-amber">
+                       <i class="fa-solid fa-camera" aria-hidden="true"></i> No portrait uploaded
+                     </span>`
+              }
+            </div>
+          </form>
+        </div>
+      </div>
+    </li>
+  `;
+}
+
+function portraitBadge(status) {
+  const map = {
+    approved: 'badge-emerald',
+    pending: 'badge-amber',
+    rejected: 'badge-neutral'
+  };
+  const cls = map[status];
+  if (!cls) return '';
+  return `<span class="badge ${cls} absolute -bottom-1 -right-1" aria-hidden="true">
+    <i class="fa-solid fa-check"></i>
+  </span>`;
+}
+
 const TABS = [
   { id: 'overview', label: 'Overview', icon: 'fa-gauge-high', render: renderOverview },
   { id: 'content', label: 'Content', icon: 'fa-newspaper', render: renderContent },
@@ -1262,6 +1477,7 @@ const TABS = [
   { id: 'broadcasts', label: 'Broadcasts', icon: 'fa-paper-plane', render: renderBroadcastsTab },
   { id: 'curation', label: 'Curation', icon: 'fa-star', render: renderCurationTab },
   { id: 'staff', label: 'Staff', icon: 'fa-users', render: renderStaffTab },
+  { id: 'credits', label: 'Credits', icon: 'fa-id-badge', render: renderCreditsTab },
   { id: 'branding', label: 'Branding', icon: 'fa-font', render: renderBrandingTab },
   { id: 'media', label: 'Media', icon: 'fa-images', render: renderMediaTab },
   { id: 'security', label: 'Security', icon: 'fa-shield-halved', render: renderSecurityTab }
@@ -1273,6 +1489,10 @@ function paintActiveTab() {
   if (!body) return;
 
   const tab = TABS.find((entry) => entry.id === activeTab) || TABS[0];
+
+  // Tabs that load data asynchronously (Credits) check this before painting a
+  // late response, so it must be stamped for every tab, not just that one.
+  body.dataset.tab = tab.id;
   body.innerHTML = tab.render();
   body.classList.remove('animate-rise');
   void body.offsetWidth; // restart the entrance animation
@@ -1480,6 +1700,10 @@ function attachAdminListeners() {
       // the Save button did a full page submit and silently reloaded.
       event.preventDefault();
       guard(() => saveBrandingFromForm(form));
+    } else if (form.dataset.creditsForm) {
+      // One form per person on the Credits tab, identified by the staff id.
+      event.preventDefault();
+      guard(() => saveCreditsFromForm(form));
     }
   });
 
@@ -1759,6 +1983,52 @@ async function saveBrandingFromForm() {
 }
 
 /**
+ * Persist one person's Credits entry: blurb, position, visibility and the
+ * capability flags. Every field is read from the form rather than a cached row
+ * so a half-finished edit is never silently discarded.
+ * @param {HTMLFormElement} form
+ */
+async function saveCreditsFromForm(form) {
+  const staffId = form.dataset.creditsForm;
+  if (!staffId) return;
+
+  const blurb = form.querySelector('[data-credits-blurb]')?.value.trim() || '';
+  const orderRaw = Number(form.querySelector('[data-credits-order]')?.value);
+  const order = Number.isFinite(orderRaw) ? Math.min(999, Math.max(1, Math.round(orderRaw))) : 100;
+  const visible = Boolean(form.querySelector('[data-credits-visible]')?.checked);
+
+  const permissions = {};
+  for (const cap of CAPABILITIES) {
+    permissions[cap.key] = Boolean(
+      form.querySelector(`[data-credits-perm="${cap.key}"]`)?.checked
+    );
+  }
+
+  // Listing someone whose portrait is not approved would silently do nothing,
+  // because the public view requires both. Say so instead of letting the Owner
+  // wonder why the page did not change.
+  const person = (creditsRoster || []).find((p) => p.id === staffId);
+  const awaitingPortrait = visible && person && person.portrait_status !== 'approved';
+
+  const result = await setCredits(staffId, { visible, blurb, order, permissions });
+  if (!result.ok) {
+    showToast(result.message, { type: 'error' });
+    return;
+  }
+
+  showToast(
+    awaitingPortrait
+      ? 'Saved. They stay off the Credits page until their portrait is approved.'
+      : 'Credits entry saved.',
+    { type: awaitingPortrait ? 'info' : 'success' }
+  );
+
+  // Refresh the cached roster so the tab reflects what the database now holds.
+  creditsRoster = await listRoster();
+  paintActiveTab();
+}
+
+/**
  * Compose a broadcast and hand it to the delivery layer, which shows a real
  * notification popup on every opted-in device (and records the send in the
  * history table).
@@ -1912,7 +2182,7 @@ function handleClick(event) {
   const trigger = event.target.closest('[data-action]');
   if (!trigger) return;
 
-  const { action, id, title, name, filter } = trigger.dataset;
+  const { action, id, title, name, filter, status } = trigger.dataset;
 
   switch (action) {
     /* --- navigation --- */
@@ -2028,6 +2298,20 @@ function handleClick(event) {
           showToast('Staff member removed.', { type: 'success' });
         });
       }
+      break;
+
+    /* --- credits / portrait approval --- */
+    case 'credits-portrait':
+      guard(async () => {
+        const result = await setPortraitStatus(id, status);
+        if (!result.ok) {
+          showToast(result.message, { type: 'error' });
+          return;
+        }
+        creditsRoster = await listRoster();
+        paintActiveTab();
+        showToast(result.message, { type: status === 'approved' ? 'success' : 'info' });
+      });
       break;
 
     /* --- media --- */

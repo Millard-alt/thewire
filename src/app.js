@@ -24,7 +24,7 @@
    ========================================================================== */
 
 import { config, describeBackend } from './lib/config.js';
-import { initAuth, onAuthChange } from './lib/auth.js';
+import { initAuth, onAuthChange, getSession } from './lib/auth.js';
 import * as store from './lib/store.js';
 import { initThemeControls, getActiveTheme } from './lib/theme.js';
 import { initDialogBehaviour, byId, showToast } from './lib/dom.js';
@@ -39,6 +39,12 @@ import {
 import { initAuthModal, renderAuthSlot } from './views/auth.js';
 import { openAdmin, closeAdmin, isAdminOpen } from './views/admin.js';
 import { initAlerts, ensureAlertPermission } from './views/alerts.js';
+import { renderCredits, primePortraits } from './lib/credits.js';
+import {
+  openPortraitEditor,
+  portraitRequirementMet,
+  portraitRequirementSatisfiable
+} from './lib/portrait.js';
 
 /* -------------------------------------------------------------------------- */
 /* Rendering                                                                  */
@@ -60,10 +66,85 @@ function renderChrome() {
   if (year) year.textContent = String(new Date().getFullYear());
 }
 
+/* -------------------------------------------------------------------------- */
+/* Reader view switching (Publication <-> Credits)                              */
+/* -------------------------------------------------------------------------- */
+
+/** The reader-facing section currently on screen. */
+let readerView = 'publication';
+
+/**
+ * Show exactly one reader view. The Owner workspace is untouched by this, so a
+ * reader deep-link never has to reload to reach the credits.
+ * @param {'publication'|'credits'} name
+ */
+function showReaderView(name) {
+  const target = name === 'credits' ? 'credits' : 'publication';
+  readerView = target;
+
+  const publication = byId('publication-view');
+  const credits = byId('credits-view');
+
+  if (publication) publication.classList.toggle('hidden', target !== 'publication');
+  if (credits) credits.classList.toggle('hidden', target !== 'credits');
+
+  // Paint the credits roster on first reveal only: it costs a round-trip, and
+  // the publication is what most visitors want first.
+  if (target === 'credits') {
+    renderCredits(credits);
+    if (credits && !credits.dataset.painted) credits.dataset.painted = '1';
+  }
+
+  // Keep the header nav's pressed state honest.
+  document
+    .querySelectorAll('[data-nav]')
+    .forEach((link) =>
+      link.setAttribute(
+        'aria-current',
+        link.dataset.nav === target ? 'page' : 'false'
+      )
+    );
+
+  if (target === 'publication') renderPublicView();
+}
+
+
 /** Full public repaint. */
 function renderPublic() {
   renderChrome();
   renderPublicView();
+}
+
+/**
+ * Wire the header's reader links. Delegated on the document because the masthead
+ * is re-rendered, so per-element listeners would be lost on every repaint.
+ */
+function initReaderNavigation() {
+  if (document.body.dataset.readerNavBound) return;
+  document.body.dataset.readerNavBound = '1';
+
+  document.addEventListener('click', (event) => {
+    const link = event.target.closest('[data-nav]');
+    if (!link) return;
+
+    // Only the two reader views are handled here. data-nav is also used by the
+    // workspace for in-panel jumps, so guard on the known set.
+    const target = link.dataset.nav;
+    if (target !== 'credits' && target !== 'publication') return;
+
+    event.preventDefault();
+
+    // Leaving the workspace first: the Owner panel owns the whole screen, and
+    // readers should land on the page they asked for.
+    if (isAdminOpen()) closeAdmin();
+
+    showReaderView(target);
+    byId('main-content')?.focus({ preventScroll: true });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  // Land on the credits page when a reader arrives with #credits in the URL.
+  if (window.location.hash === '#credits') showReaderView('credits');
 }
 
 /* -------------------------------------------------------------------------- */
@@ -79,7 +160,11 @@ function renderPublic() {
  */
 function handleSessionChange(session) {
   renderAuthSlot(session, {
-    onOpenAdmin: () => openAdmin()
+    onOpenAdmin: () => {
+      // Editors must have an approved portrait before the workspace opens.
+      if (!enforcePortraitGate()) return;
+      openAdmin();
+    }
   });
 
   if (isAdminOpen() && !session?.isAdmin) {
@@ -109,6 +194,68 @@ function syncThemeIcon() {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Portrait requirement                                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Find this editor's own roster row.
+ *
+ * The roster is keyed by the username (or e-mail) the person signs in with,
+ * because `staff_accounts` holds the credentials and `staff` holds the profile.
+ * Returns null when there is no match — which is itself a blocked state.
+ */
+function myStaffRow() {
+  const session = getSession();
+  const login = session?.user?.username || session?.user?.email;
+  if (!login) return null;
+
+  const wanted = String(login).toLowerCase();
+  return (
+    store
+      .listStaff()
+      .find(
+        (row) =>
+          String(row.username || row.email || '')
+            .trim()
+            .toLowerCase() === wanted
+      ) || null
+  );
+}
+
+/**
+ * Enforce "no editor features without an approved portrait".
+ *
+ * The Owner is exempt (the gate exists to verify editors), as is demo mode
+ * (there is no server to approve against, so blocking would be a dead end).
+ * Everyone else must have an approved portrait before the workspace opens.
+ * @returns {boolean} true when the editor may proceed
+ */
+function enforcePortraitGate() {
+  const session = getSession();
+  if (!session?.user) return false;
+  if (portraitRequirementMet(null, session)) return true;
+
+  const row = myStaffRow();
+
+  // Already uploaded something and it is merely awaiting review: let them in,
+  // otherwise they would be locked out of the screen showing that fact.
+  if (portraitRequirementSatisfiable(row)) return true;
+
+  if (row?.portrait_status === 'rejected') {
+    showToast('Your last portrait was rejected. Please upload a new one.', {
+      type: 'error'
+    });
+  } else {
+    showToast('Add a newsroom portrait before using the workspace.', {
+      type: 'info'
+    });
+  }
+
+  openPortraitEditor();
+  return false;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Boot                                                                       */
 /* -------------------------------------------------------------------------- */
 
@@ -134,9 +281,21 @@ export async function boot() {
     showToast('Some publication data could not be loaded.', { type: 'error' });
   }
 
+  /* --- 3b. Portrait cache ------------------------------------------------- */
+  // Bylines are painted synchronously by `bylineSticker`, so the approved
+  // portraits have to be in the cache BEFORE the first renderPublic() below —
+  // otherwise every card falls back to the plain-text byline and the stickers
+  // never appear. Failure is non-fatal: the plain byline is a fine fallback.
+  try {
+    await primePortraits();
+  } catch (error) {
+    console.warn('[app] portraits unavailable', error);
+  }
+
   /* --- 4. Public view ---------------------------------------------------- */
   renderPublic();
   initPublicInteractions();
+  initReaderNavigation();
 
   /* --- 4b. Alerts -------------------------------------------------------- */
   // Registers the service worker, paints the opt-in bar, warns about ad
@@ -149,9 +308,17 @@ export async function boot() {
   }
 
   // Keep the public site live: any store write (from the admin workspace or a
-  // second tab) repaints it without a reload.
+  // second tab) repaints it without a reload. The credits roster is refetched
+  // too, because the Owner can change it from the workspace at any moment.
   store.subscribe(() => {
-    if (!isAdminOpen()) renderPublic();
+    if (isAdminOpen()) return;
+    if (readerView === 'credits') {
+      const credits = byId('credits-view');
+      if (credits) renderCredits(credits);
+      renderChrome();
+    } else {
+      renderPublic();
+    }
   });
 
   /* --- 5. Auth ----------------------------------------------------------- */
@@ -175,11 +342,15 @@ export async function boot() {
         { type: 'success' }
       );
       // Land straight in the workspace: that is what the Login button promised.
-      openAdmin();
+      // The Owner is exempt from the portrait gate.
+      if (enforcePortraitGate()) openAdmin();
     } else {
       showToast('Signed in. This account is not on the staff roster.', {
         type: 'info'
       });
+      // A rostered editor signing in still has to satisfy the portrait rule
+      // before the workspace becomes usable.
+      enforcePortraitGate();
     }
   });
 

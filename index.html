@@ -164,6 +164,9 @@
             <li><a class="nav-link" href="#gallery">Gallery</a></li>
             <li><a class="nav-link" href="#assignments">Assignments</a></li>
             <li><a class="nav-link" href="#masthead-foot">Masthead</a></li>
+            <li>
+              <button class="nav-link" type="button" data-nav="credits">Credits</button>
+            </li>
           </ul>
 
           <div class="flex items-center gap-2">
@@ -222,6 +225,14 @@
     <main id="main-content" class="mx-auto max-w-7xl px-4 py-8" tabindex="-1">
       <!-- Public publication view -->
       <section id="publication-view" aria-label="Publication"></section>
+
+      <!-- Credits roster (rendered by src/lib/credits.js) -->
+      <section
+        id="credits-view"
+        class="hidden"
+        aria-label="Credits"
+        tabindex="-1"
+      ></section>
 
       <!-- Owner Control Center (injected only for privileged sessions) -->
       <section
@@ -636,6 +647,100 @@
           class="scroll-area mt-4 max-h-80 space-y-2"
           aria-live="polite"
         ></div>
+      </div>
+    </div>
+
+    <!-- ======================= PORTRAIT CROP DIALOG ======================= -->
+    <!--
+      Opened by src/lib/portrait.js. The editor picks a selfie, drags it to put
+      their face in the ring, and only the finished square is uploaded — a
+      full-length photo is never sent to the server.
+    -->
+    <div
+      id="portrait-modal"
+      class="modal-backdrop hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="portrait-modal-title"
+    >
+      <div class="modal w-full max-w-lg">
+        <button
+          class="btn-quiet absolute top-4 right-4"
+          type="button"
+          data-close-dialog="portrait-modal"
+          aria-label="Close the portrait editor"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+
+        <h2 id="portrait-modal-title" class="font-headline text-xl font-bold">
+          Your newsroom portrait
+        </h2>
+        <p class="mt-1 text-xs ink-muted">
+          Every editor publishes with their face on the byline. Upload a clear
+          photo, then drag and zoom so your face sits inside the ring.
+        </p>
+
+        <div class="mt-5 flex flex-col items-center gap-4 sm:flex-row">
+          <!-- Crop viewport -->
+          <div class="relative">
+            <canvas
+              id="portrait-canvas"
+              class="block aspect-square w-full cursor-grab touch-none rounded-full border-2 border-dashed border-ink/20 bg-surface-sunken active:cursor-grabbing"
+              width="360"
+              height="360"
+              role="img"
+              aria-label="Crop area for your portrait"
+            ></canvas>
+            <p
+              id="portrait-empty"
+              class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-center"
+            >
+              <i class="fa-solid fa-camera text-2xl ink-muted" aria-hidden="true"></i>
+              <span class="text-[0.6875rem] font-bold tracking-wide uppercase ink-muted">
+                Tap to choose a photo
+              </span>
+            </p>
+          </div>
+
+          <!-- Live circular preview + controls -->
+          <div class="flex flex-1 flex-col items-center gap-3">
+            <div class="flex flex-col items-center gap-2">
+              <canvas
+                id="portrait-preview"
+                class="byline-sticker byline-sticker-preview"
+                width="120"
+                height="120"
+                aria-hidden="true"
+              ></canvas>
+              <p class="text-[0.6875rem] ink-muted">How readers will see it</p>
+            </div>
+
+            <div class="flex w-full flex-col gap-2">
+              <input
+                id="portrait-input"
+                class="sr-only"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+              />
+              <label class="btn btn-ghost w-full justify-center" for="portrait-input">
+                <i class="fa-solid fa-image" aria-hidden="true"></i> Choose photo
+              </label>
+              <button
+                id="portrait-save"
+                class="btn btn-accent w-full justify-center"
+                type="button"
+                disabled
+              >
+                <i class="fa-solid fa-upload" aria-hidden="true"></i>
+                Submit for approval
+              </button>
+              <p class="text-center text-[0.6875rem] ink-muted">
+                The Owner reviews every portrait before it appears publicly.
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </body>
