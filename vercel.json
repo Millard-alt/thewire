@@ -6,6 +6,11 @@
   "framework": "vite",
   "cleanUrls": true,
   "trailingSlash": false,
+  "build": {
+    "env": {
+      "NODE_OPTIONS": "--max-old-space-size=2048"
+    }
+  },
   "headers": [
     {
       "source": "/assets/(.*)",
