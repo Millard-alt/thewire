@@ -572,6 +572,42 @@
     flex-wrap: wrap;
     gap: 0.35rem;
   }
+
+  /*
+  MOBILE NAVIGATION
+  .admin-tab is width:100% so it fills the desktop sidebar column. On a phone
+  that rule made all ten tabs stack as full-width rows, pushing the actual
+  panel content off-screen. Below the desktop breakpoint the tabs become
+  auto-width chips that wrap, and the strip scrolls horizontally so it can
+  never eat more than a couple of lines of viewport height.
+  */
+  @media (max-width: 63.999rem) {
+    .admin-nav {
+      padding: 0.5rem 0.75rem;
+      max-height: 7rem;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .admin-nav__list {
+      flex-wrap: wrap;
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      scrollbar-width: thin;
+      /* Fade the right edge so it reads as scrollable. */
+      mask-image: linear-gradient(
+        to right,
+        #000 0,
+        #000 calc(100% - 1.5rem),
+        transparent 100%
+      );
+    }
+    .admin-tab {
+      width: auto;
+      flex: 0 0 auto;
+      white-space: nowrap;
+      padding: 0.4rem 0.7rem;
+    }
+  }
   @media (min-width: 64rem) {
     .admin-layout {
       flex-direction: row;
@@ -728,6 +764,33 @@
   /* Dialogs opened from the workspace must not exceed the viewport either. */
   .admin-shell dialog {
     max-width: min(56rem, calc(100vw - 2rem));
+  }
+
+  /*
+  PHONE TUNING
+  Wider tables stop trying to squeeze into a phone viewport and scroll
+  sideways inside their own container instead, so a single column of data is
+  never compressed to an unreadable sliver.
+  */
+  @media (max-width: 47.999rem) {
+    .admin-topbar {
+      padding: 0.6rem 0.75rem;
+      gap: 0.5rem;
+    }
+    .admin-body {
+      padding: 0.75rem;
+    }
+    .admin-body table {
+      /* Undo the desktop `fixed` layout: real auto layout + a min width lets
+         the table scroll horizontally rather than crush its columns. */
+      table-layout: auto;
+      min-width: 34rem;
+    }
+    /* Tables the views already wrap get their own scroll container. */
+    .admin-body .overflow-x-auto {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
   }
 }
 
