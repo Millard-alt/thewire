@@ -25,7 +25,16 @@ const GATE_ID = 'alert-gate';
 function instructions(permission) {
   const steps = [];
 
-  if (permission === 'unsupported') {
+  // iOS needs the app installed before alerts are possible at all. This must be
+  // checked first: the generic advice below sends iOS readers into Safari
+  // settings, where there is nothing useful for them to change.
+  if (push.isIOS() && !push.isStandalone()) {
+    steps.push(
+      'On iPhone and iPad, The Wire must be installed before it can send alerts.',
+      'Tap the Share button (the square with an arrow), then Add to Home Screen.',
+      'Open The Wire from the new Home Screen icon. Alerts work only from there.'
+    );
+  } else if (permission === 'unsupported') {
     steps.push(
       'This browser cannot show system notifications, or the page is not on a ' +
         'secure (https) connection.',

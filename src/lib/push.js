@@ -74,13 +74,41 @@ export function adblockLike() {
   return { stylesBlocked, notificationsStubbed };
 }
 
+/**
+ * True on an iPhone/iPad, including iPadOS which reports itself as a Mac.
+ */
+export function isIOS() {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  // iPadOS 13+ masquerades as desktop Safari; the touch-point count gives it away.
+  const iPadOS = /Macintosh/i.test(ua) && typeof document !== 'undefined' && navigator.maxTouchPoints > 1;
+  return /iPhone|iPad|iPod/i.test(ua) || iPadOS;
+}
+
+/**
+ * True when the page is running as an installed app (added to the Home Screen).
+ *
+ * This is the single most important fact for iOS: Web Push exists there ONLY in
+ * standalone mode. In an ordinary Safari tab `Notification` is present and
+ * `requestPermission()` may even succeed, so capability checks pass — but
+ * nothing can ever be delivered, because there is no push service for a
+ * non-installed web page. Reporting "blocked" there is simply wrong.
+ */
+export function isStandalone() {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.matchMedia?.('(display-mode: standalone)').matches === true ||
+    window.navigator.standalone === true
+  );
+}
+
 /** True when this browser can raise a real OS notification. */
 export function isSupported() {
-  return (
-    typeof window !== 'undefined' &&
-    'Notification' in window &&
-    'serviceWorker' in navigator
-  );
+  if (typeof window === 'undefined') return false;
+  if (!('Notification' in window) || !('serviceWorker' in navigator)) return false;
+  // On iOS, a Safari tab can never deliver, so do not pretend otherwise.
+  if (isIOS() && !isStandalone()) return false;
+  return true;
 }
 
 /** @returns {'unsupported'|'default'|'granted'|'denied'} */
@@ -509,6 +537,19 @@ export function stopBroadcastPolling() {
  */
 export function pushStatus() {
   const { stylesBlocked, notificationsStubbed } = adblockLike();
+
+  // iOS in an ordinary Safari tab is not "blocked" and never was: push simply
+  // does not exist outside an installed app. Say what to do about it instead of
+  // sending the reader to settings that will not help.
+  if (isIOS() && !isStandalone()) {
+    return {
+      ok: false,
+      label: 'Add The Wire to your Home Screen',
+      detail:
+        'On iPhone and iPad, alerts only work once The Wire is installed. Tap the ' +
+        'Share button, then “Add to Home Screen”, and open The Wire from there.'
+    };
+  }
 
   if (notificationsStubbed) {
     return {
