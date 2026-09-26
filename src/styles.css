@@ -1,0 +1,1016 @@
+/* =============================================================================
+   THE WIRE â€” STYLESHEET
+   -----------------------------------------------------------------------------
+   Tailwind CSS v4, loaded CSS-first through the @tailwindcss/vite plugin. There
+   is deliberately no tailwind.config.js: design tokens live in the `@theme`
+   block below and dark mode is driven by a `.dark` class on <html>.
+
+   Contents
+     1. Tailwind import + dark-mode variant registration
+     2. `@theme` design tokens (newspaper palette, fonts, motion, shadows)
+     3. Semantic CSS variables that flip between light and dark
+     4. Components: surfaces, rules, buttons, fields, panels, badges
+     5. Components: dialogs, toasts, switches, nav underline
+     6. Components: the Owner Control Center shell
+     7. Newspaper detail: halftone, drop cap, washi tape
+     8. Utilities, keyframes, reduced-motion + print fallbacks
+   ========================================================================== */
+
+/* 1. TAILWIND + DARK MODE ---------------------------------------------------- */
+@import 'tailwindcss';
+
+/* Tailwind v4 defaults to `prefers-color-scheme`; we override it so the theme
+   controller in src/lib/theme.js owns the decision via <html class="dark">. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* 2. DESIGN TOKENS ----------------------------------------------------------- */
+@theme {
+  /* Light-mode "newsprint" values */
+  --color-paper: #f7f4ec;
+  --color-paper-dark: #ece7da;
+  --color-ink: #18130f;
+  --color-ink-muted: #5a544b;
+
+  /* Accents */
+  --color-newsred: #8c1d11;
+  --color-newsred-bright: #b3261a;
+  --color-newsgold: #b8860b;
+  --color-newsgold-bright: #e0a91b;
+  --color-newsblue: #1c3f60;
+
+  /* Typography */
+  --font-headline: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  --font-body: 'Source Serif 4', Georgia, serif;
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Special Elite', 'Courier New', monospace;
+
+  /* Motion + elevation */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --shadow-hard: 4px 4px 0 0 rgb(24 19 15);
+}
+
+/* 3. SEMANTIC TOKENS (light/dark aware) ------------------------------------- */
+@layer base {
+  :root {
+    --surface: var(--color-paper);
+    --surface-raised: #ffffff;
+    --surface-sunken: var(--color-paper-dark);
+    --rule: color-mix(in srgb, var(--color-ink) 85%, transparent);
+    --rule-soft: color-mix(in srgb, var(--color-ink) 18%, transparent);
+    --text: var(--color-ink);
+    --text-muted: var(--color-ink-muted);
+    --accent: var(--color-newsred);
+    --accent-contrast: #ffffff;
+    --overlay: rgb(24 19 15 / 0.72);
+    color-scheme: light;
+  }
+
+  .dark {
+    --surface: #12100e;
+    --surface-raised: #1b1815;
+    --surface-sunken: #0c0a09;
+    --rule: color-mix(in srgb, #f7f4ec 82%, transparent);
+    --rule-soft: color-mix(in srgb, #f7f4ec 16%, transparent);
+    --text: #f2ede2;
+    --text-muted: #a9a196;
+    --accent: #ff6b5b;
+    --accent-contrast: #1a0d0b;
+    --overlay: rgb(0 0 0 / 0.8);
+    color-scheme: dark;
+  }
+
+  * {
+    border-color: var(--rule-soft);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--surface);
+    color: var(--text);
+    font-family: var(--font-body);
+    transition:
+      background-color 280ms var(--ease-out-expo),
+      color 280ms var(--ease-out-expo);
+  }
+
+  /* One consistent, high-contrast focus ring for every interactive element. */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  input,
+  select,
+  textarea {
+    font-family: var(--font-sans);
+    color: var(--text);
+    background-color: var(--surface-raised);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: color-mix(in srgb, var(--text-muted) 75%, transparent);
+  }
+}
+
+/* 4. CORE COMPONENTS --------------------------------------------------------- */
+@layer components {
+  /* --- Surfaces --- */
+  .surface-paper {
+    background-color: var(--surface);
+    color: var(--text);
+  }
+  .surface-raised {
+    background-color: var(--surface-raised);
+    color: var(--text);
+  }
+  .surface-sunken {
+    background-color: var(--surface-sunken);
+    color: var(--text);
+  }
+
+  .rule {
+    border-color: var(--rule);
+  }
+  .rule-soft {
+    border-color: var(--rule-soft);
+  }
+  .ink {
+    color: var(--text);
+  }
+  .ink-muted {
+    color: var(--text-muted);
+  }
+  .accent-text {
+    color: var(--accent);
+  }
+  /* Headline links: accent on hover, ink at rest. A component class rather
+     than `hover:accent-text` because variants cannot target @layer components. */
+  .text-link {
+    color: var(--text);
+    transition: color 180ms ease;
+  }
+  .text-link:hover,
+  .text-link:focus-visible {
+    color: var(--color-newsred);
+  }
+  .dark .text-link:hover,
+  .dark .text-link:focus-visible {
+    color: var(--color-newsgold-bright);
+  }
+  .scrim {
+    background-color: var(--overlay);
+  }
+
+  /* Letterpress-style hard shadow that inverts for dark mode. */
+  .press-shadow {
+    box-shadow: 4px 4px 0 0 var(--color-ink);
+  }
+  .dark .press-shadow {
+    box-shadow: 4px 4px 0 0 #000;
+  }
+
+  /* --- Panels / cards --- */
+  .panel {
+    border: 1px solid var(--rule);
+    background-color: var(--surface);
+    border-radius: 0.5rem;
+  }
+  .panel-raised {
+    border: 1px solid var(--rule);
+    background-color: var(--surface-raised);
+    border-radius: 0.5rem;
+  }
+  .panel-sunken {
+    border: 1px solid var(--rule-soft);
+    background-color: var(--surface-sunken);
+    border-radius: 0.5rem;
+  }
+
+  /* --- Form fields (auth modal + every admin form) --- */
+  .field {
+    width: 100%;
+    border-radius: 0.375rem;
+    border: 1px solid var(--rule-soft);
+    background-color: var(--surface-raised);
+    padding: 0.55rem 0.75rem;
+    font-size: 0.8125rem;
+    color: var(--text);
+    outline: none;
+    transition:
+      border-color 160ms ease,
+      box-shadow 160ms ease;
+  }
+  .field:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .field-label {
+    display: block;
+    margin-bottom: 0.3rem;
+    font-family: var(--font-sans);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  /* --- Buttons --- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    border-radius: 0.25rem;
+    padding: 0.5rem 0.9rem;
+    font-family: var(--font-sans);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition:
+      background-color 180ms ease,
+      color 180ms ease,
+      border-color 180ms ease,
+      transform 180ms ease;
+  }
+  .btn:active {
+    transform: translateY(1px);
+  }
+  .btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background-color: var(--color-newsred);
+    color: #fff;
+  }
+  .dark .btn-primary {
+    background-color: var(--color-newsred-bright);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--color-ink);
+  }
+  .dark .btn-primary:hover:not(:disabled) {
+    background-color: #fff;
+    color: #12100e;
+  }
+
+  .btn-accent {
+    background-color: var(--accent);
+    color: var(--accent-contrast);
+  }
+  .btn-accent:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+
+  .btn-ghost {
+    background-color: transparent;
+    color: var(--text);
+    border-color: var(--rule-soft);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background-color: var(--surface-sunken);
+    border-color: var(--rule);
+  }
+
+  .btn-quiet {
+    background-color: transparent;
+    color: var(--text-muted);
+    padding-inline: 0.5rem;
+  }
+  .btn-quiet:hover:not(:disabled) {
+    color: var(--accent);
+  }
+
+  /* --- Badges --- */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    border-radius: 0.25rem;
+    padding: 0.15rem 0.45rem;
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid transparent;
+  }
+  .badge-live {
+    background-color: var(--color-newsred);
+    color: #fff;
+  }
+  .dark .badge-live {
+    background-color: var(--color-newsred-bright);
+  }
+  .badge-gold {
+    background-color: color-mix(in srgb, var(--color-newsgold) 22%, transparent);
+    color: var(--color-newsgold);
+    border-color: color-mix(in srgb, var(--color-newsgold) 45%, transparent);
+  }
+  .dark .badge-gold {
+    color: var(--color-newsgold-bright);
+  }
+  .badge-neutral {
+    background-color: var(--surface-sunken);
+    color: var(--text-muted);
+    border-color: var(--rule-soft);
+  }
+  .badge-emerald {
+    background-color: color-mix(in srgb, #10b981 18%, transparent);
+    color: #047857;
+    border-color: color-mix(in srgb, #10b981 40%, transparent);
+  }
+  .dark .badge-emerald {
+    color: #34d399;
+  }
+  .badge-amber {
+    background-color: color-mix(in srgb, #f59e0b 18%, transparent);
+    color: #b45309;
+    border-color: color-mix(in srgb, #f59e0b 40%, transparent);
+  }
+  .dark .badge-amber {
+    color: #fcd34d;
+  }
+  .badge-sky {
+    background-color: color-mix(in srgb, #0ea5e9 18%, transparent);
+    color: #0369a1;
+    border-color: color-mix(in srgb, #0ea5e9 40%, transparent);
+  }
+  .dark .badge-sky {
+    color: #7dd3fc;
+  }
+
+  /* --- Skip link (keyboard users land here first) --- */
+  .skip-link {
+    position: absolute;
+    left: 0.5rem;
+    top: -6rem;
+    z-index: 100;
+    background-color: var(--color-ink);
+    color: var(--color-paper);
+    padding: 0.65rem 1rem;
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    font-weight: 700;
+    transition: top 200ms var(--ease-out-expo);
+  }
+  .skip-link:focus {
+    top: 0.5rem;
+  }
+
+  /* Themed scrollable region (search results, admin lists). */
+  .scroll-area {
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--rule-soft) transparent;
+  }
+}
+
+/* 5. DIALOGS, TOASTS, SWITCHES, NAV ---------------------------------------- */
+@layer components {
+  /* --- Modal shell --- */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background-color: var(--overlay);
+    backdrop-filter: blur(6px);
+  }
+  .modal-card {
+    width: 100%;
+    max-height: 92vh;
+    overflow-y: auto;
+    border: 1px solid var(--rule);
+    background-color: var(--surface-raised);
+    color: var(--text);
+    border-radius: 0.75rem;
+    box-shadow: 0 25px 60px -12px rgb(0 0 0 / 0.55);
+  }
+
+  /* --- Toast stack --- */
+  .toast-stack {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 80;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: min(22rem, calc(100vw - 2rem));
+  }
+  .toast {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    border-radius: 0.5rem;
+    background-color: var(--surface-raised);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    box-shadow: 0 12px 28px -10px rgb(0 0 0 / 0.5);
+  }
+  .toast-success {
+    border-left-color: #10b981;
+  }
+  .toast-error {
+    border-left-color: #ef4444;
+  }
+
+  /* --- Toggle switch (dark mode + admin switches) --- */
+  .switch {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+  }
+  .switch input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    cursor: pointer;
+  }
+  .switch-track {
+    width: 2.75rem;
+    height: 1.5rem;
+    border-radius: 9999px;
+    background-color: color-mix(in srgb, var(--text-muted) 35%, transparent);
+    border: 1px solid var(--rule-soft);
+    transition: background-color 220ms var(--ease-out-expo);
+  }
+  .switch-thumb {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    height: 1.125rem;
+    width: 1.125rem;
+    border-radius: 9999px;
+    background-color: var(--surface-raised);
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
+    transition: transform 260ms var(--ease-out-expo);
+  }
+  .switch input:checked ~ .switch-track {
+    background-color: var(--color-newsred);
+  }
+  .dark .switch input:checked ~ .switch-track {
+    background-color: var(--color-newsgold);
+  }
+  .switch input:checked ~ .switch-thumb {
+    transform: translateX(1.25rem);
+  }
+  .switch input:focus-visible ~ .switch-track {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* --- Masthead nav underline --- */
+  .nav-link {
+    position: relative;
+    display: inline-block;
+    padding-block: 0.25rem;
+    color: var(--text);
+    transition: color 180ms ease;
+  }
+  .nav-link::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 2px;
+    width: 100%;
+    background-color: var(--color-newsred);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 240ms var(--ease-out-expo);
+  }
+  .nav-link:hover,
+  .nav-link:focus-visible {
+    color: var(--color-newsred);
+  }
+  .nav-link:hover::after,
+  .nav-link:focus-visible::after {
+    transform: scaleX(1);
+  }
+  .dark .nav-link:hover,
+  .dark .nav-link:focus-visible {
+    color: var(--color-newsgold-bright);
+  }
+  .dark .nav-link::after {
+    background-color: var(--color-newsgold-bright);
+  }
+}
+
+/* 6. OWNER CONTROL CENTER SHELL --------------------------------------------- */
+@layer components {
+  .admin-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    background-color: var(--surface-sunken);
+  }
+  .admin-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--rule);
+    background-color: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 30;
+  }
+  .admin-topbar__left,
+  .admin-topbar__right {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+
+  /* Sidebar + scrolling content: stacked on mobile, side by side on desktop. */
+  .admin-layout {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+  .admin-nav {
+    border-bottom: 1px solid var(--rule);
+    background-color: var(--surface);
+    padding: 0.6rem 0.75rem;
+  }
+  .admin-nav__list {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  @media (min-width: 64rem) {
+    .admin-layout {
+      flex-direction: row;
+      /* Both columns must stretch to the row height. `flex-start` would let
+         .admin-body size to its content and clip it against the shell. */
+      align-items: stretch;
+    }
+    .admin-body {
+      /* Scroll the panel itself instead of the locked page body. */
+      align-self: stretch;
+      height: 100%;
+    }
+    .admin-nav {
+      width: 15rem;
+      flex-shrink: 0;
+      align-self: stretch;
+      border-right: 1px solid var(--rule);
+      border-bottom: none;
+      padding: 1rem 0.75rem;
+      /* The sidebar can hold more tabs than fit, so it scrolls on its own. */
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .admin-nav__list {
+      flex-direction: column;
+      flex-wrap: nowrap;
+    }
+  }
+
+  .admin-tab {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    width: 100%;
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.7rem;
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    color: var(--text-muted);
+    background-color: transparent;
+    border: 1px solid transparent;
+    transition:
+      background-color 180ms ease,
+      color 180ms ease,
+      border-color 180ms ease;
+  }
+  .admin-tab:hover {
+    background-color: var(--surface-sunken);
+    color: var(--text);
+  }
+  .admin-tab.is-active,
+  .admin-tab[aria-current='page'] {
+    background-color: var(--color-newsred);
+    border-color: var(--color-newsred);
+    color: #fff;
+  }
+  .dark .admin-tab.is-active,
+  .dark .admin-tab[aria-current='page'] {
+    background-color: var(--color-newsred-bright);
+    border-color: var(--color-newsred-bright);
+    color: #fff;
+  }
+
+  .admin-body {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    padding: 1rem;
+    /* The page body is scroll-locked while the workspace is open, so the
+       workspace content must scroll here or tall tabs become unreachable. */
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--rule-soft) transparent;
+  }
+  @media (min-width: 64rem) {
+    .admin-body {
+      padding: 1.5rem;
+    }
+  }
+
+  /* Right-hand control cluster in the admin top bar. */
+  .admin-theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  /* Applied to the workspace host element while it is mounted. */
+  .admin-mode {
+    display: block;
+  }
+
+  /* Lock page scroll behind the workspace so only the panel scrolls. */
+  body.admin-active {
+    overflow: hidden;
+  }
+
+  /*
+    FULL-BLEED HOST
+    The workspace is a fixed-height app shell (100dvh), but it is injected into
+    <main class="mx-auto max-w-7xl px-4 py-8">. Inheriting that container's
+    max-width and padding left the panel narrower than the window and 100dvh
+    taller than its parent, which produced a permanent horizontal scrollbar and
+    a vertical one that could not be scrolled away from. While the workspace is
+    open, the host stretches to the viewport edge and drops its padding so the
+    shell owns the whole screen.
+  */
+  body.admin-active #main-content {
+    max-width: none;
+    padding: 0;
+    width: 100%;
+  }
+  body.admin-active #admin-view {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  /*
+    HORIZONTAL SCALING
+    Long titles, emails and URLs in tables were stretching the flex/grid
+    children instead of wrapping, so the panel grew past the viewport. The
+    rules below let those cells shrink and wrap, and keep the scroll region on
+    the body rather than the page.
+  */
+  .admin-body {
+    overflow-x: hidden;
+  }
+  /*
+    Tables that the views already wrap in `.overflow-x-auto` keep the default
+    auto layout so they can scroll; only loose tables are pinned to the
+    container width, otherwise `table-layout: fixed` would squeeze their
+    columns into unreadable slivers.
+  */
+  .admin-body table:not(.overflow-x-auto table) {
+    table-layout: fixed;
+    width: 100%;
+  }
+  .admin-body td,
+  .admin-body th {
+    /* Without this, a long unbroken string sets the column's minimum width. */
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .admin-body img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* Dialogs opened from the workspace must not exceed the viewport either. */
+  .admin-shell dialog {
+    max-width: min(56rem, calc(100vw - 2rem));
+  }
+}
+
+/* 5b. APP STATE HOOKS -------------------------------------------------------- */
+@layer components {
+  /* Auth modal mode tabs (Sign in / Create account). */
+  .auth-tab {
+    flex: 1;
+    border: 1px solid var(--rule-soft);
+    background-color: transparent;
+    color: var(--text-muted);
+  }
+  .auth-tab[aria-selected='true'] {
+    background-color: var(--color-newsred);
+    border-color: var(--color-newsred);
+    color: #fff;
+  }
+  .dark .auth-tab[aria-selected='true'] {
+    background-color: var(--color-newsred-bright);
+    border-color: var(--color-newsred-bright);
+  }
+
+  /* Sun/moon glyph inside the dark-mode switch thumb. */
+  .theme-icon {
+    line-height: 1;
+    transition:
+      transform 260ms var(--ease-out-expo),
+      opacity 200ms ease;
+  }
+  .dark .theme-icon {
+    color: var(--color-newsgold-bright);
+  }
+
+  /* Reveal-on-boot: prevents a flash of unstyled content before hydration. */
+  .app-ready #publication-view,
+  .app-ready #auth-slot {
+    animation: rise 420ms var(--ease-out-expo) both;
+  }
+}
+
+/* 7. NEWSPAPER DETAIL -------------------------------------------------------- */
+@layer components {
+  /* Halftone dot field laid over the masthead. */
+  .newspaper-texture::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: radial-gradient(currentColor 0.5px, transparent 0.5px);
+    background-size: 16px 16px;
+    opacity: 0.06;
+  }
+
+  /* Classic broadsheet drop cap. */
+  .first-letter-cap::first-letter {
+    font-family: var(--font-headline);
+    font-size: 3.6rem;
+    float: left;
+    line-height: 0.82;
+    padding: 4px 8px 0 0;
+    font-weight: 900;
+    color: var(--color-newsred);
+  }
+  .dark .first-letter-cap::first-letter {
+    color: var(--color-newsgold-bright);
+  }
+
+  /* Washi-tape edging used on pull quotes and memo cards. */
+  .tape-accent {
+    background: color-mix(in srgb, var(--color-paper-dark) 70%, transparent);
+    border-left: 2px dashed color-mix(in srgb, var(--color-ink) 30%, transparent);
+    border-right: 2px dashed color-mix(in srgb, var(--color-ink) 30%, transparent);
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.06);
+  }
+  .dark .tape-accent {
+    background: color-mix(in srgb, #2a2520 70%, transparent);
+  }
+}
+
+
+/* 7b. PHOTO GALLERY ---------------------------------------------------------- */
+@layer components {
+  /* Mobile-first: two tight columns on a phone, widening as space allows. Using
+     `auto-fit` with a minmax floor means a single photograph still fills the
+     row instead of being stranded at one column's width. */
+  .gallery-grid {
+    display: grid;
+    gap: 0.625rem;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  }
+  @media (min-width: 40rem) {
+    .gallery-grid {
+      gap: 0.875rem;
+      grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    }
+  }
+
+  .gallery-item {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  /* The whole tile is one button so keyboard and screen-reader users get the
+     same affordance as a tap, and the image gets a large hit target. */
+  .gallery-btn {
+    position: relative;
+    display: block;
+    width: 100%;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid var(--rule-soft);
+    border-radius: 0.25rem;
+    background-color: var(--surface-sunken, transparent);
+    cursor: zoom-in;
+    /* Reserve the tile's height before the image decodes, so the grid does not
+       reflow (and jump the reader's scroll position) as photos arrive. */
+    aspect-ratio: 4 / 3;
+  }
+  .gallery-btn img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 420ms var(--ease-out-expo);
+  }
+
+  /* Hover zoom is pointer-only: on touch it would fight the tap, and the
+     reduced-motion query below disables the movement for everyone else. */
+  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
+    .gallery-btn:hover img,
+    .gallery-btn:focus-visible img {
+      transform: scale(1.06);
+    }
+  }
+
+  .gallery-btn:focus-visible {
+    outline: 2px solid var(--color-newsred);
+    outline-offset: 2px;
+  }
+
+  .gallery-zoom {
+    position: absolute;
+    right: 0.375rem;
+    bottom: 0.375rem;
+    display: grid;
+    place-items: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 9999px;
+    background-color: rgb(0 0 0 / 0.55);
+    color: #fff;
+    font-size: 0.75rem;
+    opacity: 0;
+    transition: opacity 200ms ease;
+  }
+  @media (hover: hover) {
+    .gallery-btn:hover .gallery-zoom,
+    .gallery-btn:focus-visible .gallery-zoom {
+      opacity: 1;
+    }
+  }
+
+  .gallery-item figcaption {
+    font-size: 0.6875rem;
+    line-height: 1.35;
+    color: var(--text-muted);
+  }
+}
+
+/* 8. UTILITIES + MOTION ------------------------------------------------------ */
+@layer utilities {
+  .animate-modal-in {
+    animation: modalIn 320ms var(--ease-out-expo) both;
+  }
+  .animate-backdrop-in {
+    animation: backdropIn 220ms ease both;
+  }
+  .animate-toast-in {
+    animation: toastIn 280ms var(--ease-out-expo) both;
+  }
+  .animate-rise {
+    animation: rise 480ms var(--ease-out-expo) both;
+  }
+  .emergency-pulse {
+    animation: pulseGlow 2.5s infinite ease-in-out;
+  }
+  .spin-slow {
+    animation: spin 1.1s linear infinite;
+  }
+}
+
+/* Keyframes live OUTSIDE @layer — the CSS minifier treats a nested
+   @keyframes as an unknown at-rule and silently drops it. */
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes backdropIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes pulseGlow {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.82;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Themed scrollbars — not hard-coded, so they follow the theme. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--rule-soft);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--rule);
+}
+
+/* Accessibility: honour the OS "reduce motion" setting everywhere. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Print: the publication should come out like actual newsprint. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+    color: #000;
+  }
+}
+

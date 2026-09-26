@@ -1,0 +1,16 @@
+{
+  "name": "The Wire — Nakuru Press Club",
+  "short_name": "The Wire",
+  "description": "Independent, verified dispatches from the Nakuru Press Club.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F7F4EC",
+  "theme_color": "#8C1D11",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

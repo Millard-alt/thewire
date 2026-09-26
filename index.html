@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en" class="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#F7F4EC" />
+    <meta
+      name="description"
+      content="The Wire — Nakuru Press Club. Independent, verified dispatches and a full editorial control suite for the newsroom."
+    />
+    <title>The Wire — Nakuru Press Club</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&family=Inter:wght@400;500;600;700;800&family=Special+Elite&display=swap"
+      rel="stylesheet"
+      media="print"
+      onload="this.media='all';this.onload=null"
+    />
+    <!--
+      Local typography, first. src/vendor-fonts.css holds the Latin subsets of
+      Playfair Display, Source Serif 4, Inter and Special Elite, served from our
+      own origin (see vendor-fonts.mjs). A blocked fonts.googleapis.com request can
+      therefore never strip the publication of its headline or body faces.
+    -->
+    <link rel="stylesheet" href="/src/vendor-fonts.css" />
+    <!--
+      FontAwesome is served from our own origin (see vendor-fontawesome.mjs) and
+      not from cdnjs: icon fonts are the single most commonly blocked request on
+      the web, and pulling them from a CDN meant every icon in the UI could
+      disappear behind a cosmetic filter. The relative webfonts/ URLs inside the
+      sheet resolve against public/vendor/fontawesome/.
+    -->
+    <link rel="stylesheet" href="/vendor/fontawesome/all.min.css" />
+
+    <!--
+      Tailwind v4 is loaded CSS-first through the @tailwindcss/vite plugin, so
+      there is no tailwind.config.js and no CDN build step. src/styles.css is
+      the single source for the newspaper theme, dark mode and components.
+    -->
+    <link rel="stylesheet" href="/src/styles.css" />
+
+    <script type="module" src="/src/app.js"></script>
+
+    <!--
+      PWA manifest. This project compiles Tailwind locally (there is no CDN), so
+      the manifest exists purely so the site can be installed to a phone home
+      screen and launched full-screen.
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="The Wire" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+
+    <!--
+      THEME BOOT SCRIPT
+      Runs synchronously in <head>, before first paint, so a visitor on a dark
+      device never sees a white flash. It mirrors src/lib/theme.js exactly:
+        localStorage['wire.theme']  ->  prefers-color-scheme  ->  light
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('wire.theme');
+          var prefersDark =
+            window.matchMedia &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var theme =
+            stored === 'dark' || stored === 'light'
+              ? stored
+              : prefersDark
+                ? 'dark'
+                : 'light';
+          var root = document.documentElement;
+          root.classList.toggle('dark', theme === 'dark');
+          root.classList.toggle('light', theme === 'light');
+          root.style.colorScheme = theme;
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) {
+            meta.setAttribute(
+              'content',
+              theme === 'dark' ? '#12100E' : '#F7F4EC'
+            );
+          }
+        } catch (error) {
+          /* localStorage blocked — fall through to the CSS light default */
+        }
+      })();
+    </script>
+  </head>
+
+  <body class="min-h-screen surface-paper antialiased">
+    <a class="skip-link no-print" href="#main-content">Skip to main content</a>
+
+    <!-- ======================= HEADER ======================= -->
+    <header class="no-print">
+      <!-- Top utility strip -->
+      <div class="surface-sunken rule-soft border-b">
+        <div
+          class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-2 text-[0.6875rem] font-semibold tracking-[0.14em] uppercase"
+        >
+          <p id="edition-line" class="ink-muted truncate">
+            Vol. CXIV — No. 32,841 — Nakuru, Kenya
+          </p>
+          <p class="ink-muted hidden shrink-0 sm:block" id="edition-date">
+            Independent Verified Dispatches
+          </p>
+        </div>
+      </div>
+
+      <!-- Masthead -->
+      <div class="surface-paper rule-soft border-b">
+        <div class="mx-auto max-w-7xl px-4 py-6 md:py-8">
+          <div class="flex items-center justify-center gap-4">
+            <h1
+              id="masthead-title"
+              class="newspaper-texture relative text-center font-headline text-4xl leading-none font-black tracking-[0.06em] uppercase md:text-6xl"
+            >
+              THE WIRE
+            </h1>
+          </div>
+          <p
+            id="masthead-subtitle"
+            class="mt-3 text-center text-[0.6875rem] font-semibold tracking-[0.22em] text-newsred uppercase dark:text-newsgold-bright"
+          >
+            Nakuru Press Club &#8226; Independent Verified Dispatches
+          </p>
+          <p
+            class="mt-1 text-center font-mono text-[0.625rem] tracking-[0.18em] ink-muted uppercase"
+          >
+            Nakuru, Kenya &#8226; <span id="masthead-date">Wednesday, 25 September 2026</span>
+          </p>
+        </div>
+      </div>
+
+      <!-- Navigation -->
+      <nav
+        class="surface-raised rule-soft sticky top-0 z-40 border-b shadow-sm backdrop-blur"
+        aria-label="Primary"
+      >
+        <div
+          class="mx-auto flex max-w-7xl flex-wrap items-center gap-2 px-4 py-2.5"
+        >
+          <button
+            id="mobile-nav-toggle"
+            class="btn btn-ghost md:hidden"
+            aria-expanded="false"
+            aria-controls="primary-links"
+          >
+            <i class="fa-solid fa-bars" aria-hidden="true"></i>
+            <span>Menu</span>
+          </button>
+
+          <ul
+            id="primary-links"
+            class="flex flex-1 flex-wrap items-center gap-x-6 gap-y-2 text-[0.6875rem] font-bold tracking-[0.12em] uppercase"
+          >
+            <li><a class="nav-link" href="#latest">Latest</a></li>
+            <li><a class="nav-link" href="#today">Today's Pick</a></li>
+            <li><a class="nav-link" href="#weekly">Weekly</a></li>
+            <li><a class="nav-link" href="#gallery">Gallery</a></li>
+            <li><a class="nav-link" href="#assignments">Assignments</a></li>
+            <li><a class="nav-link" href="#masthead-foot">Masthead</a></li>
+          </ul>
+
+          <div class="flex items-center gap-2">
+            <!-- Search -->
+            <button
+              id="open-search"
+              class="btn btn-quiet"
+              aria-label="Search the archive"
+            >
+              <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+            </button>
+
+            <!-- DARK / LIGHT TOGGLE -->
+            <label class="switch" title="Toggle dark mode">
+              <input
+                id="theme-toggle"
+                type="checkbox"
+                class="sr-only"
+                role="switch"
+                aria-checked="false"
+              />
+              <span class="switch-track" aria-hidden="true">
+                <span class="switch-thumb flex items-center justify-center">
+                  <i
+                    class="theme-icon fa-solid fa-sun text-[0.5rem] text-[#8a6a10]"
+                  ></i>
+                </span>
+              </span>
+              <span class="sr-only" id="theme-toggle-label">Light mode</span>
+            </label>
+
+            <!--
+              AUTH SLOT.
+              The container ships empty: the unauthenticated "Login" button is
+              rendered here at runtime by src/app.js, and replaced by the
+              "Admin Panel" + "Sign out" controls once a privileged user signs
+              in. Unauthenticated visitors never receive admin markup at all.
+            -->
+            <div id="auth-slot" class="flex items-center gap-2"></div>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Breaking news ticker (rendered from the store) -->
+      <div id="breaking-banner-slot"></div>
+
+      <!-- Notification opt-in / ad-blocker warning (rendered by src/views/alerts.js) -->
+      <div
+        id="alert-optin-bar"
+        class="no-print border-b border-ink/10 bg-paper-dark text-ink"
+        hidden
+      ></div>
+    </header>
+
+    <!-- ======================= MAIN ======================= -->
+    <main id="main-content" class="mx-auto max-w-7xl px-4 py-8" tabindex="-1">
+      <!-- Public publication view -->
+      <section id="publication-view" aria-label="Publication"></section>
+
+      <!-- Owner Control Center (injected only for privileged sessions) -->
+      <section
+        id="admin-view"
+        class="hidden"
+        aria-label="Owner Control Center"
+      ></section>
+    </main>
+
+    <!-- ======================= FOOTER ======================= -->
+    <footer class="surface-sunken rule-soft border-t">
+      <div class="mx-auto max-w-7xl px-4 py-10">
+        <div class="grid gap-8 md:grid-cols-3">
+          <div>
+            <h2
+              id="masthead-foot"
+              class="font-headline text-2xl font-black tracking-[0.06em] uppercase"
+            >
+              THE WIRE
+            </h2>
+            <p class="mt-2 text-sm ink-muted">
+              Nakuru Press Club. Every dispatch is verified, attributed and
+              independently auditable.
+            </p>
+          </div>
+          <div>
+            <h3 class="text-xs font-bold tracking-[0.16em] uppercase">Sections</h3>
+            <ul class="mt-3 space-y-2 text-sm ink-muted">
+              <li><a class="nav-link" href="#latest">Latest Coverage</a></li>
+              <li><a class="nav-link" href="#weekly">Weekly Features</a></li>
+              <li><a class="nav-link" href="#gallery">Photo Gallery</a></li>
+              <li>
+                <a class="nav-link" href="#assignments">Assignment Board</a>
+              </li>
+            </ul>
+          </div>
+          <div>
+            <h3 class="text-xs font-bold tracking-[0.16em] uppercase">
+              Standards
+            </h3>
+            <ul class="mt-3 space-y-2 text-sm ink-muted">
+              <li>Corrections published within 24 hours</li>
+              <li>Sources named wherever possible</li>
+              <li>Owner workspace fully audited</li>
+            </ul>
+          </div>
+        </div>
+        <p class="rule-soft mt-8 border-t pt-6 text-center text-xs ink-muted">
+          &#169; <span id="footer-year">2026</span> The Wire &#8212; Nakuru Press Club. All
+          rights reserved.
+        </p>
+      </div>
+    </footer>
+
+    <!-- ======================= LOGIN MODAL ======================= -->
+    <div
+      id="auth-modal"
+      class="modal-backdrop hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="auth-modal-title"
+    >
+      <div class="modal-card relative w-full max-w-md p-6 md:p-8">
+        <button
+          type="button"
+          class="btn-quiet absolute top-4 right-4"
+          data-close-dialog="auth-modal"
+          aria-label="Close sign-in dialog"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+
+        <div class="text-center">
+          <span
+            class="mx-auto flex h-12 w-12 items-center justify-center rounded-full"
+            style="background: var(--accent); color: var(--accent-contrast)"
+            aria-hidden="true"
+          >
+            <i class="fa-solid fa-newspaper"></i>
+          </span>
+          <h2
+            id="auth-modal-title"
+            class="mt-4 font-headline text-2xl font-black tracking-wide uppercase"
+          >
+            Owner Sign In
+          </h2>
+          <p class="mt-1 text-xs ink-muted" id="auth-modal-subtitle">
+            Access the Wire Editorial Control Suite.
+          </p>
+        </div>
+
+
+        <!-- Tab switch: Sign in / Create account -->
+        <div
+          class="mt-6 grid grid-cols-2 gap-1 rounded-lg p-1"
+          role="tablist"
+          aria-label="Authentication mode"
+          style="background: var(--surface-sunken)"
+        >
+          <button
+            id="auth-tab-signin"
+            class="btn auth-tab"
+            role="tab"
+            aria-selected="true"
+            aria-controls="auth-form-signin"
+            data-auth-mode="signin"
+          >
+            Sign In
+          </button>
+          <button
+            id="auth-tab-signup"
+            class="btn auth-tab"
+            role="tab"
+            aria-selected="false"
+            aria-controls="auth-form-signup"
+            data-auth-mode="signup"
+          >
+            Create Account
+          </button>
+        </div>
+
+        <p
+          id="auth-backend-note"
+          class="mt-3 rounded-md border px-3 py-2 text-[0.6875rem] leading-relaxed ink-muted"
+          hidden
+        ></p>
+
+        <p
+          id="auth-error"
+          class="mt-3 hidden rounded-md px-3 py-2 text-xs font-semibold"
+          role="alert"
+          style="
+            background: color-mix(in srgb, #b3261a 14%, transparent);
+            color: #b3261a;
+            border: 1px solid color-mix(in srgb, #b3261a 35%, transparent);
+          "
+        ></p>
+        <p
+          id="auth-success"
+          class="mt-3 hidden rounded-md px-3 py-2 text-xs font-semibold"
+          role="status"
+          style="
+            background: color-mix(in srgb, #10b981 14%, transparent);
+            color: #047857;
+            border: 1px solid color-mix(in srgb, #10b981 35%, transparent);
+          "
+        ></p>
+
+        <!-- SIGN IN -->
+        <form
+          id="auth-form-signin"
+          class="mt-5 space-y-3"
+          role="tabpanel"
+          aria-labelledby="auth-tab-signin"
+          novalidate
+        >
+          <div>
+            <label class="field-label" for="auth-signin-login">
+              Username
+            </label>
+            <input
+              id="auth-signin-login"
+              class="field"
+              type="text"
+              name="username"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              placeholder="grace.wanjiku"
+              required
+            />
+            <p class="mt-1 text-[0.6875rem] ink-muted">
+              Staff sign in with their username, not an e-mail address.
+            </p>
+          </div>
+          <div>
+            <label class="field-label" for="auth-signin-password">Password</label>
+            <div class="relative">
+              <input
+                id="auth-signin-password"
+                class="field pr-10"
+                type="password"
+                name="password"
+                autocomplete="current-password"
+                placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;"
+                required
+              />
+              <button
+                type="button"
+                class="btn-quiet absolute top-1/2 right-2 -translate-y-1/2"
+                data-toggle-password="auth-signin-password"
+                aria-label="Show password"
+              >
+                <i class="fa-solid fa-eye" aria-hidden="true"></i>
+              </button>
+            </div>
+          </div>
+          <label
+            class="flex items-center gap-2 text-xs ink-muted"
+            for="auth-remember"
+          >
+            <input
+              id="auth-remember"
+              type="checkbox"
+              class="h-3.5 w-3.5 accent-[var(--accent)]"
+              checked
+            />
+            Keep me signed in on this device
+          </label>
+          <button type="submit" class="btn btn-accent w-full">
+            <i class="fa-solid fa-right-to-bracket" aria-hidden="true"></i>
+            Sign In
+          </button>
+          <button
+            type="button"
+            class="btn-quiet w-full text-xs"
+            id="auth-forgot-password"
+          >
+            Forgot your password?
+          </button>
+        </form>
+
+        <!-- SIGN UP -->
+        <form
+          id="auth-form-signup"
+          class="mt-5 hidden space-y-3"
+          role="tabpanel"
+          aria-labelledby="auth-tab-signup"
+          novalidate
+        >
+          <div>
+            <label class="field-label" for="auth-signup-name">Full name</label>
+            <input
+              id="auth-signup-name"
+              class="field"
+              type="text"
+              name="name"
+              autocomplete="name"
+              placeholder="Grace Wanjiku"
+            />
+          </div>
+          <div>
+            <label class="field-label" for="auth-signup-login">
+              Username
+            </label>
+            <input
+              id="auth-signup-login"
+              class="field"
+              type="text"
+              name="username"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              placeholder="grace.wanjiku"
+              required
+            />
+            <p class="mt-1 text-[0.6875rem] ink-muted">
+              3-32 characters: letters, numbers, dot, dash or underscore. No
+              e-mail address is needed.
+            </p>
+          </div>
+          <div>
+            <label class="field-label" for="auth-signup-password">
+              Password (min. 8 characters)
+            </label>
+            <div class="relative">
+              <input
+                id="auth-signup-password"
+                class="field pr-10"
+                type="password"
+                name="password"
+                autocomplete="new-password"
+                required
+              />
+              <button
+                type="button"
+                class="btn-quiet absolute top-1/2 right-2 -translate-y-1/2"
+                data-toggle-password="auth-signup-password"
+                aria-label="Show password"
+              >
+                <i class="fa-solid fa-eye" aria-hidden="true"></i>
+              </button>
+            </div>
+          </div>
+          <p class="text-[0.6875rem] leading-relaxed ink-muted">
+            New accounts start as readers. Owner rights are granted by an
+            existing owner from the Staff Roster inside the control suite. Forgot
+            your password? An owner can reset it from that same roster.
+          </p>
+          <button type="submit" class="btn btn-accent w-full">
+            <i class="fa-solid fa-user-plus" aria-hidden="true"></i>
+            Create Account
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- ======================= ARTICLE MODAL ======================= -->
+    <div
+      id="article-modal"
+      class="modal-backdrop hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="article-modal-title"
+    >
+      <div class="modal-card relative w-full max-w-3xl">
+        <button
+          type="button"
+          class="btn-quiet absolute top-4 right-4 z-10"
+          data-close-dialog="article-modal"
+          aria-label="Close article"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+        <div id="article-modal-body" class="scroll-area max-h-[92vh]"></div>
+      </div>
+    </div>
+
+    <!-- ======================= GALLERY LIGHTBOX ======================= -->
+    <!-- Opened by tapping any published photograph in the gallery section. -->
+    <div
+      id="lightbox"
+      class="modal-backdrop hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="lightbox-caption"
+    >
+      <div class="modal-card relative w-full max-w-4xl p-3 sm:p-4">
+        <button
+          type="button"
+          id="lightbox-close"
+          class="btn-quiet absolute top-3 right-3 z-10"
+          data-close-dialog="lightbox"
+          aria-label="Close image"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+        <img
+          id="lightbox-image"
+          class="max-h-[78vh] w-full rounded object-contain"
+          alt=""
+        />
+        <p id="lightbox-caption" class="mt-3 px-1 text-center text-sm ink-muted"></p>
+      </div>
+    </div>
+
+    <!-- ======================= ALERT PERMISSION GATE ======================= -->
+    <!-- Shown before any notification is ever delivered to a reader. -->
+    <div
+      id="alert-gate"
+      class="modal-backdrop hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="alert-gate-title"
+    >
+      <div class="modal-card relative w-full max-w-lg p-6 sm:p-7">
+        <div class="mb-4 flex items-start gap-3 pr-8">
+          <i class="fa-solid fa-bell mt-1 text-lg text-newsred" aria-hidden="true"></i>
+          <h2 id="alert-gate-title" class="font-headline text-xl leading-tight font-bold">
+            Turn on alerts for The Wire
+          </h2>
+        </div>
+
+        <div id="alert-gate-body"></div>
+
+        <div class="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button type="button" id="alert-gate-dismiss" class="btn btn-ghost">
+            Not now
+          </button>
+          <button type="button" id="alert-gate-allow" class="btn btn-accent">
+            <i class="fa-solid fa-bell" aria-hidden="true"></i>
+            <span>Turn on alerts</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======================= SEARCH MODAL ======================= -->
+    <div
+      id="search-modal"
+      class="modal-backdrop hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="search-modal-title"
+    >
+      <div class="modal-card relative w-full max-w-2xl p-6">
+        <button
+          type="button"
+          class="btn-quiet absolute top-4 right-4"
+          data-close-dialog="search-modal"
+          aria-label="Close search"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+        <h2 id="search-modal-title" class="sr-only">Search the archive</h2>
+        <label class="field-label" for="search-input">Search the archive</label>
+        <div class="relative mt-1">
+          <input
+            id="search-input"
+            class="field pl-9"
+            type="search"
+            placeholder="Headline, byline or section…"
+            autocomplete="off"
+          />
+          <i
+            class="fa-solid fa-magnifying-glass absolute top-1/2 left-3 -translate-y-1/2 text-xs ink-muted"
+            aria-hidden="true"
+          ></i>
+        </div>
+        <div
+          id="search-results"
+          class="scroll-area mt-4 max-h-80 space-y-2"
+          aria-live="polite"
+        ></div>
+      </div>
+    </div>
+  </body>
+</html>
