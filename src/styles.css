@@ -732,48 +732,16 @@
     display: block;
   }
 
-  /* Lock page scroll behind the workspace so only the panel scrolls.
-     NOTE: this is deliberately declared BEFORE the phone media query further
-     down. Both rules have identical specificity, so source order decides — with
-     the lock last it always won and Android could never scroll the workspace. */
-  body.admin-active {
-    overflow: hidden;
-  }
-
-  /*
-    MODAL SCROLL LOCK
-
-    Applied by openDialog() in dom.js. This used to be set as an inline
-    `document.body.style.overflow = 'hidden'`, which outranks every stylesheet
-    rule — so a lock left over from a dialog that was still open when the Owner
-    Control Center mounted could never be cleared, and the workspace was
-    unscrollable on a phone. As a class it sits in the normal cascade and yields
-    to the phone media query below, where the document is the scroller again.
-  */
-  body.dialog-locked {
-    overflow: hidden;
-  }
-
-  /*
-    FULL-BLEED HOST
-    The workspace is a fixed-height app shell (100dvh), but it is injected into
-    <main class="mx-auto max-w-7xl px-4 py-8">. Inheriting that container's
-    max-width and padding left the panel narrower than the window and 100dvh
-    taller than its parent, which produced a permanent horizontal scrollbar and
-    a vertical one that could not be scrolled away from. While the workspace is
-    open, the host stretches to the viewport edge and drops its padding so the
-    shell owns the whole screen.
-  */
-  body.admin-active #main-content {
-    max-width: none;
-    padding: 0;
-    width: 100%;
-  }
-  body.admin-active #admin-view {
-    display: block;
-    width: 100%;
-    max-width: 100%;
-  }
+  /* The page scroll lock and the full-bleed / hide-public-chrome rules that let
+     the workspace own the whole screen now live UNLAYERED, further down this
+     file. They used to sit here, inside `@layer components`, and so were
+     silently losing to the Tailwind utility layer: `<main id="main-content">`
+     carries `mx-auto max-w-7xl px-4 py-8`, and because `@layer utilities` is
+     declared after `@layer components`, the utilities won on layer order no
+     matter how specific the selector was. A 100dvh shell therefore sat inside a
+     padded, width-capped box, below the fold, in a body locked with
+     `overflow: hidden` — so the Owner panel could not be scrolled at all.
+     See "OWNER WORKSPACE LAYOUT OVERRIDES" below. */
 
   /*
     HORIZONTAL SCALING
@@ -900,7 +868,80 @@
   }
 }
 
+/* =============================================================================
+   OWNER WORKSPACE LAYOUT OVERRIDES  —  DELIBERATELY OUTSIDE EVERY @layer
+   -----------------------------------------------------------------------------
+   These rules are unlayered on purpose. `@layer components` is declared before
+   `@layer utilities` in this file, and Tailwind's own layer order means a
+   utility ALWAYS beats a component regardless of how specific the component
+   selector is. `<main id="main-content">` carries `mx-auto max-w-7xl px-4 py-8`,
+   so the `padding: 0` / `max-width: none` below used to be applied inside the
+   components layer and silently discarded. Unlayered rules sit above all layers,
+   so they now actually take effect.
+
+   The bug they fix: the shell is a 100dvh app shell, but it was being rendered
+   inside a padded, width-capped <main> that was itself below the site header.
+   The document grew to ~1600px inside a 900px viewport while `body` was locked
+   with `overflow: hidden`, so the lower half of the Owner Control Center could
+   not be reached by any means — the reported "I can't scroll the owner panel".
+   ========================================================================== */
+
+body.admin-active #main-content {
+  max-width: none;
+  padding: 0;
+  width: 100%;
+  margin: 0;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+body.admin-active #admin-view {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* <header> and <footer> are SIBLINGS of <main>, so the full-bleed rules above
+   never reached them. Left in flow they wrapped a 100dvh shell and pushed the
+   workspace roughly 400px down the page. */
+body.admin-active > header,
+body.admin-active > footer {
+  display: none !important;
+}
+
+/* MODAL SCROLL LOCK — set by openDialog() in dom.js. This was once an inline
+   `document.body.style.overflow`, which outranks every stylesheet rule, so a
+   lock left over from a dialog still open when the workspace mounted could never
+   be cleared. As a class it participates in the normal cascade. */
+body.admin-active,
+body.admin-active.dialog-locked {
+  overflow: hidden;
+}
+
+/* On a phone the document becomes the scroller again: Android animates the
+   dynamic viewport as its URL bar collapses, so an inner-pane scroller plus a
+   locked body strands content below the fold. These must mirror the phone
+   overrides inside @layer components. */
+@media (max-width: 63.999rem) {
+  body.admin-active,
+  body.admin-active.dialog-locked {
+    overflow: auto;
+    overscroll-behavior-y: contain;
+  }
+  body.admin-active #main-content {
+    height: auto;
+    min-height: 100svh;
+    overflow: visible;
+  }
+  body.admin-active #admin-view {
+    height: auto;
+    overflow: visible;
+  }
+}
 /* 5b. APP STATE HOOKS -------------------------------------------------------- */
+
 @layer components {
   /* Auth modal mode tabs (Sign in / Create account). */
   .auth-tab {
