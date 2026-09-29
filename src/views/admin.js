@@ -18,7 +18,14 @@
    ========================================================================== */
 
 import * as store from '../lib/store.js';
-import { signOut, isAdmin } from '../lib/auth.js';
+import {
+  signOut,
+  isAdmin,
+  listAccounts,
+  approveAccount,
+  rejectAccount,
+  setAccountPassword
+} from '../lib/auth.js';
 import { config, describeBackend } from '../lib/config.js';
 import {
   sendBroadcastToDevices,
@@ -1105,6 +1112,74 @@ function articleEditorDialog() {
   `;
 }
 
+/** Set a new password for somebody. The old one is never revealed. */
+function passwordResetDialog() {
+  return `
+    <div
+      id="account-password-dialog"
+      class="modal-backdrop hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="account-password-title"
+    >
+      <div class="modal-card relative w-full max-w-md p-6">
+        <button
+          type="button"
+          class="btn-quiet absolute top-4 right-4"
+          data-close-dialog="account-password-dialog"
+          aria-label="Close"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+        <h3
+          id="account-password-title"
+          class="font-headline text-xl font-black tracking-wide uppercase"
+        >
+          Reset password
+        </h3>
+        <p class="ink-muted mt-2 text-sm">
+          Set a new password for <strong id="account-password-name"></strong> and
+          pass it to them out of band. Every session they currently have is
+          revoked at the same time.
+        </p>
+        <form id="account-password-form" class="mt-4 space-y-3" novalidate>
+          <div>
+            <label class="field-label" for="account-password-new">New password</label>
+            <input
+              id="account-password-new"
+              class="field"
+              type="password"
+              minlength="8"
+              autocomplete="new-password"
+              required
+            />
+            <p class="ink-muted mt-1 text-xs">At least 8 characters.</p>
+          </div>
+          <div>
+            <label class="field-label" for="account-password-confirm">Confirm</label>
+            <input
+              id="account-password-confirm"
+              class="field"
+              type="password"
+              minlength="8"
+              autocomplete="new-password"
+              required
+            />
+          </div>
+          <div class="flex justify-end gap-2 pt-1">
+            <button type="button" class="btn btn-ghost" data-close-dialog="account-password-dialog">
+              Cancel
+            </button>
+            <button type="submit" class="btn btn-accent">
+              <i class="fa-solid fa-key" aria-hidden="true"></i> Set password
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
 /** Create/edit a staff record. */
 function staffEditorDialog() {
   return `
@@ -1258,8 +1333,317 @@ function assignmentEditorDialog() {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Tab registry                                                                */
+/* Tab — Accounts (login approvals + roles)                                     */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Accounts waiting on a decision come from `wire_list_accounts()`, which is
+ * owner-gated in the database. Cache the latest response so switching tabs back
+ * and forth is instant, and repaint when a fresh fetch lands.
+ */
+let accountsCache = null;
+
+/** Roles the database will accept (mirrors the CHECK on staff_accounts.role). */
+const ACCOUNT_ROLES = ['Owner', 'Editor', 'Reporter'];
+
+/**
+ * Tab renderers return an HTML string that `paintActiveTab` assigns to
+ * `innerHTML`. Accounts are fetched asynchronously, so this returns a loading
+ * placeholder on the first paint and fills itself in when they arrive.
+ */
+function renderAccountsTab() {
+  const body = byId('admin-tab-body');
+  if (!body) return '';
+
+  if (accountsCache) return accountsPanel(accountsCache);
+
+  loadAccounts().then((rows) => {
+    accountsCache = rows;
+    // The tab may have been switched or the panel closed while we waited.
+    if (!body.isConnected || body.dataset.tab !== 'accounts') return;
+    body.innerHTML = accountsPanel(rows);
+  });
+
+  return `<div class="panel-sunken p-10 text-center">
+    <i class="fa-solid fa-circle-notch spin-slow ink-muted text-xl" aria-hidden="true"></i>
+    <p class="ink-muted mt-3 text-sm">Loading accounts…</p>
+  </div>`;
+}
+
+/**
+ * Fetch the account list, distinguishing "you are not allowed to see this"
+ * from "there is genuinely nothing to approve" so the Owner is never shown an
+ * empty queue that is actually a permissions failure.
+ * @returns {Promise<Array<object>|null>} rows, or null when the read failed
+ */
+async function loadAccounts() {
+  try {
+    const rows = await listAccounts();
+    return Array.isArray(rows) ? rows : [];
+  } catch (error) {
+    console.warn('[admin] could not load accounts', error);
+    return null;
+  }
+}
+
+function accountsPanel(rows) {
+  // null means the read failed — do NOT present that as "no requests".
+  if (rows === null) {
+    return `
+      <div class="space-y-5">
+        ${panelHeader('Accounts', 'Could not read the account list')}
+        <div class="panel-raised p-6 text-sm">
+          <p class="flex items-center gap-2 font-bold">
+            <i class="fa-solid fa-triangle-exclamation ink-muted" aria-hidden="true"></i>
+            The account list could not be loaded
+          </p>
+          <p class="ink-muted mt-2">
+            Only the Owner can read this list, and the table lives in
+            <code>supabase/credentials.sql</code>. If you have not run that
+            migration yet, run it in the Supabase SQL Editor and reopen this tab.
+          </p>
+        </div>
+      </div>
+    `;
+  }
+
+  const pending = rows.filter((a) => String(a.status).toLowerCase() === 'pending');
+  const approved = rows.filter((a) => String(a.status).toLowerCase() === 'active');
+  const staff = approved.filter((a) => !a.is_owner);
+
+  return `
+    <div class="space-y-5">
+      ${panelHeader(
+        'Account approvals',
+        pending.length
+          ? `${pending.length} request${pending.length === 1 ? '' : 's'} waiting on you`
+          : 'No outstanding requests',
+        `<button class="btn btn-ghost" data-action="accounts-refresh">
+           <i class="fa-solid fa-rotate" aria-hidden="true"></i> Refresh
+         </button>`
+      )}
+
+      <p class="panel-sunken p-4 text-xs ink-muted">
+        Anyone who registers lands in the <strong>pending</strong> queue and
+        <strong>cannot sign in</strong> until you approve them here. Approving
+        also sets their role, which decides what they may do once inside.
+        <code>Owner</code> is deliberately not offered for approval — there is
+        exactly one Owner, and transferring it is a separate, deliberate act.
+      </p>
+
+      ${panelHeader(
+        'Waiting for approval',
+        pending.length
+          ? `${pending.length} request${pending.length === 1 ? '' : 's'}`
+          : 'Queue is empty'
+      )}
+
+      ${
+        pending.length
+          ? `<ul class="space-y-3">${pending.map(accountRow).join('')}</ul>`
+          : emptyState('No one is waiting for approval.', 'fa-user-check')
+      }
+
+      ${panelHeader(
+        'Approved accounts',
+        `${approved.length} with access`
+      )}
+
+      ${
+        approved.length
+          ? `<div class="panel-raised overflow-x-auto">
+               <table class="w-full text-left text-sm">
+                 <thead class="rule-soft border-b">
+                   <tr class="ink-muted text-[0.65rem] tracking-[0.12em] uppercase">
+                     <th scope="col" class="px-4 py-3">Name</th>
+                     <th scope="col" class="px-4 py-3">Username</th>
+                     <th scope="col" class="px-4 py-3">Role</th>
+                     <th scope="col" class="px-4 py-3">Status</th>
+                     <th scope="col" class="px-4 py-3"><span class="sr-only">Actions</span></th>
+                   </tr>
+                 </thead>
+                 <tbody class="divide-y rule-soft">
+                   ${approved.map(approvedAccountRow).join('')}
+                 </tbody>
+               </table>
+             </div>`
+          : emptyState('No approved accounts yet.', 'fa-users')
+      }
+
+      ${
+        staff.length
+          ? `<p class="ink-muted text-xs">
+               Removing somebody signs them out and deletes their account; they
+               would have to register again. To keep somebody on the books but
+               lock them out, change their role to <strong>Reporter</strong>
+               instead.
+             </p>`
+          : ''
+      }
+    </div>
+  `;
+}
+
+/** A pending request, with its role chosen at the moment of approval. */
+function accountRow(account) {
+  const id = escapeHtml(account.id || '');
+
+  return `
+    <li class="panel-raised p-4">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div class="min-w-0">
+          <p class="font-headline text-base font-bold">
+            ${escapeHtml(account.display_name || account.username || 'Unnamed')}
+          </p>
+          <p class="ink-muted text-sm">
+            <span class="font-mono">@${escapeHtml(account.username || '')}</span>
+            · requested ${escapeHtml(formatAccountDate(account.created_at))}
+          </p>
+        </div>
+
+        <div class="flex flex-wrap items-end gap-2">
+          <div>
+            <label class="field-label" for="role-${id}">Role</label>
+            <select id="role-${id}" class="field" data-account-role="${id}">
+              ${['Editor', 'Reporter']
+                .map(
+                  (role) =>
+                    `<option value="${escapeHtml(role)}" ${
+                      role === 'Editor' ? 'selected' : ''
+                    }>${escapeHtml(role)}</option>`
+                )
+                .join('')}
+            </select>
+          </div>
+          <button class="btn btn-accent" data-action="account-approve" data-id="${id}">
+            <i class="fa-solid fa-check" aria-hidden="true"></i> Approve
+          </button>
+          <button class="btn btn-ghost" data-action="account-reject" data-id="${id}">
+            <i class="fa-solid fa-xmark" aria-hidden="true"></i> Refuse
+          </button>
+        </div>
+      </div>
+    </li>
+  `;
+}
+
+/** An already-approved account: change role, reset password, or remove. */
+function approvedAccountRow(account) {
+  const id = escapeHtml(account.id || '');
+  const isOwner = Boolean(account.is_owner);
+  const username = escapeHtml(account.username || '');
+
+  return `
+    <tr>
+      <td class="px-4 py-3 font-semibold">
+        ${escapeHtml(account.display_name || '—')}
+        ${isOwner ? '<span class="badge badge-gold ml-2">You</span>' : ''}
+      </td>
+      <td class="ink-muted px-4 py-3 font-mono text-xs">@${username}</td>
+      <td class="px-4 py-3">
+        ${
+          isOwner
+            ? `<span class="font-semibold">${escapeHtml(account.role || 'Owner')}</span>`
+            : `<select class="field" data-account-role="${id}" data-account-saved="${id}"
+                     aria-label="Role for @${username}">
+                 ${ACCOUNT_ROLES.filter((r) => r !== 'Owner')
+                   .map(
+                     (role) =>
+                       `<option value="${escapeHtml(role)}" ${
+                         role === account.role ? 'selected' : ''
+                       }>${escapeHtml(role)}</option>`
+                   )
+                   .join('')}
+               </select>`
+        }
+      </td>
+      <td class="px-4 py-3">
+        <span class="badge badge-emerald">Active</span>
+      </td>
+      <td class="px-4 py-3">
+        <div class="flex justify-end gap-1">
+          <button class="btn btn-quiet" data-action="account-password" data-id="${id}"
+            data-username="${username}" title="Reset password"
+            aria-label="Reset password for @${username}">
+            <i class="fa-solid fa-key" aria-hidden="true"></i>
+          </button>
+          ${
+            isOwner
+              ? ''
+              : `<button class="btn btn-quiet" data-action="account-remove" data-id="${id}"
+                   data-username="${username}" title="Remove account"
+                   aria-label="Remove @${username}">
+                   <i class="fa-solid fa-user-minus" aria-hidden="true"></i>
+                 </button>`
+          }
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+/** A short date for the approvals queue. */
+function formatAccountDate(value) {
+  if (!value) return 'recently';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'recently';
+  return date.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  });
+}
+
+/** Repaint the tab after an approval changed the list. */
+async function reloadAccounts() {
+  accountsCache = null;
+  paintActiveTab();
+  accountsCache = await loadAccounts();
+  if (activeTab === 'accounts') paintActiveTab();
+}
+
+/** The account whose password is being reset, and the id it will be written to. */
+let passwordResetId = null;
+
+/** Open the reset dialog, pre-labelled with the account being changed. */
+function openPasswordResetDialog(id, username) {
+  passwordResetId = id;
+  const label = byId('account-password-name');
+  if (label) label.textContent = username ? `@${username}` : 'this account';
+
+  const newField = byId('account-password-new');
+  const confirmField = byId('account-password-confirm');
+  if (newField) newField.value = '';
+  if (confirmField) confirmField.value = '';
+
+  openDialog('account-password-dialog', { initialFocus: '#account-password-new' });
+}
+
+/** Write the new password. The old one is never seen or sent. */
+async function savePasswordFromForm() {
+  const next = byId('account-password-new')?.value || '';
+  const again = byId('account-password-confirm')?.value || '';
+
+  if (next.length < 8) {
+    showToast('Passwords must be at least 8 characters long.', { type: 'error' });
+    byId('account-password-new')?.focus();
+    return;
+  }
+  if (next !== again) {
+    showToast('The two passwords do not match.', { type: 'error' });
+    byId('account-password-confirm')?.focus();
+    return;
+  }
+  if (!passwordResetId) return;
+
+  await setAccountPassword(passwordResetId, next);
+
+  passwordResetId = null;
+  closeDialog('account-password-dialog');
+  showToast('Password updated. Their existing sessions were signed out.', {
+    type: 'success'
+  });
+}
 
 /** Every workspace tab: label, icon, renderer. */
 /* -------------------------------------------------------------------------- */
@@ -1473,6 +1857,7 @@ function portraitBadge(status) {
 const TABS = [
   { id: 'overview', label: 'Overview', icon: 'fa-gauge-high', render: renderOverview },
   { id: 'content', label: 'Content', icon: 'fa-newspaper', render: renderContent },
+  { id: 'accounts', label: 'Accounts', icon: 'fa-user-check', render: renderAccountsTab },
   { id: 'assignments', label: 'Assignments', icon: 'fa-clipboard-list', render: renderAssignmentsTab },
   { id: 'breaking', label: 'Breaking', icon: 'fa-bolt', render: renderBreakingTab },
   { id: 'broadcasts', label: 'Broadcasts', icon: 'fa-paper-plane', render: renderBroadcastsTab },
@@ -1586,6 +1971,7 @@ function shellMarkup() {
       ${articleEditorDialog()}
       ${staffEditorDialog()}
       ${assignmentEditorDialog()}
+      ${passwordResetDialog()}
     </div>
   `;
 }
@@ -1715,6 +2101,9 @@ function attachAdminListeners() {
       // the Save button did a full page submit and silently reloaded.
       event.preventDefault();
       guard(() => saveBrandingFromForm(form));
+    } else if (form.id === 'account-password-form') {
+      event.preventDefault();
+      guard(() => savePasswordFromForm(form));
     } else if (form.dataset.creditsForm) {
       // One form per person on the Credits tab, identified by the staff id.
       event.preventDefault();
@@ -1937,6 +2326,19 @@ function handleChange(event) {
       paintActiveTab();
     });
     return;
+  }
+
+  /* --- Account roles ------------------------------------------------------- */
+  // Only a *saved* row (an approved account) writes immediately. On a pending
+  // request the role is just the value to be used by the Approve button, so
+  // changing it must not persist anything.
+  if (target instanceof HTMLSelectElement && target.dataset.accountSaved) {
+    const id = target.dataset.accountSaved;
+    guard(async () => {
+      await approveAccount(id, target.value);
+      showToast(`Role updated to ${target.value}.`, { type: 'success' });
+      await reloadAccounts();
+    });
   }
 }
 
@@ -2197,7 +2599,7 @@ function handleClick(event) {
   const trigger = event.target.closest('[data-action]');
   if (!trigger) return;
 
-  const { action, id, title, name, filter, status } = trigger.dataset;
+  const { action, id, title, name, filter, status, username } = trigger.dataset;
 
   switch (action) {
     /* --- navigation --- */
@@ -2375,6 +2777,59 @@ function handleClick(event) {
           await store.resetLocalData();
           paintActiveTab();
           showToast('Local data reset to defaults.', { type: 'success' });
+        });
+      }
+      break;
+
+    /* --- account approvals --- */
+    case 'accounts-refresh':
+      guard(async () => {
+        await reloadAccounts();
+        showToast('Account list refreshed.', { type: 'success' });
+      });
+      break;
+
+    case 'account-approve': {
+      // The role chosen in the row's <select> is applied at approval time.
+      const role = document.querySelector(`[data-account-role="${id}"]`)?.value || 'Editor';
+      guard(async () => {
+        await approveAccount(id, role);
+        showToast(`Account approved as ${role}.`, { type: 'success' });
+        await reloadAccounts();
+      });
+      break;
+    }
+
+    case 'account-reject':
+      if (
+        window.confirm(
+          username
+            ? `Refuse the request from @${username}? They will not be able to sign in.`
+            : 'Refuse this request? They will not be able to sign in.'
+        )
+      ) {
+        guard(async () => {
+          await rejectAccount(id);
+          showToast('Request refused.', { type: 'success' });
+          await reloadAccounts();
+        });
+      }
+      break;
+
+    case 'account-password':
+      openPasswordResetDialog(id, username);
+      break;
+
+    case 'account-remove':
+      if (
+        window.confirm(
+          `Remove @${username}? They will be signed out immediately and will have to register again.`
+        )
+      ) {
+        guard(async () => {
+          await rejectAccount(id);
+          showToast(`@${username} removed.`, { type: 'success' });
+          await reloadAccounts();
         });
       }
       break;
