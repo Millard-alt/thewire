@@ -7,6 +7,9 @@ Every admin control in the original static HTML has been converted into a real,
 authenticated, database-backed workspace — nothing is a mock, and no privileged
 markup ships to unauthenticated visitors.
 
+See [CHANGELOG.md](CHANGELOG.md) for what has shipped and what is still pending,
+and [DEPLOY.md](DEPLOY.md) for the production launch checklist.
+
 ---
 
 ## Quick start
