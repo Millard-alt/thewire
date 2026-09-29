@@ -170,6 +170,46 @@ export async function setCredits(staffId, patch) {
 /* Helpers                                                                     */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The Owner attaching a portrait to a staffer's row, e.g. at the moment they
+ * hire them. Separate from `wire_submit_portrait`, which can only ever write the
+ * caller's OWN row and so is useless from the Staff editor.
+ *
+ * Passing an empty string clears the portrait.
+ * @param {string} staffId
+ * @param {string} url
+ */
+export async function assignPortrait(staffId, url) {
+  const client = getSupabase();
+  if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
+
+  const { error } = await client.rpc('wire_assign_portrait', {
+    p_staff_id: staffId,
+    p_url: String(url || '').trim()
+  });
+
+  if (error) {
+    if (/wire_assign_portrait/.test(String(error?.message || ''))) {
+      return {
+        ok: false,
+        message:
+          'The newsroom server is missing the new portrait function. Re-run supabase/005_portraits_and_credits.sql in the Supabase SQL editor.'
+      };
+    }
+    if (/only the Owner/.test(String(error?.message || ''))) {
+      return { ok: false, message: 'Only the Owner can attach a portrait to another record.' };
+    }
+    return { ok: false, message: describe(error, 'portrait') };
+  }
+
+  return {
+    ok: true,
+    message: url
+      ? 'Portrait saved and approved. It will appear with this editor’s bylines.'
+      : 'Portrait cleared.'
+  };
+}
+
 /** Turn a Postgres error into something a newsroom owner can act on. */
 function describe(error, what) {
   const text = error?.message || '';

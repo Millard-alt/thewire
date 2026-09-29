@@ -122,7 +122,9 @@ export function createSeedState() {
         id: 'seed-staff-1',
         name: 'Chief Owner',
         username: 'owner',
-        email: 'chief.owner@example.com',
+        // The Owner's real mailbox. Every other staffer is reached through a
+        // hidden shadow address derived from their username, never a real inbox.
+        email: 'melvinjonespressclub@gmail.com',
         role: 'Owner',
         status: 'Active'
       },

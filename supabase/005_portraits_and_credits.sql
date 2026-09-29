@@ -165,6 +165,62 @@ grant  execute on function public.wire_set_portrait_status(uuid, text) to authen
 
 grant  execute on function public.wire_submit_portrait(text) to authenticated;
 
+-- -----------------------------------------------------------------------------
+--  The Owner attaching a portrait at the moment they hire someone.
+--  `wire_submit_portrait` only ever writes the CALLER's own row (resolved from
+--  their JWT), so it cannot be used from the Staff editor to give a brand-new
+--  staffer a portrait. This is the missing half: it writes a named row, and is
+--  therefore restricted to the Owner.
+--
+--  Status is set to 'approved' rather than 'pending' on purpose. The Owner is the
+--  one who chose this photo at the moment they created the account, so there is
+--  nothing left for a second reviewer to check -- and making the Owner approve
+--  their own upload would leave every new hire stuck in a queue that only clears
+--  from the Credits tab.
+-- -----------------------------------------------------------------------------
+create or replace function public.wire_assign_portrait(p_staff_id uuid, p_url text)
+returns public.staff
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row public.staff;
+begin
+  if not public.is_staff() then
+    raise exception 'not on the staff roster';
+  end if;
+
+  -- Owner only. is_staff() is true for every staffer, so without this a
+  -- staffer could attach a portrait to anybody else's row.
+  if not exists (
+    select 1 from public.staff
+    where auth_user_id = auth.uid() and role = 'Owner' and status = 'Active'
+  ) then
+    raise exception 'only the Owner can attach a portrait to another record';
+  end if;
+
+  if p_url is null or length(trim(p_url)) = 0 or length(p_url) > 600 then
+    raise exception 'invalid portrait url';
+  end if;
+
+  update public.staff
+     set portrait_url     = trim(p_url),
+         portrait_status  = case when trim(p_url) = '' then 'none' else 'approved' end
+   where id = p_staff_id
+  returning * into v_row;
+
+  if v_row.id is null then
+    raise exception 'staff record not found';
+  end if;
+
+  return v_row;
+end;
+$$;
+
+revoke all on function public.wire_assign_portrait(uuid, text) from public;
+grant  execute on function public.wire_assign_portrait(uuid, text) to authenticated;
+
 
 create or replace function public.wire_set_credits(
   p_staff_id    uuid,

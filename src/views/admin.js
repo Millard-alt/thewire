@@ -37,6 +37,8 @@ import {
   listCredits,
   listRoster,
   setPortraitStatus,
+  assignPortrait,
+  primePortraits,
   isCreditsMigrationMissing,
   setCredits
 } from '../lib/credits.js';
@@ -715,6 +717,7 @@ function renderStaffTab() {
         <table class="w-full text-left text-sm">
           <thead class="rule-soft border-b">
             <tr class="ink-muted text-[0.65rem] tracking-[0.12em] uppercase">
+              <th scope="col" class="px-4 py-3">Portrait</th>
               <th scope="col" class="px-4 py-3">Name</th>
               <th scope="col" class="px-4 py-3">E-mail</th>
               <th scope="col" class="px-4 py-3">Role</th>
@@ -729,6 +732,17 @@ function renderStaffTab() {
                     .map(
                       (member) => `
               <tr>
+                <td class="px-4 py-3">
+                  ${
+                    safeUrl(member.portrait_url)
+                      ? `<img class="byline-sticker" src="${escapeHtml(
+                          safeUrl(member.portrait_url)
+                        )}" alt="" width="48" height="48" loading="lazy" decoding="async" />`
+                      : `<span class="byline-sticker byline-sticker-empty" aria-hidden="true">
+                           <i class="fa-solid fa-user"></i>
+                         </span>`
+                  }
+                </td>
                 <td class="px-4 py-3 font-semibold">
                   ${escapeHtml(member.name)}
                   <span class="ink-muted block text-[0.7rem] font-normal">
@@ -756,7 +770,7 @@ function renderStaffTab() {
               </tr>`
                     )
                     .join('')
-                : `<tr><td colspan="5" class="px-4 py-8 text-center">
+                : `<tr><td colspan="6" class="px-4 py-8 text-center">
                      ${emptyState('No staff records yet.', 'fa-users')}
                    </td></tr>`
             }
@@ -766,8 +780,11 @@ function renderStaffTab() {
 
       <p class="ink-muted text-xs">
         <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
-        Creating a staff row does not create a login. In production, invite the
-        person from Supabase Auth first, then link them here by e-mail.
+        Adding a staffer here creates their newsroom account directly. They sign
+        in with their <strong>username</strong> and the password you set in
+        Accounts, and their portrait is published with every story they file.
+        To feature them on the public Credits page, open the
+        <strong>Credits</strong> tab.
       </p>
     </div>
   `;
@@ -1241,6 +1258,37 @@ function staffEditorDialog() {
               </select>
             </div>
           </div>
+
+          <div class="panel-sunken space-y-3 p-4">
+            <div>
+              <label class="field-label" for="staff-portrait-file">
+                Portrait <span class="ink-muted font-normal">(required)</span>
+              </label>
+              <input
+                id="staff-portrait-file"
+                class="field"
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/avif"
+              />
+            </div>
+            <div>
+              <label class="field-label" for="staff-portrait-url">
+                …or paste an image URL
+              </label>
+              <input
+                id="staff-portrait-url"
+                class="field"
+                type="url"
+                placeholder="https://…"
+              />
+            </div>
+            <p class="text-xs ink-muted">
+              <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+              This portrait appears beside every story they write, and on the
+              public Credits page. A square, face-cropped image works best.
+            </p>
+          </div>
+
           <div class="flex justify-end gap-2 pt-2">
             <button
               type="button"
@@ -2192,16 +2240,73 @@ async function saveStaffFromForm(form) {
     return;
   }
 
+  // A portrait is mandatory for a new hire: it is what identifies their bylines
+  // and credits entry. Editing an existing record may leave the field untouched,
+  // so only the create path demands one.
+  const isNew = !editingStaffId;
+  const urlField = byId('staff-portrait-url');
+  const pendingFile = byId('staff-portrait-file')?.files?.[0];
+
+  if (isNew && !pendingFile && !urlField.value.trim()) {
+    showToast('Add a portrait — it appears with everything they publish.', {
+      type: 'error'
+    });
+    return;
+  }
+
+  let portraitUrl = urlField.value.trim();
+  if (pendingFile) {
+    const busy = showToast('Uploading the portrait…', { type: 'info', duration: 0 });
+    try {
+      const { url, isLocal } = await uploadImage(pendingFile);
+      portraitUrl = url;
+      busy.remove();
+      if (isLocal) {
+        showToast('Storage is offline, so the portrait stayed in this browser.', {
+          type: 'info'
+        });
+      }
+    } catch (error) {
+      busy.remove();
+      showToast(error.message || 'Portrait upload failed.', { type: 'error' });
+      return;
+    }
+  }
+
+  let member;
   if (editingStaffId) {
-    await store.updateStaff(editingStaffId, payload);
+    member = await store.updateStaff(editingStaffId, payload);
+    if (member && portraitUrl) {
+      const result = await assignPortrait(editingStaffId, portraitUrl);
+      if (!result.ok) showToast(result.message, { type: 'error' });
+    }
     showToast('Staff record updated.', { type: 'success' });
   } else {
-    await store.createStaff(payload);
-    showToast('Staff record provisioned.', { type: 'success' });
+    member = await store.createStaff(payload);
+
+    // Attach the portrait to the row the database just gave us. Without the id
+    // returned by createStaff there is nothing to attach it to.
+    if (member?.id && portraitUrl) {
+      const result = await assignPortrait(member.id, portraitUrl);
+      if (result.ok) {
+        showToast('Staffer added, with portrait.', { type: 'success' });
+      } else {
+        showToast(`Staffer added, but the portrait failed: ${result.message}`, {
+          type: 'error',
+          duration: 6000
+        });
+      }
+    } else {
+      showToast('Staffer added, but no portrait was saved.', { type: 'error' });
+    }
+
+    // Keep the byline stickers in step without a page reload.
+    await primePortraits();
   }
 
   editingStaffId = null;
   closeDialog('staff-editor');
+  creditsRoster = null;
   paintActiveTab();
 }
 
@@ -2566,6 +2671,12 @@ function openStaffEditor(staffId) {
   byId('staff-email').value = member?.email ?? '';
   byId('staff-role').value = member?.role ?? 'Editor';
   byId('staff-status').value = member?.status ?? 'Active';
+
+  // Always start from a blank portrait field. The file input keeps its value
+  // across dialog openings, so without this the photo picked for one staffer
+  // would silently attach to the next person the Owner hires.
+  byId('staff-portrait-url').value = '';
+  if (byId('staff-portrait-file')) byId('staff-portrait-file').value = '';
 
   openDialog('staff-editor', { initialFocus: '#staff-name' });
 }

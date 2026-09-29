@@ -377,9 +377,10 @@ function renderTodaysPick(todaysPick) {
         <h3 class="mt-3 font-headline text-2xl leading-tight font-black md:text-3xl">
           <a href="${href}" class="text-link">${escapeHtml(todaysPick.title)}</a>
         </h3>
-        <p class="mt-2 text-[0.6875rem] ink-muted">
-          By ${escapeHtml(todaysPick.author)} Â· ${escapeHtml(todaysPick.date)}
-        </p>
+        ${bylineSticker(todaysPick.author, {
+          cls: 'mt-2 text-[0.6875rem] ink-muted',
+          suffix: ` · ${todaysPick.date}`
+        })}
         ${todaysPick.caption ? `<p class="mt-3 text-xs italic ink-muted">${escapeHtml(todaysPick.caption)}</p>` : ''}
         <button type="button" class="btn btn-primary mt-4" data-read="${escapeHtml(todaysPick.id)}">
           <i class="fa-solid fa-book-open" aria-hidden="true"></i>
@@ -496,9 +497,9 @@ export async function openArticle(id) {
         <h2 id="article-modal-title" class="mt-3 font-headline text-2xl leading-tight font-black md:text-4xl">
           ${escapeHtml(article.title)}
         </h2>
-        <p class="mt-2 text-xs font-semibold tracking-wide uppercase ink-muted">
-          By ${escapeHtml(article.author)}
-        </p>
+        ${bylineSticker(article.author, {
+          cls: 'mt-2 text-xs font-semibold tracking-wide uppercase ink-muted'
+        })}
         <div class="first-letter-cap mt-2">${paragraphs || '<p class="mt-4">This dispatch has no body copy yet.</p>'}</div>
       </div>
     </article>
@@ -530,7 +531,11 @@ export function runSearch(query) {
         <button type="button" class="panel-sunken w-full p-3 text-left hover:opacity-80" data-search-id="${escapeHtml(article.id)}">
           <span class="accent-text block text-[0.625rem] font-bold tracking-[0.14em] uppercase">${escapeHtml(article.category)}</span>
           <span class="mt-1 block font-headline text-base font-bold">${escapeHtml(article.title)}</span>
-          <span class="mt-0.5 block text-[0.6875rem] ink-muted">By ${escapeHtml(article.author)} Â· ${escapeHtml(article.date)}</span>
+          ${bylineSticker(article.author, {
+            tag: 'span',
+            cls: 'mt-0.5 block text-[0.6875rem] ink-muted',
+            suffix: ` · ${article.date}`
+          })}
         </button>`
       )
       .join('');
@@ -549,7 +554,11 @@ export function runSearch(query) {
         <button type="button" class="panel-sunken w-full p-3 text-left hover:opacity-80" data-search-id="${escapeHtml(article.id)}">
           <span class="accent-text block text-[0.625rem] font-bold tracking-[0.14em] uppercase">${escapeHtml(article.category)}</span>
           <span class="mt-1 block font-headline text-base font-bold">${escapeHtml(article.title)}</span>
-          <span class="mt-0.5 block text-[0.6875rem] ink-muted">By ${escapeHtml(article.author)} Â· ${escapeHtml(article.date)}</span>
+          ${bylineSticker(article.author, {
+            tag: 'span',
+            cls: 'mt-0.5 block text-[0.6875rem] ink-muted',
+            suffix: ` · ${article.date}`
+          })}
         </button>`
           )
           .join('')
