@@ -48,6 +48,39 @@ its step 4 calls `wire_request_account` exactly as the browser does, asserts the
 row lands as a pending Writer, then deletes it. A migration that cannot create a
 Writer does not count as a repair.
 
+### 1a. First paste attempt FAILED — and rolled back the fix with it
+
+```
+ERROR: 42710: constraint "staff_accounts_role_check" for relation
+       "staff_accounts" already exists
+```
+
+The SQL Editor runs a pasted script in one implicit transaction, so that error
+discarded **everything** in the paste, including the function redefinitions from
+steps 1 and 2. **Signup is still broken** — nothing was applied.
+
+Three separate defects in that revision, all of which would have failed on a
+perfectly healthy database. This is the recurring lesson of this bug: a step
+that "has nothing to change" must be a genuine no-op, never a step that can fail.
+
+1. **Step 3 dropped the constraint only when it was already correct** — its
+   guard tested `definition not ilike '%board manager%'`, which is false
+   precisely when the constraint lists all three roles. So it skipped the drop
+   and the unconditional `ADD` then raised 42710. Now it discovers every CHECK on
+   the role column by name from `pg_constraint` and drops them all,
+   unconditionally, so the step is idempotent in both the "already correct" and
+   "stale" cases.
+2. **The probe username began with `_`**, which `wire_request_account` rejects
+   via `^[a-z0-9][a-z0-9._-]{2,31}$`. It would have raised before ever reaching
+   the INSERT.
+3. **`select id, role, status into ...` from a function returning `jsonb`**
+   raises `column id does not exist` — the result is one jsonb document, not a
+   three-field composite. It now reads the keys with `->>`.
+
+All three were caught by static review, not by execution: this machine has no
+`psql`, no Docker and no Supabase CLI, so **the SQL has still never been run.**
+It is reviewed, not verified.
+
 Also folded into the same file: `wire_approve_account` had
 `p_role default 'Editor'` and a guard reading
 `if v_role not in ('Owner','Editor','Board Manager')` — which *rejected* `Writer`,

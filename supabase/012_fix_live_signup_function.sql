@@ -167,32 +167,65 @@ $$;
 
 -- 3. Make sure the CHECK really is the three-role set.
 --
---    Already correct on the live database, so this is a no-op there. It exists
---    so a FRESH database built from an older credentials.sql is also correct.
---    The fold runs FIRST so a stray legacy row cannot make the ADD below fail
---    and roll the entire paste back.
+--    ALREADY CORRECT on the live database, so this step has nothing to change
+--    there. It exists so a FRESH database built from an older credentials.sql is
+--    also correct, which means it MUST be safe to run when the constraint is
+--    already present and correct.
+--
+--    The previous revision was not. It dropped the constraint only if its
+--    definition did NOT mention 'Board Manager' -- i.e. only if it was already
+--    correct, because that is the case where it lists all three roles -- and then
+--    unconditionally re-added it. So on a correct database it skipped the drop
+--    and the ADD raised:
+--       ERROR: 42710: constraint "staff_accounts_role_check" already exists
+--    The Supabase SQL Editor runs a pasted script in one implicit transaction,
+--    so that error rolled back steps 1 and 2 as well: the function fixes were
+--    discarded too and signup stayed broken. A step that "has nothing to change"
+--    must be a genuine no-op, never a step that can fail on a healthy database.
+--
+--    Drop by NAME via pg_constraint, discovering the actual name(s) from the
+--    system catalog rather than assuming this one, then add exactly one. Drop
+--    unconditionally instead of conditionally: dropping and re-adding a CHECK
+--    costs nothing, and it is the only form that is idempotent under both the
+--    "already correct" and "stale" cases.
+--
+--    The row fold runs FIRST, so a stray legacy value cannot make the ADD fail
+--    and roll the whole paste back -- the same trap as above.
 update public.staff_accounts
    set role = 'Writer'
  where role is not null
    and lower(trim(role)) in ('editor', 'reporter');
 
 do $$
+declare
+  v_name text;
 begin
-  if exists (
-    select 1
+  -- Every CHECK that depends on the role column, whatever it is called.
+  for v_name in
+    select c.conname
       from pg_constraint c
       join pg_class t     on t.oid = c.conrelid
       join pg_namespace n on n.oid = t.relnamespace
      where t.relname = 'staff_accounts'
        and n.nspname = 'public'
        and c.contype = 'c'
-       and pg_get_constraintdef(c.oid) ilike '%role%'
-       and pg_get_constraintdef(c.oid) not ilike '%board manager%'
-  ) then
-    alter table public.staff_accounts drop constraint staff_accounts_role_check;
-  end if;
+       and exists (
+             select 1
+               from pg_attribute a
+              where a.attrelid = c.conrelid
+                and a.attname   = 'role'
+                and a.attnum    = any (c.conkey)
+           )
+  loop
+    execute format(
+      'alter table public.staff_accounts drop constraint %I', v_name);
+    raise notice 'dropped stale CHECK on staff_accounts.role: %', v_name;
+  end loop;
 end;
 $$;
+
+alter table public.staff_accounts
+  drop constraint if exists staff_accounts_role_check;
 
 alter table public.staff_accounts
   add constraint staff_accounts_role_check
@@ -205,6 +238,18 @@ alter table public.staff_accounts
 --    the original bug: it calls wire_request_account exactly as the browser
 --    does, asserts the row landed as a pending Writer, then deletes it.
 --
+--    Both of the following were wrong in the first revision of this probe and
+--    would have raised on an otherwise healthy database, rolling the paste back
+--    a second time:
+--      1. The probe username was '__sql_probe_' || ... , but wire_request_account
+--         validates with ^[a-z0-9][a-z0-9._-]{2,31}$ -- the leading underscore is
+--         rejected, so the call raised 'Username must be 3-32 characters' before
+--         it ever reached the INSERT. The prefix now starts with a letter.
+--      2. `select id, role, status into ...` from a function returning `jsonb`
+--         raises "column id does not exist": the single result column is the
+--         whole jsonb document, not a composite with three fields. Reading the
+--         keys out of the document is what actually works.
+--
 --    Why an exception block and not a savepoint: PL/pgSQL runs statements
 --    through SPI, and SPI refuses transaction control inside a function, so
 --    `savepoint` / `rollback to` is a syntax error (42601) that kills the script
@@ -213,14 +258,17 @@ alter table public.staff_accounts
 --    rolls the statement back on its own.
 do $$
 declare
-  v_probe_id   uuid;
+  v_out       jsonb;
+  v_probe_id  uuid;
   v_probe_role text;
   v_probe_stat text;
-  v_probe_user text := '__sql_probe_' || substr(md5(random()::text), 1, 8);
+  v_probe_user text := 'probe' || substr(md5(random()::text), 1, 8);
 begin
-  select id, role, status
-    into v_probe_id, v_probe_role, v_probe_stat
-    from public.wire_request_account(v_probe_user, 'Sql Probe', 'probe-password-123');
+  v_out := public.wire_request_account(v_probe_user, 'Sql Probe', 'probe-password-123');
+
+  v_probe_id  := nullif(v_out ->> 'id', '')::uuid;
+  v_probe_role := v_out ->> 'role';
+  v_probe_stat := v_out ->> 'status';
 
   if v_probe_id is null then
     raise exception 'PROBE FAILED: wire_request_account returned no id. Signup is still broken.';
@@ -228,7 +276,7 @@ begin
 
   if v_probe_role <> 'Writer' or v_probe_stat <> 'pending' then
     raise exception 'PROBE FAILED: got role=% status=%, expected Writer/pending.',
-      v_probe_role, v_probe_stat;
+      coalesce(v_probe_role, '(null)'), coalesce(v_probe_stat, '(null)');
   end if;
 
   delete from public.staff_accounts where id = v_probe_id;
