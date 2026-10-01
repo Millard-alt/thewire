@@ -1,4 +1,4 @@
-﻿/* =============================================================================
+/* =============================================================================
    src/lib/auth.js â€” AUTHENTICATION (username + password, no Supabase Auth)
    -----------------------------------------------------------------------------
    Staff authenticate with a USERNAME and a password. Nothing else â€” no e-mail
@@ -115,14 +115,32 @@ async function currentUsername() {
  * 'Photographer'; neither survived review, and the database rejected both,
  * so they were removed rather than left as dead options in a dropdown.
  */
-export const ROLES = ['Editor', 'Board Manager', 'Owner'];
+export const ROLES = ['Writer', 'Board Manager', 'Owner'];
 
-/** Higher wins. Unknown or missing roles rank lowest, never highest. */
-const ROLE_RANK = { Editor: 1, 'Board Manager': 2, Owner: 3 };
+/**
+ * Higher wins. Unknown or missing roles rank lowest, never highest.
+ *
+ * The keys MUST be drawn from ROLES. This map used to be keyed `Editor` while
+ * ROLES said `Writer`, so `roleAtLeast('Writer', 'Writer')` looked up two
+ * undefined entries, fell back to `0 >= 99`, and returned FALSE. Every
+ * non-owner-only tab was therefore filtered out for every role including the
+ * Owner's own: a Writer saw no tabs at all and the Owner saw only the four
+ * `ownerOnly` ones. The panel looked "mostly empty" rather than throwing, which
+ * is why this survived so long.
+ */
+const ROLE_RANK = { Writer: 1, 'Board Manager': 2, Owner: 3 };
+
+/** Legacy spellings, mapped onto the current vocabulary. */
+const LEGACY_ROLES = {
+  reporter: 'Writer',
+  editor: 'Writer',
+  'managing editor': 'Board Manager',
+  photographer: 'Board Manager'
+};
 
 /**
  * Coerce whatever the database returned into one of the three known roles.
- * Anything unrecognised becomes 'Editor' -- the weakest role -- so an unknown
+ * Anything unrecognised becomes 'Writer' -- the weakest role -- so an unknown
  * or corrupted value can never accidentally grant more access than intended.
  */
 export function normaliseRole(value) {
@@ -130,12 +148,9 @@ export function normaliseRole(value) {
   for (const candidate of ROLES) {
     if (candidate.toLowerCase() === role) return candidate;
   }
-  // Tolerate the historical name so an account provisioned under the old
+  // Tolerate the historical names so an account provisioned under the old
   // vocabulary keeps its access instead of silently dropping to the bottom.
-  if (role === 'reporter' || role === 'managing editor' || role === 'photographer') {
-    return role === 'reporter' ? 'Editor' : 'Board Manager';
-  }
-  return 'Editor';
+  return LEGACY_ROLES[role] || 'Writer';
 }
 
 /**
@@ -176,7 +191,7 @@ function toSession(account) {
   // `isAdmin` only means "may open the workspace at all". It deliberately does
   // NOT mean "is the Owner": every active account gets a panel, but only the
   // Owner gets the privileged tabs. This was the bug that handed the whole
-  // Owner Control Center to Editors.
+  // Newsroom Panel to Writers.
   return { user, isAdmin: active, isOwner, role };
 }
 
@@ -219,7 +234,7 @@ export function isSignedIn() {
   return Boolean(session);
 }
 
-/** True when the signed-in user may open the Owner Control Center. */
+/** True when the signed-in user may open the Newsroom Panel. */
 export function isAdmin() {
   return Boolean(session?.isAdmin);
 }
@@ -277,14 +292,14 @@ function demoSignIn(login, password) {
   };
   // In demo mode there is no account table to consult, so roles are simulated
   // from the configured allow-list:
-  //   - no allow-list configured  -> a single-Editor demo workspace
+  //   - no allow-list configured  -> a single Owner demo workspace
   //   - the FIRST entry           -> the Owner seat (mirrors the first-run claim
   //                                  in credentials.sql)
   //   - any other entry           -> Board Manager
-  //   - anybody else              -> Editor
+  //   - anybody else              -> Writer
   // Everybody gets a panel, exactly as in production: `isAdmin` means "may open
   // the workspace", and the role decides which tabs appear. Someone outside the
-  // allow-list therefore lands on the Editor Desk, not on a dead end. That also
+  // allow-list therefore lands on the Writer Desk, not on a dead end. That also
   // means the demo can be used to review the per-role gating without handing
   // the Owner seat to a stranger.
   const allow = config.adminUsernames;
@@ -296,7 +311,7 @@ function demoSignIn(login, password) {
     ? 'Owner'
     : listed
       ? 'Board Manager'
-      : 'Editor';
+      : 'Writer';
 
   user.role = role;
   user.isOwner = role === 'Owner';
@@ -484,7 +499,7 @@ export async function listAccounts() {
  * @param {string} id
  * @param {string} [role]
  */
-export async function approveAccount(id, role = 'Editor') {
+export async function approveAccount(id, role = 'Writer') {
   if (config.demoMode || !getSupabase()) return null;
   return rpc('wire_approve_account', { p_id: id, p_role: role });
 }

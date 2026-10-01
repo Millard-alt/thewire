@@ -4,7 +4,7 @@
    Renders the reader-facing newspaper: the breaking-news ticker, Today's Pick,
    the latest front-page grid, the three weekly feature slots, the public
    assignment board and the archive search. All content comes from the store,
-   so anything the owner publishes in the control centre appears here on the
+   so anything the owner publishes in the Newsroom Panel appears here on the
    next state change without a page reload.
    ========================================================================== */
 
@@ -243,7 +243,7 @@ export function renderPublication() {
               ${lead ? articleCard(lead, { showBody: true, size: 'lg' }) : ''}
               ${rest.map((article) => articleCard(article)).join('')}
             </div>`
-          : `<p class="panel p-6 text-sm ink-muted">The archive is empty. Publish a story from the Owner Control Center to see it here.</p>`
+          : `<p class="panel p-6 text-sm ink-muted">The archive is empty. Publish a story from the Newsroom Panel to see it here.</p>`
       }
     </section>
 
@@ -295,7 +295,7 @@ function renderGallery() {
   const shots = store.listGallery();
 
   if (!shots.length) {
-    return `<p class="panel p-6 text-sm ink-muted">No photographs have been published to the gallery yet. The Owner can publish any image from the Media shelf in the Control Center.</p>`;
+    return `<p class="panel p-6 text-sm ink-muted">No photographs have been published to the gallery yet. The Owner can publish any image from the Media shelf in the Newsroom Panel.</p>`;
   }
 
   return `

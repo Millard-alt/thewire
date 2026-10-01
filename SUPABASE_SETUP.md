@@ -77,13 +77,13 @@ Staff sign in by username, so the account is created with the **shadow address**
 The `is_staff()` policy matches on `shadow_email` for this first sign-in, then
 on `auth_user_id` afterwards, so you do not have to paste the user's UUID.
 
-Once signed in, additional staff can be created from the **Owner Control
-Center → Staff**, which provisions the Supabase account for you.
+Once signed in, additional staff can be created from the **Newsroom Panel
+→ Staff**, which provisions the Supabase account for you.
 
 ## 6. Seed the publication
 
 The database starts empty, so the front page will show "The archive is empty."
-Publish from **Owner Control Center → Articles**, or import the demo content
+Publish from **Newsroom Panel → Articles**, or import the demo content
 with this snippet:
 
 ```sql
@@ -113,7 +113,7 @@ Variables** for Production and Preview. Vite inlines them at build time, so
 - Signed in as a non-`VITE_ADMIN_USERNAMES` account, there must be **no**
   Admin Panel button, and browsing the Supabase tables must return nothing
   (that is RLS doing its job, not the client).
-- **Control Center → Audit log** should record every privileged action.
+- **Newsroom Panel → Audit log** should record every privileged action.
 - Open the browser console: the red demo-mode banner must be **absent**.
 
 ## Troubleshooting

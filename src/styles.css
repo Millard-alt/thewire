@@ -11,7 +11,7 @@
      3. Semantic CSS variables that flip between light and dark
      4. Components: surfaces, rules, buttons, fields, panels, badges
      5. Components: dialogs, toasts, switches, nav underline
-     6. Components: the Owner Control Center shell
+     6. Components: the Newsroom Panel shell
      7. Newspaper detail: halftone, drop cap, washi tape
      8. Utilities, keyframes, reduced-motion + print fallbacks
    ========================================================================== */
@@ -902,7 +902,7 @@
    The bug they fix: the shell is a 100dvh app shell, but it was being rendered
    inside a padded, width-capped <main> that was itself below the site header.
    The document grew to ~1600px inside a 900px viewport while `body` was locked
-   with `overflow: hidden`, so the lower half of the Owner Control Center could
+   with `overflow: hidden`, so the lower half of the Newsroom Panel could
    not be reached by any means — the reported "I can't scroll the owner panel".
    ========================================================================== */
 

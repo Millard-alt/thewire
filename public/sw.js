@@ -2,7 +2,7 @@
    THE WIRE — SERVICE WORKER
    -----------------------------------------------------------------------------
    Receives real Web Push messages and displays native OS notifications, so a
-   broadcast from the Owner Control Center genuinely pops up on a phone.
+   broadcast from the Newsroom Panel genuinely pops up on a phone.
 
    Also handles clicks: tapping a notification focuses an existing tab rather
    than opening a duplicate one, then routes the reader to the broadcast link.
@@ -153,7 +153,7 @@ self.addEventListener('notificationclick', (event) => {
 /**
  * In-page sends. The owner panel can raise a notification on the device it is
  * open on without a round trip through the database, which is what makes the
- * "Send a test alert" button in the Control Center genuinely useful.
+ * "Send a test alert" button in the Newsroom Panel genuinely useful.
  */
 self.addEventListener('message', (event) => {
   const data = event.data || {};

@@ -75,7 +75,7 @@ If that is `undefined`, the build did not receive the variable and the site has
 silently fallen back to demo mode. It will *look* fine — full styling, full
 navigation, sample articles — which is exactly why this failure is easy to miss.
 
-The Owner Control Center also shows `Backend: Supabase connected` on the
+The Newsroom Panel also shows `Backend: Supabase connected` on the
 overview tab. If it says `Local demo store`, stop and fix the env vars.
 
 ---
@@ -120,7 +120,7 @@ encrypted environment. It signs the Web Push request; a leaked key lets an
 attacker push fake alerts to your entire subscriber list.
 
 **Until that sender exists, broadcasts are in-app only.** They notify devices
-that currently have The Wire open. That limit is stated in the Control Center so
+that currently have The Wire open. That limit is stated in the Newsroom Panel so
 it cannot mislead you.
 
 ---

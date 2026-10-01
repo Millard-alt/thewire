@@ -138,7 +138,7 @@ export async function setPortraitStatus(staffId, status) {
     ok: true,
     message:
       status === 'approved'
-        ? 'Portrait approved. It now appears with this editor’s bylines.'
+        ? 'Portrait approved. It now appears with this writer’s bylines.'
         : status === 'rejected'
           ? 'Portrait rejected. It stays hidden until a new one is approved.'
           : 'Portrait cleared.'
@@ -205,7 +205,7 @@ export async function assignPortrait(staffId, url) {
   return {
     ok: true,
     message: url
-      ? 'Portrait saved and approved. It will appear with this editor’s bylines.'
+      ? 'Portrait saved and approved. It will appear with this writer’s bylines.'
       : 'Portrait cleared.'
   };
 }

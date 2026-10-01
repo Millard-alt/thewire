@@ -107,7 +107,7 @@ let openDialogCount = 0;
 /**
  * Drop every outstanding dialog scroll lock.
  *
- * The Owner Control Center is a full-screen view that mounts while dialogs may
+ * The Newsroom Panel is a full-screen view that mounts while dialogs may
  * still be registered in the counter. Without this reset the stale lock keeps
  * the page unscrollable, which is what made the workspace unusable on Android.
  */
@@ -161,7 +161,7 @@ export function openDialog(target, { initialFocus } = {}) {
 
   This used to be an inline `document.body.style.overflow = 'hidden'`. An inline
   style outranks every stylesheet rule, so if a dialog was still open when the
-  Owner Control Center mounted, the lock survived and the workspace could never
+  Newsroom Panel mounted, the lock survived and the workspace could never
   be scrolled on a phone — the page looked frozen with half the screen hidden
   behind the tab strip.
 

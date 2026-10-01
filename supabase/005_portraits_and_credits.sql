@@ -1,5 +1,5 @@
 -- =============================================================================
---  MIGRATION 005 — PORTRAITS (selfies) + CREDITS PAGE
+--  MIGRATION 005 - PORTRAITS (selfies) + CREDITS PAGE
 -- =============================================================================
 --  Adds to public.staff:
 --    portrait_url      public URL of the approved, face-cropped selfie

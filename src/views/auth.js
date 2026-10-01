@@ -1,4 +1,4 @@
-﻿/* =============================================================================
+/* =============================================================================
    src/views/auth.js â€” LOGIN MODAL + HEADER AUTH SLOT
    -----------------------------------------------------------------------------
    Two responsibilities:
@@ -377,7 +377,7 @@ async function handleSignUp(form) {
 function handleForgotPassword() {
   setAuthMessage(
     'info',
-    'Passwords are reset by the Owner from the Staff roster in the Control Center. ' +
+    'Passwords are reset by the Owner from the Staff roster in the Newsroom Panel. ' +
       'Ask the Owner to reset it for you â€” it takes effect immediately.'
   );
 }

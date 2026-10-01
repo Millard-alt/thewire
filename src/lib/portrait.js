@@ -232,9 +232,14 @@ export async function publishPortrait() {
   if (!session?.user) {
     return { ok: false, message: 'Sign in before uploading a portrait.' };
   }
-  // The Owner is exempt: the gate exists to verify editors, and whether the
+  // The Owner is exempt: the gate exists to verify writers, and whether the
   // Owner appears publicly is already controlled by `credits_visible`.
-  if (session.isAdmin) {
+  //
+  // `isOwner`, NOT `isAdmin`. Since the roles were split, `isAdmin` means "this
+  // account may open the workspace at all" and is true for every active account
+  // including new writers. Testing it here exempted every writer from the
+  // portrait requirement entirely, which is the exact opposite of the intent.
+  if (session.isOwner) {
     return { ok: false, message: 'The Owner does not need a portrait to work.' };
   }
 
@@ -442,20 +447,24 @@ export function openPortraitEditor(file) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Has this editor satisfied the portrait requirement?
+ * Has this writer satisfied the portrait requirement?
  *
- * Returns true for the Owner (the gate exists to verify editors) and in demo
+ * Returns true for the Owner (the gate exists to verify writers) and in demo
  * mode (there is no server to approve against, so blocking would be a dead end).
+ *
+ * The Owner test is `isOwner`, not `isAdmin`. `isAdmin` is true for every active
+ * account since the roles were split, so using it here would exempt every writer
+ * from the requirement and leave the gate permanently open.
  */
 export function portraitRequirementMet(staffRow, session) {
   if (config.demoMode) return true;
-  if (session?.isAdmin) return true;
+  if (session?.isOwner) return true;
   return staffRow?.portrait_status === 'approved';
 }
 
 /**
- * Has this editor at least uploaded something, approved or not? A rejected
- * portrait still counts as "tried", which keeps the editor out of a loop where
+ * Has this writer at least uploaded something, approved or not? A rejected
+ * portrait still counts as "tried", which keeps the writer out of a loop where
  * the gate blocks the very screen they need to fix it.
  */
 export function portraitRequirementSatisfiable(staffRow) {

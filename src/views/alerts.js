@@ -1,4 +1,4 @@
-﻿/* =============================================================================
+/* =============================================================================
    src/views/alerts.js â€” READER NOTIFICATION GATE
    -----------------------------------------------------------------------------
    The publication's alerts are opt-in and the browser will only ever ask once,
@@ -345,7 +345,7 @@ export async function initAlerts() {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Send a broadcast from the Control Center and raise a real notification for it
+ * Send a broadcast from the Newsroom Panel and raise a real notification for it
  * on this device immediately.
  *
  * The record is written first so that every *other* opted-in device picks it up

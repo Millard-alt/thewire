@@ -1,6 +1,6 @@
 # The Wire — Nakuru Press Club
 
-A production-ready digital newspaper plus a full **Owner Control Center** for the
+A production-ready digital newspaper plus a full **Newsroom Panel** for the
 newsroom. Built with Vite 6, Tailwind CSS v4 and Supabase.
 
 Every admin control in the original static HTML has been converted into a real,
@@ -50,7 +50,7 @@ src/
   views/
     public.js            Reader-facing publication
     auth.js              Login modal + header auth slot
-    admin.js             Owner Control Center (10 tabs, full CRUD)
+    admin.js             Newsroom Panel (10 tabs, full CRUD)
 supabase/schema.sql      Tables, RLS policies, seed
 ```
 
@@ -177,7 +177,7 @@ consequences worth knowing:
 - Signed in → the slot swaps to an account chip with a dropdown, plus the
   **Admin Panel** button *only* when `session.isAdmin` is true. The chip shows
   the username, never the shadow address.
-- A session revoked in another tab immediately closes the control centre
+- A session revoked in another tab immediately closes the Newsroom Panel
   (`app.js` → `handleSessionChange`).
 - RLS is the real enforcement. Client-side checks are UX, not security.
 

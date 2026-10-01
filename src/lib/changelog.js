@@ -1,7 +1,7 @@
 /* =============================================================================
    src/lib/changelog.js — OWNER CHANGELOG FEED
    -----------------------------------------------------------------------------
-   Renders CHANGELOG.md inside the Owner Control Center.
+   Renders CHANGELOG.md inside the Newsroom Panel.
 
    The markdown file is imported raw at build time rather than re-typed as a
    JavaScript literal. That means the panel and the repository file can never

@@ -1,5 +1,5 @@
 /* =============================================================================
-   src/views/admin.js — OWNER CONTROL CENTER
+   src/views/admin.js — NEWSROOM PANEL
    -----------------------------------------------------------------------------
    The privileged workspace. It is only ever mounted by src/app.js after
    `isAdmin()` returns true, and it re-checks the session on every render, so a
@@ -341,11 +341,22 @@ function renderContent() {
                     : `<button class="btn btn-ghost" data-action="article-reject"
                         data-id="${escapeHtml(article.id)}">Unpublish</button>`
                 }
-                <button class="btn btn-quiet" data-action="article-delete"
+                ${
+                  // A writer may delete only their own articles; the Owner may
+                  // delete any. Enforced for real by the RLS policy in
+                  // supabase/007_article_ownership.sql -- this only keeps the
+                  // button honest so nobody clicks through to a database error.
+                  store.canDeleteArticle(article)
+                    ? `<button class="btn btn-quiet" data-action="article-delete"
                   data-id="${escapeHtml(article.id)}"
                   data-title="${escapeHtml(article.title)}">
                   <i class="fa-solid fa-trash" aria-hidden="true"></i>
-                  <span class="sr-only">Delete</span>
+                  <span class="sr-only">Delete</span>`
+                    : `<button class="btn btn-quiet" disabled
+                  title="You can only delete your own articles.">
+                  <i class="fa-solid fa-trash" aria-hidden="true"></i>
+                  <span class="sr-only">Delete</span>`
+                }
                 </button>
               </div>
             </div>
@@ -570,7 +581,7 @@ function renderBroadcastsTab() {
           <div>
             <label class="field-label" for="broadcast-audience">Audience</label>
             <select id="broadcast-audience" class="field">
-              ${['Everyone', 'Editors', 'Assignment Managers']
+              ${['Everyone', 'Writers', 'Assignment Managers']
                 .map((option) => `<option value="${option}">${option}</option>`)
                 .join('')}
             </select>
@@ -702,13 +713,17 @@ function renderCurationTab() {
 /* Tab 7 — Staff                                                               */
 /* -------------------------------------------------------------------------- */
 
-export const STAFF_ROLES = [
-  'Owner',
-  'Editor',
-  'Assignment Manager',
-  'Staff Writer',
-  'Contributor'
-];
+/**
+ * The roles a staffer profile may carry.
+ *
+ * These MUST match auth.ROLES exactly. This list used to offer five values
+ * ('Assignment Manager', 'Staff Writer', 'Contributor') that no CHECK
+ * constraint in the database accepts and that normaliseRole() collapsed to
+ * Writer anyway. The Owner picked one, the row was written, and the account
+ * then carried a role nothing else in the app could rank -- which is the
+ * "added a staffer but it does not save" report.
+ */
+export const STAFF_ROLES = ['Owner', 'Writer', 'Board Manager'];
 
 function renderStaffTab() {
   const staff = store.listStaff();
@@ -717,7 +732,7 @@ function renderStaffTab() {
     <div class="space-y-5">
       ${panelHeader(
         'Staff directory',
-        'Roles here are authoritative — they gate the Owner Control Center',
+        'Roles here are authoritative — they gate the Newsroom Panel',
         `<button class="btn btn-accent" data-action="staff-new">
            <i class="fa-solid fa-user-plus" aria-hidden="true"></i> Add staffer
          </button>`
@@ -1493,7 +1508,7 @@ let accountsCache = null;
  * one Owner seat, granted at first run, and it is not handed out through a
  * dropdown.
  */
-const ACCOUNT_ROLES = ['Editor', 'Board Manager'];
+const ACCOUNT_ROLES = ['Writer', 'Board Manager'];
 
 /**
  * What each role may actually do, in the Owner's words.
@@ -1521,7 +1536,7 @@ const ROLE_CAPABILITIES = {
     ['Approve portraits', true],
     ['Curate the credits board', true]
   ],
-  Editor: [
+  Writer: [
     ['Publish anything', true],
     ['Edit other people’s drafts', false],
     ['Send broadcasts', false],
@@ -1661,7 +1676,7 @@ function accountsPanel(rows) {
           ? `<p class="ink-muted text-xs">
                Removing somebody signs them out and deletes their account; they
                would have to register again. To keep somebody on the books but
-               lock them out, change their role to <strong>Editor</strong>
+               lock them out, change their role to <strong>Writer</strong>
                instead, which is the weakest role on the board.
              </p>`
           : ''
@@ -1715,7 +1730,7 @@ function roleGuide() {
         There is exactly one <strong>Owner</strong> — you. Approving somebody
         never makes them an Owner, so ownership cannot be handed over by
         accident. Change a person’s role from the
-        <strong>Approved accounts</strong> table above; an Editor who needs the
+        <strong>Approved accounts</strong> table above; a Writer who needs the
         breaking-news banner, broadcasts or the credits board can be promoted to
         Board Manager at any time.
       </p>
@@ -1747,7 +1762,7 @@ function accountRow(account) {
               ${ACCOUNT_ROLES.map(
                 (role) =>
                   `<option value="${escapeHtml(role)}" ${
-                    role === 'Editor' ? 'selected' : ''
+                    role === 'Writer' ? 'selected' : ''
                   }>${escapeHtml(role)}</option>`
               ).join('')}
             </select>
@@ -2100,7 +2115,7 @@ function portraitBadge(status) {
  *
  * Rendered straight from CHANGELOG.md, so this can never drift from the file in
  * the repository. Only the Owner sees this tab; other elevated roles can open
- * the Control Center but not read it.
+ * the Newsroom Panel but not read it.
  */
 function renderChangelogTab() {
   const releases = getReleases();
@@ -2213,10 +2228,10 @@ function inlineMarkdown(text) {
  * ranking — see visibleTabs().
  */
 const TABS = [
-  { id: 'overview', label: 'Overview', icon: 'fa-gauge-high', render: renderOverview, minRole: 'Editor' },
-  { id: 'content', label: 'Content', icon: 'fa-newspaper', render: renderContent, minRole: 'Editor' },
+  { id: 'overview', label: 'Overview', icon: 'fa-gauge-high', render: renderOverview, minRole: 'Writer' },
+  { id: 'content', label: 'Content', icon: 'fa-newspaper', render: renderContent, minRole: 'Writer' },
   { id: 'accounts', label: 'Accounts', icon: 'fa-user-check', render: renderAccountsTab, ownerOnly: true },
-  { id: 'assignments', label: 'Assignments', icon: 'fa-clipboard-list', render: renderAssignmentsTab, minRole: 'Editor' },
+  { id: 'assignments', label: 'Assignments', icon: 'fa-clipboard-list', render: renderAssignmentsTab, minRole: 'Writer' },
   { id: 'breaking', label: 'Breaking', icon: 'fa-bolt', render: renderBreakingTab, minRole: 'Board Manager' },
   { id: 'broadcasts', label: 'Broadcasts', icon: 'fa-paper-plane', render: renderBroadcastsTab, minRole: 'Board Manager' },
   { id: 'curation', label: 'Curation', icon: 'fa-star', render: renderCurationTab, minRole: 'Board Manager' },
@@ -2224,7 +2239,7 @@ const TABS = [
   { id: 'credits', label: 'Credits', icon: 'fa-id-badge', render: renderCreditsTab, minRole: 'Board Manager' },
   { id: 'changelog', label: 'Changelog', icon: 'fa-clock-rotate-left', render: renderChangelogTab, ownerOnly: true },
   { id: 'branding', label: 'Branding', icon: 'fa-font', render: renderBrandingTab, ownerOnly: true },
-  { id: 'media', label: 'Media', icon: 'fa-images', render: renderMediaTab, minRole: 'Editor' },
+  { id: 'media', label: 'Media', icon: 'fa-images', render: renderMediaTab, minRole: 'Writer' },
   { id: 'security', label: 'Security', icon: 'fa-shield-halved', render: renderSecurityTab, ownerOnly: true }
 ];
 
@@ -2236,22 +2251,22 @@ const TABS = [
  * consumer reads this list rather than TABS itself, so a gated tab is absent
  * from the nav, unreachable via selectTab(), and never rendered — there is no
  * separate check anywhere to forget. That is the fix for Editors previously
- * walking straight into the Owner Control Center.
+ * walking straight into the Newsroom Panel.
  */
 function visibleTabs() {
   const owner = isOwner();
   const role = currentRole();
   return TABS.filter((tab) => {
     if (tab.ownerOnly) return owner;
-    return roleAtLeast(role, tab.minRole || 'Editor');
+    return roleAtLeast(role, tab.minRole || 'Writer');
   });
 }
 
 /** The workspace name this role sees. Not every account is the Owner. */
 function workspaceTitle() {
-  if (isOwner()) return 'Owner Control Center';
+  if (isOwner()) return 'Newsroom Panel';
   if (roleAtLeast(currentRole(), 'Board Manager')) return 'Board Manager Desk';
-  return 'Editorial Desk';
+  return 'Writer Desk';
 }
 
 /** Repaint the active tab and sync the tab buttons. */
@@ -2312,7 +2327,7 @@ export function selectTab(tabId) {
 /* Shell                                                                       */
 /* -------------------------------------------------------------------------- */
 
-/** Full-page markup for the Owner Control Center. */
+/** Full-page markup for the Newsroom Panel. */
 function shellMarkup() {
   const tabButtons = visibleTabs().map(
     (tab) => `
@@ -2331,7 +2346,7 @@ function shellMarkup() {
       <header class="admin-topbar no-print">
         <div class="admin-topbar__left">
           <span class="badge badge-live">
-            <i class="fa-solid fa-lock" aria-hidden="true"></i> Owner Control Center
+            <i class="fa-solid fa-lock" aria-hidden="true"></i> Newsroom Panel
           </span>
           <button class="btn btn-ghost" data-action="close-admin">
             <i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to site
@@ -2376,7 +2391,7 @@ function shellMarkup() {
  */
 export function openAdmin() {
   if (!isAdmin()) {
-    showToast('You do not have access to the Owner Control Center.', {
+    showToast('You do not have access to the Newsroom Panel.', {
       type: 'error'
     });
     return false;
@@ -2443,7 +2458,7 @@ export function closeAdmin() {
   window.dispatchEvent(new Event('wire:settings-changed'));
 }
 
-/** True while the control centre is on screen. */
+/** True while the Newsroom Panel is on screen. */
 export function isAdminOpen() {
   return isMounted;
 }
@@ -2454,7 +2469,7 @@ export function isAdminOpen() {
 
 /**
  * Attach the delegated listeners the workspace needs. Guarded so re-opening the
- * control centre never stacks duplicate handlers.
+ * Newsroom Panel never stacks duplicate handlers.
  *
  * A single `click` listener on the document handles every `data-action` button,
  * so tabs and dialogs rendered after mount are covered automatically.
@@ -3015,7 +3030,7 @@ function openStaffEditor(staffId) {
   byId('staff-name').value = member?.name ?? '';
   byId('staff-username').value = member?.username ?? '';
   byId('staff-email').value = member?.email ?? '';
-  byId('staff-role').value = member?.role ?? 'Editor';
+  byId('staff-role').value = member?.role ?? 'Writer';
   byId('staff-status').value = member?.status ?? 'Active';
 
   // Always start from a blank portrait field. The file input keeps its value
@@ -3100,7 +3115,15 @@ function handleClick(event) {
         showToast('Article moved out of publication.');
       });
       break;
-    case 'article-delete':
+    case 'article-delete': {
+      // A writer may remove only their own byline. This hides the affordance,
+      // but the real check is the RLS policy in supabase/007 — the browser
+      // must not be the thing deciding who can delete what.
+      const article = store.listArticles().find((item) => item.id === id);
+      if (!store.canDeleteArticle(article)) {
+        showToast('You can only delete your own articles.', { type: 'error' });
+        break;
+      }
       if (askToDelete('article', title)) {
         guard(async () => {
           await store.deleteArticle(id);
@@ -3108,6 +3131,7 @@ function handleClick(event) {
         });
       }
       break;
+    }
 
     /* --- assignments --- */
     case 'assignment-new':
@@ -3280,7 +3304,7 @@ function handleClick(event) {
 
     case 'account-approve': {
       // The role chosen in the row's <select> is applied at approval time.
-      const role = document.querySelector(`[data-account-role="${id}"]`)?.value || 'Editor';
+      const role = document.querySelector(`[data-account-role="${id}"]`)?.value || 'Writer';
       guard(async () => {
         await approveAccount(id, role);
         showToast(`Account approved as ${role}.`, { type: 'success' });

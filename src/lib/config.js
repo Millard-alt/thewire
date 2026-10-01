@@ -180,7 +180,7 @@ export function usernameFor(user) {
 }
 
 /**
- * Decide whether a signed-in user may enter the Owner Control Center.
+ * Decide whether a signed-in user may enter the Newsroom Panel.
  * The Supabase `staff` table and its RLS policies remain the authoritative
  * source; this is the fast client-side gate used to decide whether to *render*
  * the Admin Panel link at all.

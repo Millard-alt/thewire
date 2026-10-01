@@ -12,7 +12,7 @@ its migrations have been run in the Supabase SQL Editor.**
 ## [Unreleased]
 
 ### Security
-- **Editors no longer receive the Owner's Control Center.** `toSession()` in
+- **Editors no longer receive the Newsroom Panel.** `toSession()` in
   `src/lib/auth.js` was hardcoding `isAdmin: true` for *every* signed-in
   account, so any account the Owner had approved landed on the full Owner
   panel with Accounts, Branding, Security and Changelog all live. `isAdmin` now
@@ -74,12 +74,12 @@ its migrations have been run in the Supabase SQL Editor.**
 
 ## [1.0.0] — 2026-09-29
 
-First production release: the public publication and the Owner Control Center.
+First production release: the public publication and the Newsroom Panel.
 
 ### Added
 - **Public publication** — front page, Today's Pick, three weekly feature slots,
   public assignment board, photo gallery and archive search.
-- **Owner Control Center** — content desk, assignments, staff, media shelf,
+- **Newsroom Panel** — content desk, assignments, staff, media shelf,
   breaking-news bar, broadcast centre, branding and settings. Every control is
   database-backed; no privileged markup ships to unauthenticated visitors.
 - **Username sign-in** — staff enter a username, not an e-mail address. Each

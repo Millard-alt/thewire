@@ -133,7 +133,7 @@ export function createSeedState() {
         name: 'Grace Wanjiku',
         username: 'gwanjiku',
         email: 'grace.wanjiku@example.com',
-        role: 'Editor',
+        role: 'Writer',
         status: 'Active'
       },
       {
@@ -141,7 +141,10 @@ export function createSeedState() {
         name: 'David Kiprop',
         username: 'dkiprop',
         email: 'david.kiprop@example.com',
-        role: 'Assignment Manager',
+        // 'Assignment Manager' was never a real role. No CHECK constraint
+        // accepted it and normaliseRole() folded it to Writer, so the row and
+        // the UI disagreed about what this person was.
+        role: 'Board Manager',
         status: 'Active'
       }
     ],
@@ -150,13 +153,13 @@ export function createSeedState() {
       {
         id: 'seed-performer-1',
         name: 'Grace Wanjiku',
-        role: 'Senior Investigative Editor',
+        role: 'Writer',
         articlesCount: 42
       },
       {
         id: 'seed-performer-2',
         name: 'Amina Mohamed',
-        role: 'Photojournalist',
+        role: 'Writer',
         articlesCount: 28
       }
     ],

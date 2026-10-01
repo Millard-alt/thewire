@@ -10,7 +10,7 @@
      5. Restore any existing auth session and swap the header control:
           signed out  -> a single "Login" button
           signed in   -> account chip + "Admin Panel" + "Sign out"
-                      -> (and, for privileged users, the control centre mounts)
+                      -> (and, for privileged users, the Newsroom Panel mounts)
      6. Keep the header in sync with the auth state on every change.
 
    Security posture
@@ -206,13 +206,13 @@ function initReaderNavigation() {
  * React to an auth state change.
  *
  * - Always repaints the header control.
- * - Closes the control centre if the session was revoked underneath us, so a
+ * - Closes the Newsroom Panel if the session was revoked underneath us, so a
  *   sign-out in another tab can never leave admin UI on screen.
  */
 function handleSessionChange(session) {
   renderAuthSlot(session, {
     onOpenAdmin: () => {
-      // Editors must have an approved portrait before the workspace opens.
+      // Writers must have an approved portrait before the workspace opens.
       if (!enforcePortraitGate()) return;
       openAdmin();
     }
@@ -249,7 +249,7 @@ function syncThemeIcon() {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Find this editor's own roster row.
+ * Find this writer's own roster row.
  *
  * The roster is keyed by the username (or e-mail) the person signs in with,
  * because `staff_accounts` holds the credentials and `staff` holds the profile.
@@ -274,12 +274,12 @@ function myStaffRow() {
 }
 
 /**
- * Enforce "no editor features without an approved portrait".
+ * Enforce "no writer features without an approved portrait".
  *
- * The Owner is exempt (the gate exists to verify editors), as is demo mode
+ * The Owner is exempt (the gate exists to verify writers), as is demo mode
  * (there is no server to approve against, so blocking would be a dead end).
  * Everyone else must have an approved portrait before the workspace opens.
- * @returns {boolean} true when the editor may proceed
+ * @returns {boolean} true when the writer may proceed
  */
 function enforcePortraitGate() {
   const session = getSession();
@@ -409,7 +409,7 @@ export async function boot() {
       showToast('Signed in. This account is not on the staff roster.', {
         type: 'info'
       });
-      // A rostered editor signing in still has to satisfy the portrait rule
+      // A rostered writer signing in still has to satisfy the portrait rule
       // before the workspace becomes usable.
       enforcePortraitGate();
     }

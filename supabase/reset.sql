@@ -1,5 +1,5 @@
 -- ============================================================================
---  THE WIRE — RESET  (run ONCE, immediately BEFORE supabase/schema.sql)
+--  THE WIRE - RESET  (run ONCE, immediately BEFORE supabase/schema.sql)
 -- ----------------------------------------------------------------------------
 --  WHY THIS EXISTS
 --  This Supabase project already contained an `articles` and a `top_performers`

@@ -24,6 +24,7 @@
 import { config } from './config.js';
 import { getSupabase } from './supabase.js';
 import { createSeedState } from './seed.js';
+import { getSession, isOwner } from './auth.js';
 
 const STORAGE_KEY = 'wire.state.v1';
 
@@ -74,27 +75,84 @@ function writeLocalState() {
 /**
  * Merge a (possibly older or partial) payload onto the seed shape so a schema
  * addition never breaks a cached copy.
+ *
+ * THE BUG THIS FIXES
+ * The original version ran every list through `next.x?.length ? next.x : seed.x`.
+ * That reads "the database returned zero rows" as "we have no data yet" and
+ * re-injects the demo seed. Since `articles` was empty on the live database, the
+ * newsroom panel showed four fake `seed-article-N` stories that no Postgres row
+ * backed. Deleting one hit the `isPersistedId()` guard in `deleteArticle()`,
+ * skipped the database call entirely, mutated memory that is never persisted in
+ * production, and the story reappeared on the next hydrate. That is why "the
+ * Owner cannot delete articles" -- there was nothing to delete, and the panel was
+ * showing the demo store.
+ *
+ * `remote: true` means this payload came from Postgres and is therefore
+ * authoritative. An empty table is an empty table; the seed is only ever a
+ * fallback for the local demo store.
+ *
+ * @param {object} next
+ * @param {{remote?: boolean}} [options]
  */
-function mergeState(next = {}) {
+function mergeState(next = {}, { remote = false } = {}) {
   const seed = createSeedState();
+
+  /**
+   * @param {unknown} value   the incoming list, possibly undefined or empty
+   * @param {Array} fallback  the demo seed list
+   * @returns {Array} always an array
+   */
+  const pick = (value, fallback) => {
+    if (remote) return Array.isArray(value) ? value : [];
+    return Array.isArray(value) && value.length ? value : fallback;
+  };
+
+  /** Non-list slices keep the seed defaults only in the local demo store. */
+  const pickObject = (value, fallback) => (remote ? value || {} : { ...fallback, ...(value || {}) });
+
   return {
     ...seed,
     ...next,
-    articles: next.articles?.length ? next.articles : seed.articles,
-    assignments: next.assignments?.length ? next.assignments : seed.assignments,
-    staff: next.staff?.length ? next.staff : seed.staff,
-    topPerformers: next.topPerformers?.length
-      ? next.topPerformers
-      : seed.topPerformers,
-    mediaLibrary: next.mediaLibrary?.length
-      ? next.mediaLibrary
-      : seed.mediaLibrary,
-    auditLogs: next.auditLogs?.length ? next.auditLogs : seed.auditLogs,
-    branding: { ...seed.branding, ...(next.branding || {}) },
-    breakingNews: { ...seed.breakingNews, ...(next.breakingNews || {}) },
-    notifications: { ...seed.notifications, ...(next.notifications || {}) },
-    weeklySlots: { ...seed.weeklySlots, ...(next.weeklySlots || {}) }
+    articles: pick(next.articles, seed.articles),
+    assignments: pick(next.assignments, seed.assignments),
+    staff: pick(next.staff, seed.staff),
+    topPerformers: pick(next.topPerformers, seed.topPerformers),
+    mediaLibrary: pick(next.mediaLibrary, seed.mediaLibrary),
+    auditLogs: pick(next.auditLogs, seed.auditLogs),
+    branding: pickObject(next.branding, seed.branding),
+    breakingNews: pickObject(next.breakingNews, seed.breakingNews),
+    notifications: pickObject(next.notifications, seed.notifications),
+    weeklySlots: pickObject(next.weeklySlots, seed.weeklySlots)
   };
+}
+
+/**
+ * Drop curation pointers that no longer resolve to a real article.
+ *
+ * `site_settings.weekly_slots` and `todays_pick_id` are jsonb holding article
+ * ids. The demo seed wrote `seed-article-1`..`3` into that jsonb, and because
+ * site_settings IS a real database row those text ids were persisted into
+ * Postgres and outlived every article they pointed at. Nothing renders them
+ * (no article has that id any more) but they make the Curation tab look
+ * populated with stories that do not exist, so they are cleared here rather
+ * than left to rot in the database.
+ *
+ * @param {object} state
+ * @returns {object} the same object, mutated
+ */
+function reconcileCuration(state) {
+  const known = new Set((state.articles || []).map((a) => a.id));
+  const resolves = (id) => (id == null ? false : known.has(String(id)));
+
+  if (!resolves(state.todaysPickId)) state.todaysPickId = null;
+
+  const slots = state.weeklySlots || {};
+  Object.keys(slots).forEach((slot) => {
+    if (!resolves(slots[slot])) delete slots[slot];
+  });
+  state.weeklySlots = slots;
+
+  return state;
 }
 
 /** The live application state. Safe to read synchronously. */
@@ -125,8 +183,9 @@ function commit() {
 }
 
 /** Replace the whole state object (used after a remote load). */
-function replaceState(next) {
-  state = mergeState(next);
+function replaceState(next, options = {}) {
+  state = mergeState(next, options);
+  if (options.remote) reconcileCuration(state);
   if (config.demoMode) writeLocalState();
   notify();
 }
@@ -243,8 +302,12 @@ export async function hydrate() {
     const local = readLocalState();
     const settingsRow = settings.data || {};
 
-    replaceState({
-      ...local,
+    // `remote: true` from here on. Everything in this payload is either a row
+    // Postgres just returned or a genuine fallback; the demo seed must NOT be
+    // merged back in when a table is legitimately empty.
+    replaceState(
+      {
+        ...local,
       // Postgres columns are snake_case; the UI reads camelCase `date`/`image`.
       // Passing the raw rows through left `article.date` and `article.image`
       // undefined, which printed the literal text "undefined" on the front page
@@ -259,6 +322,9 @@ export async function hydrate() {
         caption: row.caption || '',
         body: row.body || '',
         status: row.status,
+        // Read defensively: migration 007 may not have run yet, in which case
+        // PostgREST omits the key entirely rather than returning null.
+        authorAccountId: row.author_account_id ?? null,
         featured: Boolean(row.featured)
       })),
       assignments: (assignments.data || []).map((row) => ({
@@ -315,15 +381,21 @@ export async function hydrate() {
         }))
       },
       branding: {
-        ...local.branding,
-        ...(settingsRow.title ? { title: settingsRow.title } : {}),
-        ...(settingsRow.subtitle ? { subtitle: settingsRow.subtitle } : {}),
-        ...(settingsRow.edition ? { edition: settingsRow.edition } : {})
+          ...local.branding,
+          ...(settingsRow.title ? { title: settingsRow.title } : {}),
+          ...(settingsRow.subtitle ? { subtitle: settingsRow.subtitle } : {}),
+          ...(settingsRow.edition ? { edition: settingsRow.edition } : {})
+        },
+        breakingNews: { ...local.breakingNews, ...(settingsRow.breaking_news || {}) },
+        // Read the curation pointers from Postgres only. Falling back to
+        // `local.todaysPickId` / `local.weeklySlots` here would resurrect the
+        // `seed-article-N` text ids, which point at rows that have never existed
+        // in the database. An unset pointer is simply unset.
+        todaysPickId: settingsRow.todays_pick_id ?? null,
+        weeklySlots: settingsRow.weekly_slots || {}
       },
-      breakingNews: { ...local.breakingNews, ...(settingsRow.breaking_news || {}) },
-      todaysPickId: settingsRow.todays_pick_id || local.todaysPickId,
-      weeklySlots: { ...local.weeklySlots, ...(settingsRow.weekly_slots || {}) }
-    });
+      { remote: true }
+    );
   } catch (error) {
     console.error('[store] hydration failed, using local store', error);
     replaceState(readLocalState());
@@ -395,6 +467,84 @@ function isPersistedId(id) {
 }
 
 /**
+ * The signed-in account id, or null.
+ *
+ * Read from the LIVE auth module rather than from a prop or a cached value: the
+ * point of every ownership check in this file is that it reflects who is
+ * actually signed in right now.
+ *
+ * Deliberately NOT filtered through isPersistedId(). In production the id is a
+ * uuid from staff_accounts and that is what author_account_id stores. In the
+ * demo store it is a synthetic `demo-<hash>` string, and the demo still has to
+ * be able to demonstrate ownership -- filtering it here returned null for every
+ * demo session, so a writer could never delete anything they had written and the
+ * rule could not be exercised outside a live database.
+ *
+ * @returns {string|null}
+ */
+function currentAccountId() {
+  const id = getSession()?.user?.id;
+  return id ? String(id) : null;
+}
+
+/**
+ * Has migration 007 been applied (i.e. does `articles.author_account_id` exist)?
+ *
+ * Probed once and cached. Sending an unknown column makes PostgREST reject the
+ * ENTIRE statement with PGRST204, so a new deployment that writes the column
+ * before the migration has run would fail every article insert. Probing costs
+ * one cheap select and removes that ordering dependency entirely.
+ */
+let ownershipColumnReady = null;
+
+export async function hasOwnershipColumn() {
+  if (ownershipColumnReady !== null) return ownershipColumnReady;
+  if (config.demoMode || !db()) {
+    ownershipColumnReady = false;
+    return false;
+  }
+  try {
+    const { error } = await db()
+      .from(TABLES.articles)
+      .select('author_account_id')
+      .limit(1);
+    ownershipColumnReady = !error;
+    if (error) {
+      console.warn(
+        '[store] articles.author_account_id is missing — run supabase/007_article_ownership.sql',
+        error.message
+      );
+    }
+  } catch {
+    ownershipColumnReady = false;
+  }
+  return ownershipColumnReady;
+}
+
+/**
+ * May the signed-in account delete this article?
+ *
+ * This is a UI affordance only. The real enforcement is the RLS policy in
+ * supabase/007_article_ownership.sql, which a leaked anon key cannot bypass.
+ * Kept here so the Owner sees an honest disabled button instead of clicking
+ * through to a database error.
+ *
+ * @param {{id: string, authorAccountId?: string|null, author?: string}} article
+ */
+export function canDeleteArticle(article) {
+  if (!article) return false;
+  const session = getSession();
+  if (!session?.isAdmin) return false;
+  if (isOwner()) return true;
+  // A writer may delete only their own work.
+  return Boolean(
+    article.authorAccountId &&
+      session.user?.id &&
+      article.authorAccountId === session.user.id
+  );
+}
+
+/**
  * Compare a workflow status case-insensitively.
  * The database was seeded with lower-case values ('published') while the UI and
  * the seed data use title case ('Published'). Matching exactly meant the front
@@ -447,25 +597,41 @@ export async function createArticle(input) {
   };
 
   if (!config.demoMode && db()) {
+    // Only include author_account_id when the column actually exists. Sending an
+    // unknown column makes PostgREST reject the whole insert (PGRST204), which
+    // would mean a deploy that lands before migration 007 breaks article
+    // creation for everyone. Probed once, then cached.
+    const row = {
+      title: article.title,
+      author: article.author,
+      category: article.category,
+      published_at: article.date,
+      image_url: article.image,
+      caption: article.caption,
+      body: article.body,
+      status: article.status,
+      featured: article.featured
+    };
+
+    if (await hasOwnershipColumn()) {
+      row.author_account_id = currentAccountId();
+    }
+
     const inserted = assertOk(
       await db()
         .from(TABLES.articles)
-        .insert({
-          title: article.title,
-          author: article.author,
-          category: article.category,
-          published_at: article.date,
-          image_url: article.image,
-          caption: article.caption,
-          body: article.body,
-          status: article.status,
-          featured: article.featured
-        })
+        .insert(row)
         .select()
         .single(),
       'create article'
     );
     article.id = inserted.id;
+    article.authorAccountId = inserted.author_account_id ?? null;
+  } else {
+    // Demo store. Stamp the owner here too, otherwise a writer files a story
+    // they then have no right to delete -- the rule would be untestable and
+    // visibly wrong to anyone trying it in the demo.
+    article.authorAccountId = currentAccountId();
   }
 
   current.articles = [article, ...current.articles];
@@ -518,6 +684,18 @@ export async function updateArticle(id, patch) {
 
 /**
  * DELETE — permanently remove an article and detach it from curation slots.
+ *
+ * WHY THIS USED TO LOOK BROKEN
+ * The panel was rendering `seed-article-N` rows that no Postgres row backed (see
+ * mergeState). `isPersistedId()` correctly refused to send a text id to a uuid
+ * column, so the database call was skipped, the in-memory removal was discarded
+ * because production never writes localStorage, and the story came straight back
+ * on the next hydrate. With the seed no longer injected, the rows the panel shows
+ * are real uuids and this genuinely deletes.
+ *
+ * A text id here means a local-only row from the demo store: it is removed from
+ * memory and that is the correct outcome, so it is still a success.
+ *
  * @param {string} id
  * @returns {Promise<boolean>} true when a row was removed
  */
@@ -526,11 +704,23 @@ export async function deleteArticle(id) {
   const article = current.articles.find((item) => item.id === id);
   if (!article) return false;
 
-  if (!config.demoMode && db() && isPersistedId(id)) {
-    assertOk(
-      await db().from(TABLES.articles).delete().eq('id', id),
-      'delete article'
-    );
+  const remote = !config.demoMode && db() && isPersistedId(id);
+
+  if (remote) {
+    // PostgREST reports success even when RLS matched zero rows, so the row
+    // count has to be requested back explicitly. Without this a delete that the
+    // database silently refused still reported success to the Owner.
+    const { data, error } = await db()
+      .from(TABLES.articles)
+      .delete()
+      .eq('id', id)
+      .select('id');
+    assertOk({ data, error }, 'delete article');
+    if (!data || data.length === 0) {
+      throw new Error(
+        'That article was not deleted. You can only delete your own articles.'
+      );
+    }
   }
 
   current.articles = current.articles.filter((item) => item.id !== id);
@@ -680,7 +870,7 @@ export async function createStaff(input) {
     name: input.name?.trim() || 'Unnamed staffer',
     username: input.username?.trim().toLowerCase() || 'staffer',
     email: input.email?.trim().toLowerCase() || '',
-    role: input.role || 'Editor',
+    role: input.role || 'Writer',
     status: input.status || 'Active'
   };
 

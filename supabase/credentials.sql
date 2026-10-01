@@ -50,8 +50,8 @@ create table if not exists public.staff_accounts (
   username      text        not null unique,
   password_hash text        not null,
   display_name  text        not null,
-  role          text        not null default 'Editor'
-                          check (role in ('Owner','Editor','Board Manager')),
+  role          text        not null default 'Writer',
+                          check (role in ('Owner','Writer','Editor','Board Manager')),
   -- 'pending'   -> awaiting the Owner's approval, cannot sign in
   -- 'active'    -> approved, can sign in
   -- 'suspended' -> explicitly blocked by the Owner
@@ -269,7 +269,7 @@ begin
   else
     v_status := 'pending';
     v_owner  := false;
-    v_role   := 'Editor';
+    v_role   := 'Writer';
   end if;
 
   insert into public.staff_accounts

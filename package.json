@@ -6,7 +6,7 @@
   "engines": {
     "node": "22.x"
   },
-  "description": "The Wire — Nakuru Press Club publication & owner control center.",
+  "description": "The Wire - Nakuru Press Club publication & newsroom panel.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
