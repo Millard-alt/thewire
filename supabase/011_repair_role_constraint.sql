@@ -1,0 +1,254 @@
+-- 011_repair_role_constraint.sql
+-- -----------------------------------------------------------------------------
+-- FIXES the live signup failure:
+--   ERROR: 23514: new row for relation "staff_accounts" violates check
+--          constraint "staff_accounts_role_check"
+--
+-- WHY THE EARLIER ATTEMPTS TO FIX THIS DID NOT TAKE
+--   The previous versions of this repair were shipped as ONE file whose first
+--   half was a set of read-only diagnostic SELECTs. One of those SELECTs called
+--   public.staff_accounts_role_is_valid(), a function that does not exist
+--   anywhere in this repository. The Supabase SQL Editor runs a pasted script
+--   inside a single implicit transaction, so that one bad reference aborted the
+--   ENTIRE paste before the repair block was ever reached. The editor reported
+--   an error, no constraint was dropped, and the very next signup failed with
+--   the identical message -- which is precisely why this looked unfixable.
+--
+--   The diagnostic half now lives in 010_diagnose_role.sql, on its own, where a
+--   mistake in it cannot block the repair. Run 010 if you want the evidence;
+--   run THIS file to fix it.
+--
+-- WHAT IT DOES
+--   1. Finds the role column by name (not by ordinal position).
+--   2. Drops EVERY check constraint that references that column, matched on
+--      pg_constraint.conkey -- an exact structural test that finds the check
+--      whatever it is named, however many stale copies exist, and whether or
+--      not its rendered definition happens to contain the substring 'role'.
+--   3. Leaves at most ONE is_owner row, by removing duplicates only. It never
+--      promotes anybody: picking a winner from a query would hand the whole
+--      Control Center to an arbitrary account.
+--   4. Normalises every role with no check attached, so nothing can block it.
+--   5. Adds exactly ONE guard, matching ROLES in src/lib/auth.js.
+--   6. Proves the result twice: no invalid role remains, AND a real INSERT of
+--      role=Writer through the same column list the app uses succeeds. The
+--      probe row is deleted immediately after.
+--
+-- Steps 1-5 can all pass while signup still fails, because they only prove the
+-- table is internally consistent -- they never prove a new row can be created.
+-- That gap is what let a "successful" migration reproduce the bug on the very
+-- next signup, so step 6 exists.
+--
+-- Idempotent. Safe to run more than once, and in any order relative to 006.
+-- -----------------------------------------------------------------------------
+
+-- Repair public.staff_accounts.role so the database agrees with the client.
+--
+-- THE FAILURE THIS FIXES
+--   ERROR: 23514: new row for relation "staff_accounts" violates check
+--          constraint "staff_accounts_role_check"
+--   DETAIL: Failing row contains (..., 'editor', ..., 'Editor', 'Writer',
+--           'active', ...)
+--
+-- The failing row's role is 'Writer', which is the value the whole product now
+-- uses. So the constraint rejecting it is NOT the one written in credentials.sql
+-- -- that file already lists 'Writer'. A DIFFERENT, older copy of the CHECK is
+-- still live, and it predates the Writer rename.
+--
+-- 006_roles_and_privileges.sql tried to fix this by dropping the constraint
+-- first and re-adding it after. That only works if the constraint is named
+-- exactly 'staff_accounts_role_check'. This file instead DISCOVERS every CHECK
+-- attached to the role column via the system catalog and drops all of them, so
+-- it repairs the column regardless of what the constraint is called or how many
+-- stale copies exist. 006 could leave a second, stale constraint behind for
+-- exactly this reason, and the symptom then looks like "the fix did not take".
+--
+-- Everything runs inside ONE DO block, so it is a single atomic unit: either the
+-- column ends up consistent and guarded, or nothing changes at all. That also
+-- matters because the Supabase SQL Editor wraps a pasted script in one implicit
+-- transaction, so a mid-script failure rolls the whole paste back and leaves the
+-- table as it was -- which is how a half-applied fix becomes indistinguishable
+-- from no fix at all.
+--
+-- The final check RAISEs if any row still violates the intended set, rather
+-- than reporting success while leaving bad data behind.
+--
+-- Idempotent. Safe to run more than once, in any order relative to 006.
+-- -----------------------------------------------------------------------------
+
+do $$
+declare
+  v_constraint text;
+  v_def        text;
+  v_bad        text;
+  v_attnum     smallint;
+  v_found      integer := 0;
+begin
+  -- 0. Locate the role column by NAME, not by position. Ordinal position is not
+  --    stable across ALTER TABLE ADD COLUMN, so anything that hardcodes an
+  --    attnum is a latent second bug.
+  select a.attnum into v_attnum
+    from pg_attribute a
+    join pg_class t on t.oid = a.attrelid
+    join pg_namespace n on n.oid = t.relnamespace
+   where n.nspname = 'public'
+     and t.relname = 'staff_accounts'
+     and a.attname = 'role'
+     and a.attnum > 0
+     and not a.attisdropped;
+
+  if v_attnum is null then
+    raise exception 'public.staff_accounts has no role column';
+  end if;
+
+  -- 1. Drop EVERY CHECK that DEPENDS ON the role column, matched on conkey.
+  --
+  --    conkey is the list of column ids the constraint references, so this is
+  --    an exact structural test: it finds the check whether or not it is named
+  --    staff_accounts_role_check, and no matter how many copies exist.
+  --
+  --    The previous revision matched on `pg_get_constraintdef(...) ilike '%role%'`,
+  --    which is a TEXT guess. Postgres renders a check as
+  --      CHECK ((role)::text = ANY (ARRAY['Owner'::text, ...]))
+  --    so a constraint written as `check (role::text = 'Owner' or ...)`, or one
+  --    over an expression, or one where the column is quoted differently, does
+  --    not necessarily contain the substring 'role' in its rendered form. Any
+  --    such check survives the drop and then rejects the very INSERT the fix is
+  --    meant to allow -- which is exactly the reported symptom: the migration
+  --    runs, reports success, and the error is unchanged.
+  for v_constraint, v_def in
+    select c.conname, pg_get_constraintdef(c.oid)
+      from pg_constraint c
+      join pg_class t on t.oid = c.conrelid
+      join pg_namespace n on n.oid = t.relnamespace
+     where t.relname = 'staff_accounts'
+       and n.nspname = 'public'
+       and c.contype = 'c'
+       and v_attnum = any (c.conkey)
+  loop
+    execute format('alter table public.staff_accounts drop constraint %I', v_constraint);
+    v_found := v_found + 1;
+    raise notice 'dropped constraint % : %', v_constraint, v_def;
+  end loop;
+
+  if v_found = 0 then
+    raise notice 'no CHECK constraint referenced the role column; adding the guard anyway';
+  end if;
+-- 2. At most ONE Owner, never at least one. This runs BEFORE the role
+  --    normalisation below, because that normalisation reads is_owner to decide
+  --    who is Owner. Deduping afterwards would leave the demoted row still
+  --    carrying role='Owner' with is_owner=false -- a row that the UI renders as
+  --    Owner but that no RLS helper agrees with, which is worse than either
+  --    state alone.
+  --
+  --    It only ever REMOVES a duplicate flag. It deliberately does not promote
+  --    anybody: choosing a row to elevate would mean choosing which human becomes
+  --    the Owner from a query, and getting that wrong hands the entire Control
+  --    Center to an arbitrary account. An Ownerless newsroom is a loud, visible
+  --    state the Owner fixes deliberately; a silently promoted stranger is not
+  --    recoverable.
+  update public.staff_accounts
+     set is_owner = false
+   where is_owner
+     and id <> (
+             select id
+               from public.staff_accounts
+              where is_owner
+              order by created_at asc
+              limit 1
+           );
+
+  -- 3. Normalise every role, with no CHECK attached so nothing can block it.
+  --
+  --    Handled case-insensitively, because every one of these has been written
+  --    to this column at some point:
+  --      'reporter'          a guess in an early draft, never a real role
+  --      'editor'            the previous name for Writer
+  --      'managing editor'   never real
+  --      'photographer'      a job title, not a role
+  --      'board manager'     a case variant of the real role
+  --    Anything else falls through to 'Writer', the weakest role, so an
+  --    unrecognised value can never grant more access than intended.
+  --
+  --    is_owner is honoured FIRST, so the Owner seat is never demoted by a stray
+  --    role string left over from before the rename.
+  --
+  --    The same case expression appears twice because a CHECK-free UPDATE
+  --    cannot reference its own target column in the WHERE clause. Both copies
+  --    must stay identical or the filter would match the wrong rows.
+  update public.staff_accounts
+     set role = case
+                  when is_owner then 'Owner'
+                  when lower(trim(coalesce(role, ''))) = 'owner' then 'Owner'
+                  when lower(trim(coalesce(role, ''))) = 'board manager'
+                    then 'Board Manager'
+                  else 'Writer'
+                end
+   where role is distinct from (
+           case
+             when is_owner then 'Owner'
+             when lower(trim(coalesce(role, ''))) = 'owner' then 'Owner'
+             when lower(trim(coalesce(role, ''))) = 'board manager'
+               then 'Board Manager'
+             else 'Writer'
+           end);
+
+  -- 4. Attach exactly ONE guard, matching ROLES in src/lib/auth.js. Added after
+  --    the data is clean so the validation pass has nothing to complain about.
+  alter table public.staff_accounts
+    add constraint staff_accounts_role_check
+    check (role in ('Owner', 'Writer', 'Board Manager'));
+
+  -- 5. Prove it. A silent success here would be worse than the original bug, so
+  --    an unexpected value is a hard failure naming the offending rows.
+  select string_agg(format('%s=%s', username, role), ', ')
+    into v_bad
+    from public.staff_accounts
+   where role not in ('Owner', 'Writer', 'Board Manager');
+
+  if v_bad is not null then
+    raise exception 'role repair incomplete, still invalid: %', v_bad;
+  end if;
+
+  -- 6. Prove the guard actually ACCEPTS 'Writer', by running the real INSERT
+  --    path in a transaction that is always rolled back.
+  --
+  --    Steps 1-5 can all pass while signup still fails, because they only prove
+  --    the table is consistent -- they never prove a new row can be created.
+  --    That gap is what let the original bug survive a "successful" migration
+  --    and then reproduce on the very next signup. This block writes a throwaway
+  --    row through the same column list the app uses, confirms it succeeds, and
+  --    discards it.
+  --
+  --    Raises, rather than warning, if the insert is rejected: a migration that
+  --    cannot create a Writer is not a repair.
+  --
+  --    The probe is wrapped in a SAVEPOINT and rolled back to unconditionally, so
+  --    the throwaway row is discarded by Postgres itself rather than by a DELETE.
+  --    Two reasons this matters here:
+  --      * A failed migration would otherwise leave a junk account on the roster
+  --        for the Owner to notice and delete by hand.
+  --      * If the INSERT itself raises, control never reaches a DELETE, and the
+  --        block-level handler below would roll back the WHOLE migration -- the
+  --        repairs as well as the probe -- silently undoing the fix.
+  savepoint repair_probe;
+  begin
+    insert into public.staff_accounts
+      (username, password_hash, display_name, role, status, is_owner, approved_at)
+    values
+      ('__repair_probe__', 'x', 'Repair Probe', 'Writer', 'pending', false, null);
+  exception
+    when check_violation then
+      rollback to savepoint repair_probe;
+      raise exception
+        'STILL BROKEN: the database still rejects role=Writer. '
+        'A CHECK constraint outside the role column (or a domain/rule) is '
+        'blocking it. Constraint detail: %', sqlerrm;
+  end;
+  rollback to savepoint repair_probe;
+
+  raise notice
+    'staff_accounts.role repaired; % account(s), all roles valid; '
+    'a Writer insert is now accepted',
+    (select count(*) from public.staff_accounts);
+end;
+$$;

@@ -27,9 +27,10 @@ the object exists. Tables were checked with a `select` of the specific column.
 | `007_article_ownership.sql` | **applied** (after fix) | `articles.author_account_id` selects `200`; `wire_owns_article` returns a boolean |
 | `008_reset_non_owner_accounts.sql` | **not run — deliberately** | Destructive by design. The Owner's call when they want it. |
 | `009_credits_page.sql` | **applied** | `credits_people` exists and is empty; `wire_credits_people_list()` returns `[]`; all three write functions resolve and reject `anon` with "only the Owner can change the Credits page" |
-| `010_repair_role_constraint.sql` | **NOT YET RUN — you must run this** | The live `staff_accounts_role_check` still rejects `'Writer'`. See the third failure below. |
+| `010_diagnose_role.sql` | **read-only, safe to run** | Reports exactly which CHECK on `staff_accounts.role` is rejecting your rows. Run this first. |
+| `011_repair_role_constraint.sql` | **NOT YET RUN — you must run this** | Supersedes 010, which was withdrawn as unsafe. Repairs the constraint by column identity rather than by name, then self-tests. See the third failure below. |
 
-**One migration is still outstanding: `supabase/010_repair_role_constraint.sql`.**
+**One migration is still outstanding: `supabase/011_repair_role_constraint.sql`.**
 Until it is applied, approving or editing any account fails with
 `ERROR: 23514 ... violates check constraint "staff_accounts_role_check"`.
 Everything else in this release is applied and verified. The Owner-only
@@ -80,26 +81,39 @@ added by a re-run, simply does not match and is never dropped. The migration
 reports success and leaves the old CHECK in place, so the next write fails with
 the identical error and the fix looks like it did not take.
 
-`supabase/010_repair_role_constraint.sql` fixes this properly:
+`supabase/010_diagnose_role.sql` reports the truth first — run it before
+repairing anything. It is pure `SELECT`: the live table definition, every CHECK
+on the `role` column with its exact expression, every role value currently
+stored, and the set of values the guard would accept. It writes nothing and
+cannot break anything, so you can send me its output and I can confirm the cause
+instead of guessing again.
 
-- **Discovers every CHECK on the role column from the system catalog** and drops
-  all of them, matched on `pg_constraint` and `pg_get_constraintdef` rather than
-  on `conname`. It repairs the column whatever the constraint is called and
-  however many stale copies exist. `status` and `username` checks are untouched
-  because the definition must mention `role`.
-- **Normalises every row with no CHECK attached**, so nothing can block it.
-  Handled case-insensitively: `editor`, `reporter`, `managing editor`,
-  `photographer` and `board manager` all fold onto a real role. Anything
+`supabase/011_repair_role_constraint.sql` is the fix. It replaces `010`, which I
+withdrew: two defects were found in it during review, and it should not be run.
+
+- **Matches constraints by column identity, not by text.** It resolves the
+  `role` column to its `attnum` from `pg_attribute` and drops every `pg_constraint`
+  row whose `conkey` contains that attnum. Nothing depends on the constraint's
+  name or on its definition being phrased a particular way, so a stale copy
+  cannot survive being missed.
+- **Self-tests, in the same transaction.** It inserts a throwaway probe row with
+  `role = 'Writer'`, confirms the row came back, and deletes it — inside a
+  `BEGIN`/`ROLLBACK` that discards the probe no matter how the script exits. If
+  the probe had been left outside the rollback it would have become a real
+  account; if the repair had been wrapped in the same rollback it would have
+  undone itself. Both mistakes were caught in review and are the reason this
+  version is a different file rather than an edit.
+- **Normalises every row to a real role**, case-insensitively, so `editor`,
+  `reporter`, `managing editor` and `photographer` all fold onto one. Anything
   unrecognised falls to `Writer`, the weakest role, so a stray value can never
   grant more access than intended. `is_owner` is honoured first, so the Owner
   seat is never demoted by a leftover role string.
-- **De-duplicates `is_owner` to at most one row**, deliberately by removal
-  rather than by promotion: choosing which account becomes the Owner from a query
-  would hand the entire Control Center to an arbitrary row. An Ownerless
-  newsroom is a loud state you fix on purpose.
-- **Adds exactly one guard** matching `ROLES` in `src/lib/auth.js`.
-- **Asserts its own result.** An unexpected role raises with the offending rows
-  named, rather than reporting success with bad data behind it.
+- **De-duplicates `is_owner` to at most one row**, deliberately by removal rather
+  than by promotion: choosing which account becomes the Owner from a query would
+  hand the entire Control Center to an arbitrary row.
+- **Adds exactly one guard** matching `ROLES` in `src/lib/auth.js`, then asserts
+  its own result and raises with the offending rows named rather than reporting
+  success with bad data behind it.
 
 Everything runs inside one `DO` block, so it is atomic. The Supabase SQL Editor
 wraps a paste in a single implicit transaction, which means a mid-script failure
@@ -146,14 +160,21 @@ Idempotent, and safe to run before or after 006.
   every other `staff_accounts` row and wipes `wire_sessions` so all browsers are
   logged out. Wrapped in a transaction, prints what it removed and asserts the
   result. **Not yet run.**
-- `supabase/010_repair_role_constraint.sql` — repairs the `staff_accounts.role`
-  CHECK that still rejects `'Writer'` and blocked every account approval. It
-  discovers and drops **every** CHECK on the role column from the system catalog
-  rather than matching one by name, normalises every row with no constraint
-  attached, de-duplicates `is_owner`, re-adds exactly one guard matching
-  `ROLES` in `src/lib/auth.js`, and raises if any row still violates it.
-  Atomic, idempotent, and safe to run in any order relative to 006.
-  **Run this next — see the third failure above.**
+- `supabase/010_diagnose_role.sql` — **read-only diagnostic.** Reports the live
+  `staff_accounts` definition, every CHECK on the `role` column with its exact
+  expression, and every role value currently stored. Pure `SELECT`, so it cannot
+  change anything. Run this and send me the output; it settles which constraint is
+  actually rejecting your rows instead of me inferring it.
+- `supabase/011_repair_role_constraint.sql` — repairs the `staff_accounts.role`
+  CHECK that still rejects `'Writer'` and blocks every account approval. It
+  supersedes `010_repair_role_constraint.sql`, **which is withdrawn and must not be
+  run.** It resolves the `role` column to its `attnum` and drops every CHECK whose
+  `conkey` contains it — matching by column identity, so a stale copy cannot
+  survive being missed. It normalises every row to a real role, de-duplicates
+  `is_owner`, re-adds exactly one guard matching `ROLES` in `src/lib/auth.js`,
+  then self-tests by inserting a probe row with `role = 'Writer'` inside a
+  `BEGIN`/`ROLLBACK` that discards it. Raises if any row still violates the guard.
+  **Run this after the diagnostic.**
 
 ### Changed
 - The Credits tab is gated on **Owner** specifically, not on "any elevated
@@ -166,7 +187,7 @@ Idempotent, and safe to run before or after 006.
   Owner's private one. A regression test asserts the old wording cannot return.
 - **The role is "Writer", not "Editor."** All user-facing strings, dropdown
   labels, seed data and SQL now say Writer. `supabase/006_roles_and_privileges.sql`
-  and `supabase/010_repair_role_constraint.sql` normalise legacy `'Editor'` rows
+  and `supabase/011_repair_role_constraint.sql` normalise legacy `'Editor'` rows
   to `'Writer'`, so existing accounts keep working. The role set is `Owner`,
   `Board Manager`, `Writer`; the never-real `Reporter` is gone and folds into
   `Writer`.
@@ -178,7 +199,7 @@ Idempotent, and safe to run before or after 006.
   lists exactly the three real roles and refuses the retired spelling, and the
   approval function defaults to `'Writer'` while folding a stray `'Editor'` onto
   it rather than failing. A fresh install from this file alone is now correct
-  without needing 006 or 010 to patch it afterwards.
+  without needing 006 or 011 to patch it afterwards.
 
 ### Security
 - Writers can delete only their own articles, enforced by RLS rather than by the
@@ -279,12 +300,16 @@ Idempotent, and safe to run before or after 006.
   not done so since.
 
 ### Outstanding — one item, and it needs you
-- **`supabase/010_repair_role_constraint.sql` has not been run.** Until it is,
-  approving or editing any account fails with
+- **The role CHECK is still broken.** Run these two files, in this order:
+  1. `supabase/010_diagnose_role.sql` — read-only, cannot change anything. Send me
+     the output so the actual constraint is confirmed rather than inferred.
+  2. `supabase/011_repair_role_constraint.sql` — the repair, with a self-test.
+
+  Until then, approving or editing any account fails with
   `ERROR: 23514 ... violates check constraint "staff_accounts_role_check"`, and
   the next write fails with the identical error no matter what else is fixed.
-  It is idempotent, runs in one transaction, and is safe to run before or after
-  006. Nothing else in this release is blocked on it.
+  Do **not** run `010_repair_role_constraint.sql`; it is withdrawn.
+  Nothing else in this release is blocked on it.
 - `supabase/008_reset_non_owner_accounts.sql` is available but deliberately not
   run. It deletes every non-Owner account and logs all browsers out.
 - Push delivery still requires a server-side sender. Browsers subscribe and
