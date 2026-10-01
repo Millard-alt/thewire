@@ -106,6 +106,20 @@ crashes — but the guarantees are not real yet.
   Chromium: the Owner-only tab gate, the add form, the typed role, the colour,
   copy-colour-from-another-person, and survival across a reload.
   Wired up as `npm run test:credits`.
+- **The Login button now says who it is for.** It reads "Press login" with an
+  `aria-label` of "Press login. Press members only.", so readers are not led to
+  expect a reader account that does not exist. Verified in a real browser: the
+  signed-out header shows the button, the label is correct, and it is exposed to
+  screen readers.
+- `supabase/007_article_ownership.sql` — adds `articles.author_account_id` and
+  replaces the blanket `articles_staff_write` policy with per-role DELETE
+  policies: a Writer may delete only articles they authored, the Owner may
+  delete any. Enforced in the database, so it holds even with a leaked anon
+  key. Idempotent.
+- `supabase/008_reset_non_owner_accounts.sql` — keeps only the Owner row, deletes
+  every other `staff_accounts` row and wipes `wire_sessions` so all browsers are
+  logged out. Wrapped in a transaction, prints what it removed and asserts the
+  result. **Not yet run.**
 
 ### Changed
 - The Credits tab is gated on **Owner** specifically, not on "any elevated
@@ -113,12 +127,21 @@ crashes — but the guarantees are not real yet.
   nor reaches its data. This is enforced in Postgres as well as the UI: every
   write goes through a `wire_credits_*` function that raises unless `is_owner()`
   is true, so a leaked anon key cannot edit the credits page.
+- "Owner Control Centre" is gone everywhere (`src/`, `index.html`, docs). The
+  panel is the Newsroom Panel — a screen the whole team works in, not the
+  Owner's private one. A regression test asserts the old wording cannot return.
+- **The role is "Writer", not "Editor."** All user-facing strings, dropdown
+  labels, seed data and SQL now say Writer. `supabase/006_roles_and_privileges.sql`
+  accepts both spellings and normalises legacy `'Editor'` rows to `'Writer'`, so
+  existing accounts keep working. The role set is `Owner`, `Board Manager`,
+  `Writer`; the never-real `Reporter` is gone and folds into `Writer`.
 
-### Pending — required before these features work
-- `supabase/009_credits_page.sql` must be run in the Supabase SQL Editor before
-  any of the above works against the live database. Until then the Credits tab
-  renders and the Owner-only gate holds, but every save returns a message naming
-  the migration. No data was written to the live database while building this.
+### Security
+- Writers can delete only their own articles, enforced by RLS rather than by the
+  UI. The client-side check is an affordance that keeps the button honest; the
+  database is the real gate.
+- Accounts, Changelog, Branding, Security and Credits are Owner-only and gated
+  against the live session.
 
 ### Fixed
 - **Demo mode now persists credits entries.** In demo mode `addPerson` returned a
@@ -154,63 +177,57 @@ crashes — but the guarantees are not real yet.
 - `scripts/smoke.mjs` targeted `#auth-signin-email`, a field that is actually
   `#auth-signin-login`, so its sign-in checks could never have passed. Fixed,
   and the smoke suite now runs green.
+- `supabase/006_roles_and_privileges.sql` could not be applied at all — it failed
+  with `ERROR: 23514`. The migration folds the legacy `Editor` role onto
+  `Writer`, but the `UPDATE` ran while the *old* CHECK constraint was still
+  attached, and that constraint only accepted `Owner` and `Editor`, so writing
+  `Writer` was rejected. The migration now drops the CHECK, normalises the rows,
+  and re-adds the CHECK asserting the real three roles — relax, mutate, then
+  assert. The order is deliberate: had the drop come after the failing `UPDATE`,
+  the abort would have left the table with no CHECK at all.
+- `supabase/007_article_ownership.sql` failed with `ERROR: 42883:
+  function min(uuid) does not exist`. The ownership backfill used `min(id)` to
+  pick one account per author name, and Postgres has no `min()` aggregate for
+  `uuid`. Because the aggregate sat in the same statement as the backfill, the
+  abort happened before the RLS policies further down the file were created,
+  leaving the database half-migrated. Now `min(id::text)::uuid`: the cast gives
+  `min()` a sortable type, canonical hyphenated uuids sort lexically in a stable
+  order, and the round trip is lossless.
+- **Neither fix was re-run against the live database.** I have no `service_role`
+  key and did not write to it. Both are derived from the reported errors, are
+  idempotent, and are ASCII/BOM-free, but the next paste is the real test.
 - Mojibake and a stray UTF-8 BOM cleared from `src/lib/auth.js`,
   `src/styles.css`, `src/views/public.js` and `scripts/smoke.mjs`.
-- `scripts/_encoding_check.mjs` now compares against `HEAD` and labels a
-  finding `PRE-EXISTING` when this change did not introduce it.
-
-### Added
-- **The Login button now says who it is for.** It reads "Press login" with an
-  `aria-label` of "Press login. Press members only.", so readers are not led to
-  expect a reader account that does not exist. Verified in a real browser: the
-  signed-out header shows the button, the label is correct, and it is exposed to
-  screen readers.
-- `supabase/007_article_ownership.sql` — adds `articles.author_account_id` and
-  replaces the blanket `articles_staff_write` policy with per-role DELETE
-  policies: a Writer may delete only articles they authored, the Owner may
-  delete any. Enforced in the database, so it holds even with a leaked anon
-  key. Idempotent.
-- `supabase/008_reset_non_owner_accounts.sql` — keeps only the Owner row, deletes
-  every other `staff_accounts` row and wipes `wire_sessions` so all browsers are
-  logged out. Wrapped in a transaction, prints what it removed and asserts the
-  result. **Not yet run.**
-
-### Security
-- Writers can delete only their own articles, enforced by RLS rather than by the
-  UI. The client-side check is an affordance that keeps the button honest; the
-  database is the real gate.
-- Accounts, Changelog, Branding and Security are Owner-only and gated against
-  the live session.
-
-### Changed
-- "Owner Control Centre" is gone everywhere (`src/`, `index.html`, docs). The
-  panel is the Newsroom Panel — a screen the whole team works in, not the
-  Owner's private one. A regression test asserts the old wording cannot return.
-- **The role is "Writer", not "Editor."** All user-facing strings, dropdown
-  labels, seed data and SQL now say Writer. `supabase/006_roles_and_privileges.sql`
-  accepts both spellings and normalises legacy `'Editor'` rows to `'Writer'`, so
-  existing accounts keep working. The role set is `Owner`, `Board Manager`,
-  `Writer`; the never-real `Reporter` is gone and folds into `Writer`.
+- The encoding lint now lives at `scripts/encoding-check.mjs` (run with
+  `npm run lint:encoding`). The old `scripts/check-encoding.mjs` name was
+  silently excluded by a `check-*.mjs` rule in `.gitignore`, so the script could
+  never have been committed.
 
 ### Verified
 - `npm run build` — 65 modules, built in ~3s.
 - `npm test` (`tests/roles.mjs`) — Writer, Board Manager and Owner all PASS.
   Tabs 4 / 9 / 13 respectively, nothing leaked downward, all tabs render, delete
   scoping correct, no console or page errors.
+- `npm run test:credits` (`scripts/credits-check.mjs`) — 7/7 PASS. Owner sees the
+  Credits tab, a Board Manager does not, a typed role of "Patron" survives, the
+  colour saves, copy-colour moved the hex to match the source card, and the entry
+  survives a reload.
 - `node scripts/smoke.mjs` — all checks passed.
+- `npm run lint:encoding` — every tracked file clean UTF-8, no BOM.
+- `npm audit --omit=dev` — no vulnerabilities.
 - Live database re-checked read-only throughout. No writes were made.
 
 ### Pending — required before these features work
-- **Run these three files in the Supabase SQL Editor, in this order:**
-  1. `supabase/005_portraits_and_credits.sql`
-  2. `supabase/006_roles_and_privileges.sql`
-  3. `supabase/007_article_ownership.sql`
-- Then, if you want everyone logged out and only the Owner kept:
-  4. `supabase/008_reset_non_owner_accounts.sql`
-- Confirmed against production: `staff.portrait_url` does not exist yet, and
-  `wire_default_permissions` is absent from the schema cache (`PGRST202`). Until
-  005 and 006 are applied, portraits do not appear on bylines, the Credits
-  roster is empty, and the browser role gating is client-side only.
+- **`supabase/009_credits_page.sql`** must be run in the Supabase SQL Editor before
+  the Credits page can save anything. Until then the tab renders and the
+  Owner-only gate holds, but every save returns a message naming the migration.
+  No data was written to the live database while building this.
+- `supabase/006_roles_and_privileges.sql` and `supabase/007_article_ownership.sql`
+  must be re-run now that both have been fixed. Both aborted partway, so the
+  database is half-migrated: 006 left no CHECK on `staff_accounts.role`, and 007
+  never reached its RLS policies.
+- `supabase/004_device_registration.sql` — still unapplied. A reader who enables
+  alerts is silently not subscribed, and broadcasts stay in-app only.
 - Push delivery still requires a server-side sender. Browsers subscribe and
   store endpoints, but broadcasts only reach a tab that is currently open.
 
