@@ -46,3 +46,8 @@ tmp-*.mjs
 # Ad-hoc local scratch/probe output
 tmp-*.txt
 tmp-*.cjs
+
+# Screenshots written by the layout-check probes. Binary, so the encoding
+# linter skips them, but they still must not reach the repo.
+tmp-*.png
+tmp-*.jpg

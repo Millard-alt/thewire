@@ -134,7 +134,14 @@ export function createSeedState() {
         username: 'gwanjiku',
         email: 'grace.wanjiku@example.com',
         role: 'Writer',
-        status: 'Active'
+        status: 'Active',
+        // One portrait left awaiting review, so the Owner's review controls have
+        // something real to act on in a fresh demo install. Without it the
+        // Staff tab renders no review buttons at all and the approval flow looks
+        // broken rather than empty.
+        portrait_url:
+          'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=320&q=80',
+        portrait_status: 'pending'
       },
       {
         id: 'seed-staff-3',
@@ -145,7 +152,12 @@ export function createSeedState() {
         // accepted it and normaliseRole() folded it to Writer, so the row and
         // the UI disagreed about what this person was.
         role: 'Board Manager',
-        status: 'Active'
+        status: 'Active',
+        portrait_url:
+          'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=320&q=80',
+        // Already approved, so the Staff tab shows both states at once: one
+        // badge says "To review" with buttons, the other says "Portrait live".
+        portrait_status: 'approved'
       }
     ],
 

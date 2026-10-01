@@ -69,7 +69,38 @@ try {
     await page.close();
   }
 
-  /* --- 2. owner round trip --- */
+  /* --- 2. portrait review gate ---
+   *
+   * This is the regression test for the bug where a staffer uploaded a portrait,
+   * was told "submitted for approval", and then nothing happened, ever. The
+   * controls are Owner-only, so the assertion has to be made from both sides:
+   * the Owner must get them, and a Board Manager must not.
+   */
+  for (const [role, user, shouldSee] of [
+    ["Owner", OWNER, true],
+    ["Board Manager", MANAGER, false]
+  ]) {
+    const p = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    p.on("pageerror", (e) => problems.push(`[${role} portrait] ${e.message}`));
+    await signIn(p, user);
+    await p.evaluate(() => {
+      document.querySelector('[data-action="open-admin"], #open-admin')?.click();
+    });
+    await p.waitForTimeout(900);
+    await p.click('[data-admin-tab="staff"]');
+    await p.waitForTimeout(700);
+
+    const buttons = await p.$$eval("[data-action='portrait-approve'], [data-action='portrait-reject']",
+      (els) => els.length);
+    check(
+      `${role} ${shouldSee ? "can" : "cannot"} approve portraits`,
+      shouldSee ? buttons > 0 : buttons === 0,
+      `${buttons} review control(s) rendered`
+    );
+    await p.close();
+  }
+
+  /* --- 3. owner round trip --- */
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.on("pageerror", (e) => problems.push(`[owner] ${e.message}`));
   page.on("console", (m) => {

@@ -44,6 +44,7 @@ import {
   updatePerson,
   removePerson,
   assignPortrait,
+  setPortraitStatus,
   primePortraits,
   isCreditsMigrationMissing,
   normaliseColour,
@@ -781,7 +782,8 @@ function renderStaffTab() {
                 <td class="px-4 py-3">${escapeHtml(member.role)}</td>
                 <td class="px-4 py-3">${statusBadge(member.status)}</td>
                 <td class="px-4 py-3">
-                  <div class="flex justify-end gap-1">
+                  <div class="flex flex-wrap items-center justify-end gap-2">
+                    ${renderPortraitReview(member)}
                     <button class="btn btn-quiet" data-action="staff-edit"
                       data-id="${escapeHtml(member.id)}" aria-label="Edit staffer">
                       <i class="fa-solid fa-pen" aria-hidden="true"></i>
@@ -822,6 +824,66 @@ function renderStaffTab() {
 /* -------------------------------------------------------------------------- */
 /* Tab 9 — Media Library                                                       */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * The Owner's portrait decision for one staffer.
+ *
+ * This is about IDENTITY, not the Credits page: it decides whether this
+ * person's photo may appear beside their bylines anywhere on the site. Until
+ * it is approved the portrait is invisible to readers, so the staffer sees
+ * nothing happen and has no idea what to do next -- hence the explicit
+ * "awaiting your review" state rather than a silent photo.
+ *
+ * Only the Owner may approve, and only the Owner ever sees these controls, so
+ * the gate is not merely hidden: it is also enforced by
+ * wire_set_portrait_status in 014_portrait_approval.sql.
+ *
+ * @param {{id: string, name: string, portrait_url?: string,
+ *          portrait_status?: string}} member
+ * @returns {string} HTML
+ */
+function renderPortraitReview(member) {
+  if (!isOwner()) return '';
+
+  const status = String(member.portrait_status || 'none').toLowerCase();
+  const hasPhoto = Boolean(safeUrl(member.portrait_url));
+
+  if (status === 'pending' && hasPhoto) {
+    return `
+      <div class="flex items-center gap-2">
+        <span class="badge badge-amber" title="Uploaded, waiting on you">
+          <i class="fa-solid fa-clock" aria-hidden="true"></i> To review
+        </span>
+        <button class="btn btn-accent" data-action="portrait-approve"
+          data-id="${escapeHtml(member.id)}"
+          data-name="${escapeHtml(member.name)}"
+          aria-label="Approve ${escapeHtml(member.name)}'s portrait">
+          <i class="fa-solid fa-check" aria-hidden="true"></i> Approve
+        </button>
+        <button class="btn btn-quiet" data-action="portrait-reject"
+          data-id="${escapeHtml(member.id)}"
+          data-name="${escapeHtml(member.name)}"
+          aria-label="Reject ${escapeHtml(member.name)}'s portrait">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </div>`;
+  }
+
+  if (status === 'approved' && hasPhoto) {
+    return `<span class="badge badge-emerald">
+              <i class="fa-solid fa-check" aria-hidden="true"></i> Portrait live
+            </span>`;
+  }
+
+  if (status === 'rejected') {
+    return `<span class="badge badge-amber" title="Waiting on a new upload">
+              <i class="fa-solid fa-rotate" aria-hidden="true"></i> Rejected
+            </span>`;
+  }
+
+  return '';
+}
+
 
 function renderMediaTab() {
   const media = store.listMedia();
@@ -3416,6 +3478,32 @@ function handleClick(event) {
         });
       }
       break;
+
+    /* --- portrait review (Owner only) --- */
+    // The client hides these buttons and the RPC re-checks is_owner() in
+    // Postgres, so this branch is the third gate, not the only one.
+    case 'portrait-approve':
+    case 'portrait-reject': {
+      const approving = action === 'portrait-approve';
+      const who = name || 'this staffer';
+      guard(async () => {
+        const result = await setPortraitStatus(id, approving ? 'approved' : 'rejected');
+        if (!result.ok) {
+          showToast(result.message, { type: 'error', duration: 6000 });
+          return;
+        }
+        // primePortraits() re-reads the sticker cache so the byline photo and
+        // the Credits page reflect the decision without a page reload.
+        await primePortraits();
+        showToast(
+          approving
+            ? `${who}'s portrait is live. It now appears beside their bylines.`
+            : `${who}'s portrait was rejected. They can upload a new one.`,
+          { type: approving ? 'success' : 'info' }
+        );
+      });
+      break;
+    }
 
     /* --- credits --- */
     // Every one of these writes to public.credits_people through an RPC that

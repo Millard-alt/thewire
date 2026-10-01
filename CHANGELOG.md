@@ -13,7 +13,44 @@ its migrations have been run in the Supabase SQL Editor.**
 
 Verified against `iguzwwqjufzzdblkqroj` on 10 Oct 2026.
 
-### 0. Signup FIXED (012 applied). Approval then failed with "Unknown role."
+### 0. Signup and account approval FIXED (012 applied). Portrait approval UI added;014 pending paste.
+
+Signup works, and setting a role now works: both were confirmed by the user on
+the live site.
+
+Portrait submission uploads fine, but **there was nowhere to approve a photo.**
+A staffer uploaded one, was told "submitted for approval", and nothing ever
+happened.
+
+**Two causes, both server-side, neither visible from the client:**
+
+1. **The grant named a role the browser never sends.** `005_portraits_and_credits.sql`
+   ended with `grant execute on function public.wire_set_portrait_status(uuid, text)
+   to authenticated;`. This project uses no Supabase Auth, so no JWT is ever
+   presented and the request role is `anon` — never `authenticated`. The
+   function was unreachable from the browser: Postgres returns "permission
+   denied for function" before the function body, and therefore before
+   `is_staff()`, is ever consulted.
+2. **`is_staff()` was the wrong authority.** Even reachable, the check allowed
+   *any* staffer to approve or reject *anyone's* portrait, including the Owner's
+   own. A portrait is an identity claim attached to a person's byline
+   permanently, so that decision belongs to the Owner, exactly as account
+   approval does.
+
+**`014_portrait_approval.sql` fixes both** — re-grants to `anon` (keeping
+`authenticated` too), and redefines the function with an `is_owner()` gate.
+
+**Why it went unnoticed so long:** `setPortraitStatus()` was exported from
+`src/lib/credits.js` and **had no caller anywhere in the codebase.** The
+capability existed, the screen did not, and no test touched either path. Fixed
+in all three places at once — the migration, the Staff tab UI, and the test.
+
+The migration verifies behaviour rather than DDL: it proves a signed-out caller
+is refused, that `approved` persists, and it restores the row it touched. It
+creates and deletes nothing, because that is exactly what leaves debris behind
+when a paste aborts partway.
+
+### 0b. Account approval now works
 
 Signup works now, so the first `012` paste landed. Setting a role on an account
 then raised `Unknown role.` immediately.
