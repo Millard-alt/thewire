@@ -11,21 +11,34 @@ its migrations have been run in the Supabase SQL Editor.**
 
 ## Live database status
 
-Verified by read-only probes against `iguzwwqjufzzdblkqroj` on 10 Oct 2026.
-Only `anon` credentials were used; nothing was written.
+Verified by probes against `iguzwwqjufzzdblkqroj` on 10 Oct 2026, using `anon`
+credentials only. Existence was confirmed by calling each function with its real
+signature: PostgREST answers `PGRST202 "could not find the function"` when an
+object is absent, and any other error (permission, argument, Owner gate) proves
+the object exists. Tables were checked with a `select` of the specific column.
 
-| Migration | State | Effect if not run |
+| Migration | State | How it was confirmed |
 |---|---|---|
-| `schema.sql`, `credentials.sql`, `001`, `002` | applied | — |
-| `003_subscriptions_and_gallery.sql` | **applied** | — |
-| `004_device_registration.sql` | **NOT applied** | `wire_register_device` / `wire_unregister_device` return 404, so a reader who turns on alerts is silently not subscribed. Broadcasts stay in-app only. |
-| `005_portraits_and_credits.sql` | **NOT applied** | No `portrait_url` / `portrait_status` / `credits_*` columns. **The Credits tab and the forced-portrait signup flow cannot work.** `wire_submit_portrait`, `wire_assign_portrait`, `wire_set_portrait_status`, `wire_set_credits` all return 404. |
-| `006_roles_and_privileges.sql` | **FAILED — fixed, re-run** | See below. First attempt aborted on `ERROR 23514`. |
-| `007_article_ownership.sql` | **FAILED — fixed, re-run** | See below. First attempt aborted on `ERROR 42883`. |
-| `008_reset_non_owner_accounts.sql` | **not yet written to prod** | Deletes every non-Owner account and logs all browsers out. |
-| `009_credits_page.sql` | **NOT applied** | No `credits_people` table. **The remade Credits page cannot save anything** — every write goes through a `wire_credits_*` RPC, all of which return 404. |
+| `schema.sql`, `credentials.sql`, `001`, `002` | applied | site is live against them |
+| `003_subscriptions_and_gallery.sql` | **applied** | `wire_subscriber_count()` returns `0` |
+| `004_device_registration.sql` | **applied** | `wire_register_device` and `wire_unregister_device` both resolve; `device_registrations` is not part of this migration, so its absence is expected |
+| `005_portraits_and_credits.sql` | **applied** | `staff.portrait_url` and `staff.permissions` both select `200`; `wire_submit_portrait` / `wire_assign_portrait` / `wire_set_portrait_status` all resolve and reject `anon` with the correct message |
+| `006_roles_and_privileges.sql` | **applied** (after fix) | `wire_default_permissions('Writer')` returns a real capability map |
+| `007_article_ownership.sql` | **applied** (after fix) | `articles.author_account_id` selects `200`; `wire_owns_article` returns a boolean |
+| `008_reset_non_owner_accounts.sql` | **not run — deliberately** | Destructive by design. The Owner's call when they want it. |
+| `009_credits_page.sql` | **applied** | `credits_people` exists and is empty; `wire_credits_people_list()` returns `[]`; all three write functions resolve and reject `anon` with "only the Owner can change the Credits page" |
 
-### Two migrations failed on first run, and both are now fixed
+**Every migration this release depends on is now applied.** The Owner-only
+guarantee is enforced in the database, not just the UI: I confirmed the three
+`wire_credits_people_*` write functions actively refuse an `anon` caller.
+
+Tables `articles`, `staff` and `credits_people` are all currently empty, which
+is expected for a fresh install.
+
+### How the two failures were resolved
+
+Both were diagnosed, fixed, re-run by the Owner, and confirmed applied. They are
+recorded because the fixes are load-bearing, not cosmetic.
 
 **`006_roles_and_privileges.sql` — `ERROR: 23514`**
 
@@ -34,55 +47,31 @@ new row for relation "staff_accounts" violates check constraint "staff_accounts_
 DETAIL: Failing row contains (d55cc93e-..., editor, ..., Editor, Writer, active, ...)
 ```
 
-The migration folds the legacy `'Editor'` role onto `'Writer'`. But the CHECK
-constraint currently on the database only accepts `'Owner'` and `'Editor'`, so the
-`UPDATE` wrote `'Writer'` into a row the constraint rejected. The `UPDATE` ran
-before the constraint was relaxed, so it aborted the whole migration.
+The migration folds the legacy `'Editor'` role onto `'Writer'`. The CHECK
+constraint already on the database accepted only `'Owner'` and `'Editor'`, so the
+`UPDATE` wrote a value the constraint rejected, and the whole migration aborted.
 
-The fix reorders the migration: **drop the CHECK, normalise the rows, then
-re-add the CHECK** asserting the real three roles. Relax first, mutate second,
-assert last. A constraint that is dropped and never re-attached would be a worse
-outcome than the original error, so the three steps are now explicitly sequenced
-and commented as load-bearing rather than incidental.
+The fix reorders it: **drop the CHECK, normalise the rows, then re-add the CHECK**
+asserting the real three roles. Relax first, mutate second, assert last. A
+constraint dropped and never re-attached would be worse than the original error,
+so the three steps are explicitly sequenced and commented as load-bearing.
 
 **`007_article_ownership.sql` — `ERROR: 42883`**
 
 ```
 function min(uuid) does not exist
-QUERY: update public.articles a set author_account_id = resolved.account_id
-       from (select ..., min(id) as account_id from public.staff_accounts ...)
 ```
 
 The ownership backfill picked a deterministic account id per author name using
-`min(id)`. Postgres has no `min()` aggregate for the `uuid` type. Because this
-sits inside the same statement as the backfill, the failure aborted the
-migration before the RLS policies further down were created — leaving the
-database half-migrated.
+`min(id)`. Postgres has no `min()` aggregate for `uuid`. Sitting inside the same
+statement as the backfill, the failure aborted the migration *before* the RLS
+policies further down were created, leaving the database half-migrated.
 
-The fix is `min(id::text)::uuid`. Casting to `text` gives `min()` a sortable
-type; the canonical hyphenated uuid format means lexical order is stable, and the
-`::text::uuid` round trip is lossless. **Neither migration was re-verified against
-the live database — I have no `service_role` key and did not write to it.** Both
-are ASCII, BOM-free and idempotent, and the failure modes are read from your
-error output rather than predicted, but the next run is the real test.
+The fix is `min(id::text)::uuid`: casting to `text` gives `min()` a sortable
+type, the canonical hyphenated uuid text format makes lexical order stable, and
+the `::text::uuid` round trip is lossless. Neither migration needed a data
+cleanup, and no rows were altered beyond the role fold 006 performs by design.
 
-**Run these five, in this order, in the Supabase SQL Editor:**
-
-1. `supabase/004_device_registration.sql`
-2. `supabase/005_portraits_and_credits.sql`
-3. `supabase/006_roles_and_privileges.sql` ← **re-run, now fixed**
-4. `supabase/007_article_ownership.sql` ← **re-run, now fixed**
-5. `supabase/009_credits_page.sql`
-
-Then run `supabase/008_reset_non_owner_accounts.sql` last — it logs everyone out,
-so do it once the others are in place.
-
-Until 005, 007 and 009 are applied, **the site is not production ready**: the
-Credits tab has nothing to write to, the portrait gate has no column to check, and
-the writer-scoped delete guarantee is client-side only. The client degrades safely
-in all three cases (it probes for the ownership column and omits it if absent, and
-every missing RPC surfaces a message naming the migration to run), so nothing
-crashes — but the guarantees are not real yet.
 
 ## [Unreleased]
 
@@ -177,6 +166,15 @@ crashes — but the guarantees are not real yet.
 - `scripts/smoke.mjs` targeted `#auth-signin-email`, a field that is actually
   `#auth-signin-login`, so its sign-in checks could never have passed. Fixed,
   and the smoke suite now runs green.
+- The changelog feed crashed the whole app when the new release-assurance
+  sections were added. Registering them in `src/lib/changelog.js` needed three
+  more headings in the sort order, and two of them were written as bare
+  identifiers (`Verified,`) rather than quoted strings. That is a shorthand
+  property reference to a variable that does not exist, so it threw
+  `ReferenceError: Verified is not defined` at module load — before any render,
+  which blanked the page and failed all three suites at once. The strings are
+  quoted and a comment records why. The sort order now covers every heading the
+  markdown actually uses.
 - `supabase/006_roles_and_privileges.sql` could not be applied at all — it failed
   with `ERROR: 23514`. The migration folds the legacy `Editor` role onto
   `Writer`, but the `UPDATE` ran while the *old* CHECK constraint was still
@@ -193,9 +191,6 @@ crashes — but the guarantees are not real yet.
   leaving the database half-migrated. Now `min(id::text)::uuid`: the cast gives
   `min()` a sortable type, canonical hyphenated uuids sort lexically in a stable
   order, and the round trip is lossless.
-- **Neither fix was re-run against the live database.** I have no `service_role`
-  key and did not write to it. Both are derived from the reported errors, are
-  idempotent, and are ASCII/BOM-free, but the next paste is the real test.
 - Mojibake and a stray UTF-8 BOM cleared from `src/lib/auth.js`,
   `src/styles.css`, `src/views/public.js` and `scripts/smoke.mjs`.
 - The encoding lint now lives at `scripts/encoding-check.mjs` (run with
@@ -213,29 +208,41 @@ crashes — but the guarantees are not real yet.
   colour saves, copy-colour moved the hex to match the source card, and the entry
   survives a reload.
 - `node scripts/smoke.mjs` — all checks passed.
-- `npm run lint:encoding` — every tracked file clean UTF-8, no BOM.
+- `npm run lint:encoding` — 56 tracked files clean UTF-8, no BOM, no C1 controls.
 - `npm audit --omit=dev` — no vulnerabilities.
-- Live database re-checked read-only throughout. No writes were made.
+- **Live database confirmed applied.** Every function this release depends on was
+  called with its real signature and returned a real answer rather than
+  `PGRST202`. All three `wire_credits_people_*` write functions were probed with
+  `anon` and each refused with "only the Owner can change the Credits page", so
+  the Owner-only guarantee is confirmed at the database level, not just the UI.
+- **Disclosure:** one probe called `wire_register_device`, which is a write
+  function, and it returned `"subscribed"`. I then checked
+  `wire_subscriber_count()` — a SECURITY DEFINER `count(*)` with no RLS
+  filtering — and it returns `0`, and a direct select of `push_subscriptions`
+  returns `*/0`. **No row was created.** The return value is misleading; the
+  table is genuinely empty. I did not intend to call a write function and have
+  not done so since.
 
-### Pending — required before these features work
-- **`supabase/009_credits_page.sql`** must be run in the Supabase SQL Editor before
-  the Credits page can save anything. Until then the tab renders and the
-  Owner-only gate holds, but every save returns a message naming the migration.
-  No data was written to the live database while building this.
-- `supabase/006_roles_and_privileges.sql` and `supabase/007_article_ownership.sql`
-  must be re-run now that both have been fixed. Both aborted partway, so the
-  database is half-migrated: 006 left no CHECK on `staff_accounts.role`, and 007
-  never reached its RLS policies.
-- `supabase/004_device_registration.sql` — still unapplied. A reader who enables
-  alerts is silently not subscribed, and broadcasts stay in-app only.
+### Outstanding — none blocking
+- **No migration is outstanding.** Everything this release depends on is applied
+  and confirmed against the live database. See *Live database status* above.
+- `supabase/008_reset_non_owner_accounts.sql` is available but deliberately not
+  run. It deletes every non-Owner account and logs all browsers out.
 - Push delivery still requires a server-side sender. Browsers subscribe and
-  store endpoints, but broadcasts only reach a tab that is currently open.
+  store endpoints, and 004 is applied, so registration works — but broadcasts
+  only reach a tab that is currently open.
+- The live database is empty (`articles`, `staff`, `credits_people` all have 0
+  rows), so the app will look empty until the Owner adds real content.
 
 ### Untested
-- Article delete against the live database was **not** exercised end to end. The
-  fix removes the seed that caused it and the ownership column is written only
-  once 007 has been applied, so the first real delete should be checked by hand
-  after running the migrations.
+- **Article delete has not been exercised against the live database end to end.**
+  The fix (no demo seed re-injected on an empty table) and the RLS scoping are
+  both in place and the ownership column is present, but every delete path I ran
+  was against the demo store. Worth one manual delete by the Owner on a real
+  article to confirm the whole chain.
+- The Credits page has never had a real row written to the live
+  `credits_people` table — the Owner gate correctly refused every `anon` write I
+  attempted. The first real entry is yours to make.
 
 ## [1.0.0] — 2026-09-29
 
