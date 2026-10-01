@@ -11,66 +11,101 @@ its migrations have been run in the Supabase SQL Editor.**
 
 ## [Unreleased]
 
-### Security
-- **Editors no longer receive the Newsroom Panel.** `toSession()` in
-  `src/lib/auth.js` was hardcoding `isAdmin: true` for *every* signed-in
-  account, so any account the Owner had approved landed on the full Owner
-  panel with Accounts, Branding, Security and Changelog all live. `isAdmin` now
-  means only "may open the workspace"; privilege is decided by the account's
-  role. Verified in a real browser for all three roles: an Editor sees 4 tabs, a
-  Board Manager 9, the Owner all 13, with nothing leaking downward.
-- **Roles reduced to exactly three:** `Editor`, `Board Manager`, `Owner`. The
-  never-real `Reporter` role is gone from the UI, the capability map and the
-  database CHECK constraint; it is folded into `Editor`, the weakest role, so
-  nobody silently loses access. Any unrecognised role now normalises to `Editor`
-  rather than being trusted.
+### Fixed
+- **The Owner can now delete articles.** This was the headline bug and it was
+  not an RLS problem. `mergeState()` in `src/lib/store.js` ran every list
+  through `next.x?.length ? next.x : seed.x`, which reads "Postgres returned zero
+  rows" as "we have no data yet" and re-injected the demo seed. Because
+  `articles` was empty on the live database, the Content tab rendered four fake
+  `seed-article-N` stories. `isPersistedId()` then correctly refused to send a
+  text id to a `uuid` column, so no database call was made, the in-memory
+  removal was discarded because production never writes localStorage, and the
+  story reappeared on the next hydrate. A remote payload is now treated as
+  authoritative — an empty table is an empty table.
+- Article delete is honest about failure. PostgREST reports success even when
+  RLS matched zero rows, so the delete now asks for the row back and raises a
+  real error instead of reporting a deletion that never happened.
+- Stale curation pointers cleared. `site_settings.weekly_slots` and
+  `todays_pick_id` are jsonb that held `seed-article-N` ids pointing at rows
+  that never existed. They are dropped at load and no longer fall back to
+  localStorage, so the Curation tab stops looking populated with ghosts.
+- **The portrait gate was open for everyone.** `portraitRequirementMet()` and
+  `publishPortrait()` tested `session.isAdmin` to exempt the Owner, but since
+  the roles were split `isAdmin` means "may open the workspace" and is true for
+  *every* active account. Writers were therefore exempt from the portrait
+  requirement entirely. Both now test `isOwner`.
+- The demo seed used two roles that never existed (`Assignment Manager`,
+  `Senior Investigative Editor`, `Photojournalist`). No CHECK constraint
+  accepted them, so the seed rows disagreed with the UI about what they were.
+  Corrected to `Board Manager` and `Writer`.
+- `scripts/smoke.mjs` targeted `#auth-signin-email`, a field that is actually
+  `#auth-signin-login`, so its sign-in checks could never have passed. Fixed,
+  and the smoke suite now runs green.
+- Mojibake and a stray UTF-8 BOM cleared from `src/lib/auth.js`,
+  `src/styles.css`, `src/views/public.js` and `scripts/smoke.mjs`.
+- `scripts/_encoding_check.mjs` now compares against `HEAD` and labels a
+  finding `PRE-EXISTING` when this change did not introduce it.
 
 ### Added
-- Per-tab role gating (`minRole`) plus `ownerOnly` for the four Owner-only tabs
-  (Accounts, Changelog, Branding, Security). Every consumer reads the gated
-  list, so a hidden tab is genuinely absent rather than merely concealed.
-- A "What each role can do" guide in the Staff tab, generated from the same
-  capability map the database enforces.
-- `supabase/006_roles_and_privileges.sql` — relaxes the `staff_accounts.role`
-  CHECK to accept `Board Manager`, migrates any legacy `Reporter` row, and
-  re-states `wire_default_permissions()` and `wire_approve_account()` for the
-  three real roles. Idempotent.
+- **The Login button now says who it is for.** It reads "Press login" with an
+  `aria-label` of "Press login. Press members only.", so readers are not led to
+  expect a reader account that does not exist. Verified in a real browser: the
+  signed-out header shows the button, the label is correct, and it is exposed to
+  screen readers.
+- `supabase/007_article_ownership.sql` — adds `articles.author_account_id` and
+  replaces the blanket `articles_staff_write` policy with per-role DELETE
+  policies: a Writer may delete only articles they authored, the Owner may
+  delete any. Enforced in the database, so it holds even with a leaked anon
+  key. Idempotent.
+- `supabase/008_reset_non_owner_accounts.sql` — keeps only the Owner row, deletes
+  every other `staff_accounts` row and wipes `wire_sessions` so all browsers are
+  logged out. Wrapped in a transaction, prints what it removed and asserts the
+  result. **Not yet run.**
 
-### Fixed
-- Account role dropdowns and the removal guidance no longer mention `Reporter`.
-- Panel headings are role-aware: an Editor is told they are on the "Editor
-  Desk" rather than being shown Owner wording.
-- Demo sign-in no longer refuses a workspace to anybody outside
-  `VITE_ADMIN_USERNAMES`. It used to set `isAdmin` from the allow-list, so in
-  the demo an Editor account got no panel at all and the role gating could not
-  be reviewed. Now every demo sign-in opens a workspace and the role decides
-  the tabs, exactly as in production: first allow-list entry is the Owner, a
-  later entry is a Board Manager, anyone else is an Editor.
-- `tests/roles.mjs` (wired to `npm test`) is a real regression test for all of
-  the above. It signs in as each of the three roles, checks the app resolved the
-  role it expected, asserts the exact tab list, and fails loudly if any
-  Owner-only tab leaks downward. It caught two real problems: the demo sign-in
-  dead end above, and a migration-ordering bug in 006. Run it against the demo
-  dev server:
+### Security
+- Writers can delete only their own articles, enforced by RLS rather than by the
+  UI. The client-side check is an affordance that keeps the button honest; the
+  database is the real gate.
+- Accounts, Changelog, Branding and Security are Owner-only and gated against
+  the live session.
 
-  ```
-  node node_modules/vite/bin/vite.js --mode demo --port 5201
-  set BASE_URL=http://localhost:5201/ && npm test
-  ```
+### Changed
+- "Owner Control Centre" is gone everywhere (`src/`, `index.html`, docs). The
+  panel is the Newsroom Panel — a screen the whole team works in, not the
+  Owner's private one. A regression test asserts the old wording cannot return.
+- **The role is "Writer", not "Editor."** All user-facing strings, dropdown
+  labels, seed data and SQL now say Writer. `supabase/006_roles_and_privileges.sql`
+  accepts both spellings and normalises legacy `'Editor'` rows to `'Writer'`, so
+  existing accounts keep working. The role set is `Owner`, `Board Manager`,
+  `Writer`; the never-real `Reporter` is gone and folds into `Writer`.
+
+### Verified
+- `npm run build` — 65 modules, built in ~3s.
+- `npm test` (`tests/roles.mjs`) — Writer, Board Manager and Owner all PASS.
+  Tabs 4 / 9 / 13 respectively, nothing leaked downward, all tabs render, delete
+  scoping correct, no console or page errors.
+- `node scripts/smoke.mjs` — all checks passed.
+- Live database re-checked read-only throughout. No writes were made.
 
 ### Pending — required before these features work
-- Run `supabase/005_portraits_and_credits.sql`. Approved portraits do not
-  currently appear on bylines and the Credits roster is empty until it is
-  applied. Verified against production: `staff.portrait_url` does not yet exist.
-- Run `supabase/006_roles_and_privileges.sql`. Verified against production just
-  now: `wire_default_permissions` does not exist in the schema cache at all
-  (`PGRST202`), and the `staff_accounts.role` CHECK still carries the old role
-  set. Until it is applied, approving somebody as Board Manager will fail and
-  the capability map is unavailable server-side. The browser gating above is
-  client-side only until then; the database is the real gate and must be
-  brought in step.
+- **Run these three files in the Supabase SQL Editor, in this order:**
+  1. `supabase/005_portraits_and_credits.sql`
+  2. `supabase/006_roles_and_privileges.sql`
+  3. `supabase/007_article_ownership.sql`
+- Then, if you want everyone logged out and only the Owner kept:
+  4. `supabase/008_reset_non_owner_accounts.sql`
+- Confirmed against production: `staff.portrait_url` does not exist yet, and
+  `wire_default_permissions` is absent from the schema cache (`PGRST202`). Until
+  005 and 006 are applied, portraits do not appear on bylines, the Credits
+  roster is empty, and the browser role gating is client-side only.
 - Push delivery still requires a server-side sender. Browsers subscribe and
   store endpoints, but broadcasts only reach a tab that is currently open.
+
+### Untested
+- Article delete against the live database was **not** exercised end to end. The
+  fix removes the seed that caused it and the ownership column is written only
+  once 007 has been applied, so the first real delete should be checked by hand
+  after running the migrations.
 
 ## [1.0.0] — 2026-09-29
 

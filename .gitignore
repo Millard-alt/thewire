@@ -38,3 +38,7 @@ vercel-env.txt
 # that it holds no real credentials, but keep it out if you ever paste real
 # keys into it. .env stays untracked.
 .env.demo
+# Local scratch files from test/build/dev-server runs
+tmp-*.log
+tmp-*.err
+tmp-*.mjs

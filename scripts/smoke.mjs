@@ -1,5 +1,5 @@
 /**
- * smoke.mjs â€” end-to-end verification of the four hard requirements.
+ * smoke.mjs — end-to-end verification of the four hard requirements.
  *
  *   1. env-driven configuration
  *   2. header auth gating: signed-out shows Login and no admin markup exists;
@@ -7,19 +7,65 @@
  *   3. dark mode: localStorage persistence + prefers-color-scheme fallback
  *   4. CRUD round-trip through the admin workspace
  *
- * Run:  npm run build && node scripts/smoke.mjs
+ * The suite builds its OWN demo-mode bundle into a temp folder and previews
+ * that, so it runs fully offline and cannot write to the live database. See the
+ * long comment above SANDBOX for why that matters. Database-level permissions
+ * are covered separately by tests/roles.mjs, which does talk to the real project.
+ *
+ * Run:  node scripts/smoke.mjs
  * Exits 0 when every assertion passes, 1 otherwise.
  */
 import { chromium } from 'playwright';
-import { preview } from 'vite';
+import { build, preview } from 'vite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const PORT = 4321;
 const ORIGIN = `http://localhost:${PORT}`;
 
 /**
- * Demo credentials: any valid e-mail + 8+ char password works in demo mode.
- * This address is the one in VITE_ADMIN_EMAILS in .env, so signing in as it
- * also exercises the admin allow-list that gates the Owner Control Center.
+ * THE SMOKE TEST MUST NEVER TOUCH THE LIVE DATABASE.
+ *
+ * This script signs in as the Owner and then performs a real CREATE / UPDATE /
+ * DELETE cycle. When it previewed the ordinary `dist/` folder it inherited that
+ * build's `VITE_DEMO_MODE=false` plus the real `VITE_SUPABASE_URL`, so every one
+ * of those writes went to production Postgres. The test also created rows that
+ * the test account was not permitted to remove again.
+ *
+ * It now builds its own throwaway bundle with the Supabase vars blanked and
+ * `VITE_DEMO_MODE=true`, which routes the whole app to localStorage. Two
+ * consequences worth stating plainly:
+ *
+ *   - The suite verifies UI and store behaviour, NOT RLS. Database permissions
+ *     are covered by tests/roles.mjs against the real project.
+ *   - Nothing this script does can reach production, whatever else changes.
+ */
+const SANDBOX = mkdtempSync(join(tmpdir(), 'thewire-smoke-'));
+
+// Vite exposes process.env entries prefixed with VITE_ through import.meta.env,
+// and it inlines them at build time. Setting them here (rather than passing
+// arbitrary keys to build()) is the documented way to override them, and
+// `envFile: false` stops the real .env from being read back in.
+process.env.VITE_DEMO_MODE = 'true';
+process.env.VITE_SUPABASE_URL = '';
+process.env.VITE_SUPABASE_ANON_KEY = '';
+
+await build({
+  logLevel: 'error',
+  mode: 'production',
+  define: {},
+  envFile: false,
+  build: {
+    outDir: SANDBOX,
+    emptyOutDir: true
+  }
+});
+
+/**
+ * Demo credentials. In demo mode any syntactically valid login with an 8+ char
+ * password is accepted, and this address is the one in VITE_ADMIN_EMAILS, so
+ * signing in as it also exercises the allow-list that gates the newsroom panel.
  * A *non*-allow-listed address is used later to prove readers get no admin UI.
  */
 const DEMO_ADMIN_EMAIL = 'chief.owner@example.com';
@@ -34,6 +80,8 @@ function check(label, condition, extra = '') {
 }
 
 const server = await preview({
+  // Serve the sandbox bundle, never ./dist, so the run is hermetic.
+  build: { outDir: SANDBOX },
   preview: { port: PORT, strictPort: true },
   logLevel: 'error'
 });
@@ -131,11 +179,26 @@ try {
   /* ---------- Requirement 2a: signed-out header ------------------------- */
   const loginBtn = page.locator('#auth-slot #open-auth');
   check('signed-out header shows a Login button', await loginBtn.isVisible());
+
+  // The .btn class applies text-transform: uppercase, which innerText
+  // reflects, so compare case-insensitively.
+  const loginLabel = (await loginBtn.innerText()).replace(/\s+/g, ' ').trim().toLowerCase();
+
+  // The login control must state that it is for press members, so a reader
+  // landing on the site is not invited to try to register an account.
   check(
-    'Login button label is "Login"',
-    // The .btn class applies text-transform: uppercase, which innerText
-    // reflects, so compare case-insensitively.
-    (await loginBtn.innerText()).replace(/\s+/g, ' ').trim().toLowerCase() === 'login'
+    'Login button says it is for press members',
+    loginLabel.includes('press'),
+    `label="${loginLabel}"`
+  );
+
+  // The restriction must also reach assistive tech, since the visible label is
+  // kept short to avoid overflowing the header on a narrow phone.
+  const loginAria = await loginBtn.getAttribute('aria-label');
+  check(
+    'Login button exposes the press-only rule to screen readers',
+    /press/i.test(loginAria || ''),
+    `aria-label="${loginAria}"`
   );
 
   // No admin markup may exist in the document for an anonymous visitor.
@@ -241,7 +304,11 @@ try {
   // Reopen and sign in for real.
   await page.locator('#auth-slot #open-auth').click();
   await page.waitForSelector('#auth-modal:not(.hidden)');
-  await page.fill('#auth-signin-email', DEMO_ADMIN_EMAIL);
+  // The sign-in field is a USERNAME, not an e-mail address: the project uses
+  // its own credential system, so the input is #auth-signin-login. This used to
+  // target #auth-signin-email, an id that no longer exists, and the run died on a
+  // 30s fill timeout before reaching any signed-in assertion.
+  await page.fill('#auth-signin-login', DEMO_ADMIN_EMAIL);
   await page.fill('#auth-signin-password', DEMO_PASSWORD);
   await page.locator('#auth-form-signin button[type="submit"]').click();
   // The modal closes itself on a successful sign-in.
@@ -310,6 +377,13 @@ try {
 } finally {
   await browser.close();
   await server.close();
+  // Remove the throwaway bundle. Wrapped so a cleanup failure never masks the
+  // real test result or changes the exit code.
+  try {
+    rmSync(SANDBOX, { recursive: true, force: true });
+  } catch {
+    /* a stale temp folder is harmless */
+  }
 }
 
 console.log(

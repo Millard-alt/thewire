@@ -37,10 +37,22 @@ export function renderAuthSlot(session, { onOpenAdmin } = {}) {
 
   /* --- Signed out: one clean Login button -------------------------------- */
   if (!session) {
+    // The label says "Press" rather than a bare "Login" because this is not a
+    // reader account system: it exists for newsroom staff. `title` and the
+    // aria-label carry the restriction in full for screen readers and for the
+    // hover tooltip, while the visible text stays short enough not to overflow
+    // the header on a narrow phone (.btn is white-space: nowrap, so a longer
+    // label would push the theme toggle off-screen rather than wrap).
     slot.innerHTML = `
-      <button type="button" id="open-auth" class="btn btn-primary">
+      <button
+        type="button"
+        id="open-auth"
+        class="btn btn-primary"
+        title="Press members only"
+        aria-label="Press login. Press members only."
+      >
         <i class="fa-solid fa-right-to-bracket" aria-hidden="true"></i>
-        <span>Login</span>
+        <span>Press Login</span>
       </button>
     `;
     slot.querySelector('#open-auth')?.addEventListener('click', openAuthModal);
