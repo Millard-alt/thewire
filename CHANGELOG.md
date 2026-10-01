@@ -29,8 +29,6 @@ arrived as `'writer'`; the very next line compared it against the canonical
 capitalised names with `v_role not in ('Owner','Writer','Board Manager')`,
 so it failed and every approval raised `Unknown role.`
 
-It was invisible in review because `v_role` had been renamed to `v_role_in`
-elsewhere in the file, so the declaration and its consumers looked unrelated.
 Fixed in both `012_fix_live_signup_function.sql` and `credentials.sql`: the
 value is kept as sent, the legacy `'editor'` alias is matched case-insensitively,
 and a separate `case lower(v_role)` normalises *to* the canonical spelling
@@ -40,14 +38,44 @@ stale `'Editor'` all resolve correctly now.
 **Why the migration's own probe missed it:** the probe only inserted the three
 canonical spellings and asserted the CHECK accepted them. That proves the
 constraint is healthy — it cannot see a bug in the normalisation *before* the
-constraint. A new step 4 evaluates the real normalisation expression against all
-8 input spellings, as a pure SELECT: no rows written, and it raises naming the
+constraint. A new step evaluates the real normalisation expression against all 8
+input spellings, as a pure SELECT: no rows written, and it raises naming the
 failing input rather than reporting success.
 
+### 0b. Portrait upload — ROOT CAUSES FOUND, FIX WRITTEN, NOT YET APPLIED
+
+`new row violates row-level security policy`, followed by a 400 on
+`POST /storage/v1/object/wire-media/portraits/...`. Two independent causes, both
+measured against the live database rather than inferred:
+
+1. **The bucket had no policies at all.** `storage.objects` carried no policies
+   for `wire-media`, so every insert was rejected — the "no rows in policy" that
+   presents as a generic RLS violation. `uploadSquare()` uses `upsert: true`, so
+   a retry is an **UPDATE** and needs its own policy; without it the retry looks
+   like the same fresh failure.
+
+2. **The function looked up the wrong identity.** `wire_submit_portrait`
+   resolved the caller with `auth.uid()`, which is always `NULL` because this
+   project uses custom auth instead of Supabase Auth. Even with the upload
+   allowed, the submission would have had no row to write. It now resolves via
+   `current_staff_id()`, which joins `staff_accounts` to `staff` on the username
+   — the identifier this system actually uses. Confirmed present on both live
+   tables before writing the fix.
+
+`staff.auth_user_id` is deliberately left alone. `schema.sql` gives it a foreign
+key to `auth.users`, which is empty in this project, so backfilling it raises
+`23503` — and because the SQL Editor runs a paste in one implicit transaction,
+that single UPDATE would roll back the policies and the function above it. A
+repair file cannot contain the failure mode it exists to end.
+
 > ### Action required
-> **Re-paste `supabase/012_fix_live_signup_function.sql`** into the Supabase SQL
-> Editor to pick up the approval fix. It is idempotent — safe to run again
-> whether or not you have already run the earlier revision.
+> **Paste `supabase/013_portrait_upload_and_identity.sql`** into the Supabase SQL
+> Editor. It is idempotent — every policy is dropped before it is created, so
+> re-running cannot raise `42710` and roll the paste back the way an earlier
+> revision did.
+>
+> The role fix above still needs **re-pasting `supabase/012_fix_live_signup_function.sql`**.
+> Run `013` first, then `012`; order between them does not matter.
 
 ### 1. Signup is broken — ROOT CAUSE FOUND, FIX WRITTEN, NOT YET APPLIED
 
