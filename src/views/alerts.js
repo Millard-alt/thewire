@@ -21,6 +21,52 @@ import { byId, escapeHtml, showToast } from '../lib/dom.js';
 const BAR_ID = 'alert-optin-bar';
 const GATE_ID = 'alert-gate';
 
+/**
+ * Remembers that this reader has already answered the alert prompt, so we never
+ * nag. A browser only ever shows its own prompt once, but *our* instructions
+ * modal was re-shown on every single article opened, which read as a bug.
+ */
+const ANSWERED_KEY = 'wire.alerts.answered';
+
+function hasAnswered() {
+  try {
+    return localStorage.getItem(ANSWERED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function markAnswered() {
+  try {
+    localStorage.setItem(ANSWERED_KEY, '1');
+  } catch {
+    /* private mode — we simply ask again next time */
+  }
+}
+
+/**
+ * Has the Owner switched the prompt off?
+ *
+ * The Owner toggle in Security & settings writes `notifications.forced` to the
+ * database. It used to be displayed but never read by any reader-facing code,
+ * so switching it either way changed nothing. Forced mode now genuinely means
+ * "stop asking" — which is what an Owner who has turned it off expects.
+ */
+function ownerSuppressesPrompt() {
+  return Boolean(store.getState().notifications?.forced);
+}
+
+/**
+ * Should we open the instruction modal for this reader at all?
+ * Never while the Owner has suppressed it, and never twice.
+ */
+export function shouldPromptForAlerts() {
+  if (!config.pushBroadcastsEnabled) return false;
+  if (ownerSuppressesPrompt()) return false;
+  if (hasAnswered()) return false;
+  return push.getPermission() !== 'granted';
+}
+
 /** The steps a reader must follow, tailored to what actually went wrong. */
 function instructions(permission) {
   const steps = [];
@@ -107,6 +153,16 @@ export async function ensureAlertPermission() {
     return false;
   }
 
+  // Respect the Owner's decision and the reader's previous answer. Without this
+  // the modal reappeared on every article, which is what you reported.
+  if (ownerSuppressesPrompt()) {
+    showToast('Alerts are off for this device. The owner has paused prompts.', {
+      type: 'info'
+    });
+    return false;
+  }
+  if (hasAnswered()) return false;
+
   const dialog = byId(GATE_ID);
   if (!dialog) {
     // No dialog in the DOM â€” ask directly rather than trapping the reader.
@@ -137,6 +193,7 @@ export async function ensureAlertPermission() {
       if (result === 'granted') {
         push.startBroadcastPolling();
         showToast('Alerts are on for this device.', { type: 'success' });
+        markAnswered();
         done(true);
         return;
       }
@@ -147,11 +204,15 @@ export async function ensureAlertPermission() {
         type: 'error',
         duration: 6000
       });
+      // They answered and it did not work, so do not ask again unprompted.
+      markAnswered();
       done(false);
     };
 
     const onDismiss = () => {
       showToast('You can turn alerts on any time from the header.', { type: 'info' });
+      // Declining is a valid answer — respect it instead of re-asking.
+      markAnswered();
       done(false);
     };
 

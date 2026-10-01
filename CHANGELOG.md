@@ -11,10 +11,64 @@ its migrations have been run in the Supabase SQL Editor.**
 
 ## [Unreleased]
 
+### Security
+- **Editors no longer receive the Owner's Control Center.** `toSession()` in
+  `src/lib/auth.js` was hardcoding `isAdmin: true` for *every* signed-in
+  account, so any account the Owner had approved landed on the full Owner
+  panel with Accounts, Branding, Security and Changelog all live. `isAdmin` now
+  means only "may open the workspace"; privilege is decided by the account's
+  role. Verified in a real browser for all three roles: an Editor sees 4 tabs, a
+  Board Manager 9, the Owner all 13, with nothing leaking downward.
+- **Roles reduced to exactly three:** `Editor`, `Board Manager`, `Owner`. The
+  never-real `Reporter` role is gone from the UI, the capability map and the
+  database CHECK constraint; it is folded into `Editor`, the weakest role, so
+  nobody silently loses access. Any unrecognised role now normalises to `Editor`
+  rather than being trusted.
+
+### Added
+- Per-tab role gating (`minRole`) plus `ownerOnly` for the four Owner-only tabs
+  (Accounts, Changelog, Branding, Security). Every consumer reads the gated
+  list, so a hidden tab is genuinely absent rather than merely concealed.
+- A "What each role can do" guide in the Staff tab, generated from the same
+  capability map the database enforces.
+- `supabase/006_roles_and_privileges.sql` — relaxes the `staff_accounts.role`
+  CHECK to accept `Board Manager`, migrates any legacy `Reporter` row, and
+  re-states `wire_default_permissions()` and `wire_approve_account()` for the
+  three real roles. Idempotent.
+
+### Fixed
+- Account role dropdowns and the removal guidance no longer mention `Reporter`.
+- Panel headings are role-aware: an Editor is told they are on the "Editor
+  Desk" rather than being shown Owner wording.
+- Demo sign-in no longer refuses a workspace to anybody outside
+  `VITE_ADMIN_USERNAMES`. It used to set `isAdmin` from the allow-list, so in
+  the demo an Editor account got no panel at all and the role gating could not
+  be reviewed. Now every demo sign-in opens a workspace and the role decides
+  the tabs, exactly as in production: first allow-list entry is the Owner, a
+  later entry is a Board Manager, anyone else is an Editor.
+- `tests/roles.mjs` (wired to `npm test`) is a real regression test for all of
+  the above. It signs in as each of the three roles, checks the app resolved the
+  role it expected, asserts the exact tab list, and fails loudly if any
+  Owner-only tab leaks downward. It caught two real problems: the demo sign-in
+  dead end above, and a migration-ordering bug in 006. Run it against the demo
+  dev server:
+
+  ```
+  node node_modules/vite/bin/vite.js --mode demo --port 5201
+  set BASE_URL=http://localhost:5201/ && npm test
+  ```
+
 ### Pending — required before these features work
 - Run `supabase/005_portraits_and_credits.sql`. Approved portraits do not
   currently appear on bylines and the Credits roster is empty until it is
   applied. Verified against production: `staff.portrait_url` does not yet exist.
+- Run `supabase/006_roles_and_privileges.sql`. Verified against production just
+  now: `wire_default_permissions` does not exist in the schema cache at all
+  (`PGRST202`), and the `staff_accounts.role` CHECK still carries the old role
+  set. Until it is applied, approving somebody as Board Manager will fail and
+  the capability map is unavailable server-side. The browser gating above is
+  client-side only until then; the database is the real gate and must be
+  brought in step.
 - Push delivery still requires a server-side sender. Browsers subscribe and
   store endpoints, but broadcasts only reach a tab that is currently open.
 

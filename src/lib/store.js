@@ -1094,6 +1094,42 @@ export function getPendingQueue() {
   return getState().articles.filter((a) => isStatus(a.status, 'Pending Review'));
 }
 
+/**
+ * Restore every *setting* to the shipped default: masthead branding, the
+ * breaking-news banner, Today's Pick, the three weekly slots and the
+ * forced-notification lockout.
+ *
+ * This deliberately touches settings ONLY. Content is left alone -- articles,
+ * staff, media, accounts and broadcast history are real newsroom records, and
+ * "reset settings" is a request about configuration, not about deleting
+ * published work. A separate, far louder action handles data.
+ */
+export async function resetAllSettings() {
+  const seed = createSeedState();
+  const current = getState();
+
+  current.branding = { ...seed.branding };
+  current.breakingNews = { ...seed.breakingNews };
+  current.todaysPickId = seed.todaysPickId;
+  current.weeklySlots = { ...seed.weeklySlots };
+  // Only the setting, not activeSubscriberCount: that figure is read from
+  // `push_subscriptions` at runtime and must stay honest.
+  current.notifications.forced = seed.notifications.forced;
+  current.notifications.permissionGranted = seed.notifications.permissionGranted;
+
+  await persistSettings();
+  await addAuditLog('Reset all settings to defaults');
+  commit();
+
+  return {
+    branding: current.branding,
+    breakingNews: current.breakingNews,
+    todaysPickId: current.todaysPickId,
+    weeklySlots: current.weeklySlots,
+    forced: current.notifications.forced
+  };
+}
+
 /** Wipe every local cache. Used by "reset demo data" in the admin panel. */
 export async function resetLocalData() {
   try {

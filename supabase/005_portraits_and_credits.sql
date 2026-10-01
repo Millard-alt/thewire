@@ -66,6 +66,14 @@ grant select on public.credits_roster to anon, authenticated;
 -- -----------------------------------------------------------------------------
 --  Capability flags, so the client never hardcodes a role -> capability map that
 --  can drift from the database.
+--
+--  IMPORTANT: these role names MUST match the CHECK constraint on
+--  staff_accounts.role in credentials.sql -- ('Owner','Board Manager','Editor').
+--  An earlier revision of this function listed 'Managing Editor' and
+--  'Photographer', which that CHECK rejects, so BOTH fell through to the final
+--  ELSE branch and were granted NO capabilities at all: an Editor could not
+--  publish and a Board Manager could not even reach the media shelf. The two
+--  lists are kept in step deliberately -- change one, change both.
 -- -----------------------------------------------------------------------------
 create or replace function public.wire_default_permissions(p_role text)
 returns jsonb
@@ -74,8 +82,8 @@ immutable
 as $$
   select case p_role
     when 'Owner' then '{"publish":true,"edit_others":true,"broadcast":true,"media":true,"manage_staff":true,"approve_portraits":true,"edit_credits":true}'::jsonb
-    when 'Managing Editor' then '{"publish":true,"edit_others":true,"broadcast":true,"media":true,"manage_staff":false,"approve_portraits":false,"edit_credits":false}'::jsonb
-    when 'Photographer' then '{"publish":false,"edit_others":false,"broadcast":false,"media":true,"manage_staff":false,"approve_portraits":false,"edit_credits":false}'::jsonb
+    when 'Board Manager' then '{"publish":true,"edit_others":true,"broadcast":true,"media":true,"manage_staff":false,"approve_portraits":true,"edit_credits":true}'::jsonb
+    when 'Editor' then '{"publish":true,"edit_others":false,"broadcast":false,"media":true,"manage_staff":false,"approve_portraits":false,"edit_credits":false}'::jsonb
     else '{"publish":false,"edit_others":false,"broadcast":false,"media":false,"manage_staff":false,"approve_portraits":false,"edit_credits":false}'::jsonb
   end;
 $$;

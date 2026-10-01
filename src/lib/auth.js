@@ -105,17 +105,79 @@ async function currentUsername() {
   }
 }
 
+/**
+ * The newsroom's three roles, weakest first.
+ *
+ * This is the single source of truth on the client and MUST stay in step with
+ * the CHECK constraint on staff_accounts.role in supabase/credentials.sql and
+ * with wire_default_permissions() in supabase/006_roles_and_privileges.sql.
+ * An earlier revision of this app also had a 'Managing Editor' and a
+ * 'Photographer'; neither survived review, and the database rejected both,
+ * so they were removed rather than left as dead options in a dropdown.
+ */
+export const ROLES = ['Editor', 'Board Manager', 'Owner'];
+
+/** Higher wins. Unknown or missing roles rank lowest, never highest. */
+const ROLE_RANK = { Editor: 1, 'Board Manager': 2, Owner: 3 };
+
+/**
+ * Coerce whatever the database returned into one of the three known roles.
+ * Anything unrecognised becomes 'Editor' -- the weakest role -- so an unknown
+ * or corrupted value can never accidentally grant more access than intended.
+ */
+export function normaliseRole(value) {
+  const role = String(value || '').trim().toLowerCase();
+  for (const candidate of ROLES) {
+    if (candidate.toLowerCase() === role) return candidate;
+  }
+  // Tolerate the historical name so an account provisioned under the old
+  // vocabulary keeps its access instead of silently dropping to the bottom.
+  if (role === 'reporter' || role === 'managing editor' || role === 'photographer') {
+    return role === 'reporter' ? 'Editor' : 'Board Manager';
+  }
+  return 'Editor';
+}
+
+/**
+ * The role of the signed-in account, weakest-first, or '' when nobody is
+ * signed in. Always a member of ROLES, so it can be compared with roleAtLeast()
+ * without a further guard.
+ */
+export function currentRole() {
+  return session?.role ? normaliseRole(session.role) : '';
+}
+
+/** Does `role` meet or exceed `minimum`? */
+export function roleAtLeast(role, minimum) {
+  return (ROLE_RANK[normaliseRole(role)] || 0) >= (ROLE_RANK[minimum] || 99);
+}
+
 /** Build the public session shape the rest of the app consumes. */
 function toSession(account) {
   if (!account) return null;
+
+  // An account that is not `active` has no privileges at all. The database
+  // denies its queries, but we also refuse to hand the UI a workspace so a
+  // pending applicant sees an honest "waiting for approval" state.
+  const status = String(account.status || 'active').toLowerCase();
+  const active = status === 'active';
+
+  const role = normaliseRole(account.role);
+  const isOwner = active && Boolean(account.is_owner);
+
   const user = {
     id: account.id,
     username: account.username,
     name: account.display_name,
-    role: account.role,
-    isOwner: Boolean(account.is_owner)
+    role,
+    isOwner
   };
-  return { user, isAdmin: true };
+
+  // `isAdmin` only means "may open the workspace at all". It deliberately does
+  // NOT mean "is the Owner": every active account gets a panel, but only the
+  // Owner gets the privileged tabs. This was the bug that handed the whole
+  // Owner Control Center to Editors.
+  return { user, isAdmin: active, isOwner, role };
 }
 
 function adoptSession(account) {
@@ -162,6 +224,17 @@ export function isAdmin() {
   return Boolean(session?.isAdmin);
 }
 
+/**
+ * True only for the single Owner account.
+ *
+ * Several people can hold elevated roles, but the Changelog is the Owner's
+ * record of what changed and what is still outstanding, so the panel that
+ * renders it is gated on this rather than on `isAdmin()`.
+ */
+export function isOwner() {
+  return Boolean(session?.isAdmin && session?.user?.isOwner);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Demo-mode session storage                                                   */
 /* -------------------------------------------------------------------------- */
@@ -198,13 +271,39 @@ function demoSignIn(login, password) {
     id: `demo-${btoa(email).slice(0, 12)}`,
     email,
     username,
-    name: username.replace(/[._-]+/g, ' ')
+    name: username.replace(/[._-]+/g, ' '),
+    // Set below, once the Owner seat has been resolved.
+    isOwner: false
   };
-  // Grant admin to the configured allow-list, or to anything at all in demo
-  // mode so reviewers are never locked out of the workspace they are testing.
-  const admin =
-    config.adminUsernames.length === 0 || isAdminUser(user);
-  return { user, isAdmin: admin };
+  // In demo mode there is no account table to consult, so roles are simulated
+  // from the configured allow-list:
+  //   - no allow-list configured  -> a single-Editor demo workspace
+  //   - the FIRST entry           -> the Owner seat (mirrors the first-run claim
+  //                                  in credentials.sql)
+  //   - any other entry           -> Board Manager
+  //   - anybody else              -> Editor
+  // Everybody gets a panel, exactly as in production: `isAdmin` means "may open
+  // the workspace", and the role decides which tabs appear. Someone outside the
+  // allow-list therefore lands on the Editor Desk, not on a dead end. That also
+  // means the demo can be used to review the per-role gating without handing
+  // the Owner seat to a stranger.
+  const allow = config.adminUsernames;
+  const listed = allow.includes(username);
+  const ownerUsername = allow[0] || null;
+  const isOwnerSeat = Boolean(allow.length === 0 || (listed && username === ownerUsername));
+
+  const role = isOwnerSeat
+    ? 'Owner'
+    : listed
+      ? 'Board Manager'
+      : 'Editor';
+
+  user.role = role;
+  user.isOwner = role === 'Owner';
+
+  // `isAdmin` only gates whether the workspace opens at all, so it is true for
+  // every signed-in demo user. The role above is what actually restricts tabs.
+  return { user, isAdmin: true, isOwner: user.isOwner, role };
 }
 
 /* -------------------------------------------------------------------------- */

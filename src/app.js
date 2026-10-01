@@ -372,6 +372,16 @@ export async function boot() {
     }
   });
 
+  // The subscription above deliberately skips repaints while the workspace is
+  // open, so a settings change made from inside it (branding save, breaking
+  // banner, "reset all settings") would otherwise leave a stale masthead
+  // behind. admin.js cannot import from here -- app.js imports admin.js -- so
+  // the two talk through this event instead.
+  window.addEventListener('wire:settings-changed', () => {
+    if (isAdminOpen()) return;
+    renderPublic();
+  });
+
   /* --- 5. Auth ----------------------------------------------------------- */
   // Restore any persisted session first, so a returning owner lands in the
   // workspace without touching the Login button.

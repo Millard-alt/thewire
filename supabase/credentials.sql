@@ -51,7 +51,7 @@ create table if not exists public.staff_accounts (
   password_hash text        not null,
   display_name  text        not null,
   role          text        not null default 'Editor'
-                          check (role in ('Owner','Editor','Reporter')),
+                          check (role in ('Owner','Editor','Board Manager')),
   -- 'pending'   -> awaiting the Owner's approval, cannot sign in
   -- 'active'    -> approved, can sign in
   -- 'suspended' -> explicitly blocked by the Owner
@@ -416,7 +416,7 @@ begin
     raise exception 'Only the Owner can approve accounts.';
   end if;
 
-  if v_role not in ('Owner','Editor','Reporter') then
+  if v_role not in ('Owner','Editor','Board Manager') then
     raise exception 'Unknown role.';
   end if;
 

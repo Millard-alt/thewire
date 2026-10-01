@@ -293,6 +293,26 @@
     color: var(--accent);
   }
 
+  /* Destructive actions. Kept visually distinct from every other button so a
+     reset can never be triggered by muscle memory. */
+  .btn-danger {
+    background-color: transparent;
+    color: var(--color-newsred);
+    border-color: color-mix(in srgb, var(--color-newsred) 55%, transparent);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background-color: var(--color-newsred);
+    color: #fff;
+    border-color: var(--color-newsred);
+  }
+  .dark .btn-danger {
+    color: var(--color-newsred-bright);
+    border-color: color-mix(in srgb, var(--color-newsred-bright) 55%, transparent);
+  }
+  .dark .btn-danger:hover:not(:disabled) {
+    color: #12100e;
+  }
+
   /* --- Badges --- */
   .badge {
     display: inline-flex;

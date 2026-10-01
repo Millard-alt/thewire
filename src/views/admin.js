@@ -21,11 +21,15 @@ import * as store from '../lib/store.js';
 import {
   signOut,
   isAdmin,
+  isOwner,
+  roleAtLeast,
+  currentRole,
   listAccounts,
   approveAccount,
   rejectAccount,
   setAccountPassword
 } from '../lib/auth.js';
+import { getReleases, pendingCount, sectionIcon } from '../lib/changelog.js';
 import { config, describeBackend } from '../lib/config.js';
 import {
   sendBroadcastToDevices,
@@ -69,6 +73,12 @@ let isMounted = false;
 let unsubscribeStore = null;
 /** True once the delegated document listeners have been attached. */
 let listenersAttached = false;
+/**
+ * Two-step guard for the destructive "reset all settings" action. The button
+ * only arms the confirmation; nothing is written until the Owner confirms.
+ * Always reset to false when the workspace is closed or the tab is left.
+ */
+let resetArmed = false;
 
 /* -------------------------------------------------------------------------- */
 /* Shared render helpers                                                       */
@@ -967,8 +977,93 @@ function renderSecurityTab() {
           </button>
         </div>
       </section>
+
+      <section class="panel-raised space-y-4 border-l-4 border-l-[var(--color-newsred)] p-5">
+        <div>
+          <h3 class="font-headline text-lg font-black tracking-wide uppercase">
+            Reset all settings
+          </h3>
+          <p class="ink-muted mt-1 text-sm">
+            Return the masthead, breaking-news banner, Today's Pick, the three
+            weekly slots and the forced-notification switch to the settings this
+            publication shipped with.
+          </p>
+        </div>
+
+        <p class="panel-sunken p-3 text-xs">
+          <strong>Content is not touched.</strong> Articles, staff, media,
+          accounts and broadcast history are newsroom records and are left
+          exactly as they are. If you meant to delete content, use the delete
+          control on the item itself.
+        </p>
+
+        <ul class="ink-muted space-y-1 text-xs">
+          ${resetSettingRows()}
+        </ul>
+
+        ${
+          resetArmed
+            ? `<div class="panel-sunken space-y-3 p-4" role="alertdialog"
+                    aria-labelledby="reset-confirm-title">
+                 <p id="reset-confirm-title" class="text-sm font-bold">
+                   Reset all five settings to their defaults?
+                 </p>
+                 <p class="ink-muted text-xs">
+                   This writes over your current masthead, banner and curation.
+                   It cannot be undone, but no content is deleted.
+                 </p>
+                 <div class="flex flex-wrap justify-end gap-2">
+                   <button class="btn btn-ghost" data-action="reset-settings-cancel">
+                     Cancel
+                   </button>
+                   <button class="btn btn-danger" data-action="reset-settings-confirm">
+                     <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                     Yes, reset the settings
+                   </button>
+                 </div>
+               </div>`
+            : `<div class="flex justify-end">
+                 <button class="btn btn-danger" data-action="reset-settings">
+                   <i class="fa-solid fa-rotate-left" aria-hidden="true"></i>
+                   Reset all settings to default
+                 </button>
+               </div>`
+        }
+      </section>
     </div>
   `;
+}
+
+/**
+ * Show each setting beside its current value, so the Owner can see what they
+ * are about to lose before confirming.
+ */
+function resetSettingRows() {
+  const s = store.getState();
+  const rows = [
+    ['Masthead title', s.branding.title],
+    ['Masthead subtitle', s.branding.subtitle],
+    ['Edition line', s.branding.edition],
+    [
+      'Breaking banner',
+      s.breakingNews?.enabled
+        ? `On — "${String(s.breakingNews.headline || '').slice(0, 48)}"`
+        : 'Off'
+    ],
+    ['Forced notifications', s.notifications.forced ? 'Enabled' : 'Disabled']
+  ];
+
+  return rows
+    .map(
+      ([label, value]) => `
+      <li class="flex flex-wrap justify-between gap-x-4">
+        <span>${escapeHtml(label)}</span>
+        <span class="max-w-[60%] truncate font-semibold">${escapeHtml(
+          String(value ?? '—')
+        )}</span>
+      </li>`
+    )
+    .join('');
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1391,8 +1486,51 @@ function assignmentEditorDialog() {
  */
 let accountsCache = null;
 
-/** Roles the database will accept (mirrors the CHECK on staff_accounts.role). */
-const ACCOUNT_ROLES = ['Owner', 'Editor', 'Reporter'];
+/**
+ * Roles offered when approving an account. These are the newsroom's three roles
+ * and must match ROLES in src/lib/auth.js and the CHECK on staff_accounts.role
+ * in supabase/credentials.sql. 'Owner' is intentionally absent: there is exactly
+ * one Owner seat, granted at first run, and it is not handed out through a
+ * dropdown.
+ */
+const ACCOUNT_ROLES = ['Editor', 'Board Manager'];
+
+/**
+ * What each role may actually do, in the Owner's words.
+ *
+ * These capabilities are not decorative: `wire_default_permissions()` in
+ * supabase/006_roles_and_privileges.sql returns this same map, and the
+ * database is the thing that actually enforces it. Keep the two in step.
+ */
+const ROLE_CAPABILITIES = {
+  Owner: [
+    ['Publish anything', true],
+    ['Edit other people’s drafts', true],
+    ['Send broadcasts', true],
+    ['Upload media', true],
+    ['Approve & suspend accounts', true],
+    ['Approve portraits', true],
+    ['Curate the credits board', true]
+  ],
+  'Board Manager': [
+    ['Publish anything', true],
+    ['Edit other people’s drafts', true],
+    ['Send broadcasts', true],
+    ['Upload media', true],
+    ['Approve & suspend accounts', false],
+    ['Approve portraits', true],
+    ['Curate the credits board', true]
+  ],
+  Editor: [
+    ['Publish anything', true],
+    ['Edit other people’s drafts', false],
+    ['Send broadcasts', false],
+    ['Upload media', true],
+    ['Approve & suspend accounts', false],
+    ['Approve portraits', false],
+    ['Curate the credits board', false]
+  ]
+};
 
 /**
  * Tab renderers return an HTML string that `paintActiveTab` assigns to
@@ -1523,11 +1661,64 @@ function accountsPanel(rows) {
           ? `<p class="ink-muted text-xs">
                Removing somebody signs them out and deletes their account; they
                would have to register again. To keep somebody on the books but
-               lock them out, change their role to <strong>Reporter</strong>
-               instead.
+               lock them out, change their role to <strong>Editor</strong>
+               instead, which is the weakest role on the board.
              </p>`
           : ''
       }
+
+      ${roleGuide()}
+    </div>
+  `;
+}
+
+/** A plain-English table of what each role may do, for the Owner. */
+function roleGuide() {
+  const rows = ACCOUNT_ROLES.map((role) => {
+    const caps = ROLE_CAPABILITIES[role] || [];
+    return `
+      <tr>
+        <th scope="row" class="px-4 py-3 text-left align-top font-headline font-bold">
+          ${escapeHtml(role)}
+        </th>
+        <td class="px-4 py-3">
+          <ul class="space-y-1">
+            ${caps
+              .map(
+                ([label, allowed]) => `
+              <li class="flex items-center gap-2 text-xs">
+                <i class="fa-solid ${
+                  allowed ? 'fa-circle-check text-emerald-600' : 'fa-circle-xmark ink-faint'
+                }" aria-hidden="true"></i>
+                <span class="${allowed ? '' : 'ink-faint line-through'}">${escapeHtml(label)}</span>
+              </li>`
+              )
+              .join('')}
+          </ul>
+        </td>
+      </tr>
+    `;
+  });
+
+  return `
+    <div class="panel-sunken p-5">
+      ${panelHeader(
+        'What each role can do',
+        'Enforced by the database, not merely hidden in the UI'
+      )}
+      <div class="overflow-x-auto">
+        <table class="w-full">
+          <tbody class="divide-y rule-soft">${rows.join('')}</tbody>
+        </table>
+      </div>
+      <p class="mt-3 text-xs ink-muted">
+        There is exactly one <strong>Owner</strong> — you. Approving somebody
+        never makes them an Owner, so ownership cannot be handed over by
+        accident. Change a person’s role from the
+        <strong>Approved accounts</strong> table above; an Editor who needs the
+        breaking-news banner, broadcasts or the credits board can be promoted to
+        Board Manager at any time.
+      </p>
     </div>
   `;
 }
@@ -1553,14 +1744,12 @@ function accountRow(account) {
           <div>
             <label class="field-label" for="role-${id}">Role</label>
             <select id="role-${id}" class="field" data-account-role="${id}">
-              ${['Editor', 'Reporter']
-                .map(
-                  (role) =>
-                    `<option value="${escapeHtml(role)}" ${
-                      role === 'Editor' ? 'selected' : ''
-                    }>${escapeHtml(role)}</option>`
-                )
-                .join('')}
+              ${ACCOUNT_ROLES.map(
+                (role) =>
+                  `<option value="${escapeHtml(role)}" ${
+                    role === 'Editor' ? 'selected' : ''
+                  }>${escapeHtml(role)}</option>`
+              ).join('')}
             </select>
           </div>
           <button class="btn btn-accent" data-action="account-approve" data-id="${id}">
@@ -1902,27 +2091,176 @@ function portraitBadge(status) {
   </span>`;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Changelog — Owner only                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The Owner's running record of what changed.
+ *
+ * Rendered straight from CHANGELOG.md, so this can never drift from the file in
+ * the repository. Only the Owner sees this tab; other elevated roles can open
+ * the Control Center but not read it.
+ */
+function renderChangelogTab() {
+  const releases = getReleases();
+  const outstanding = pendingCount();
+
+  if (!releases.length) {
+    return `
+      <div class="space-y-5">
+        ${panelHeader('Changelog', 'No entries yet')}
+        ${emptyState('CHANGELOG.md has no releases in it yet.', 'fa-clock-rotate-left')}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="space-y-5">
+      ${panelHeader(
+        'Changelog',
+        `Every change pushed to production${outstanding ? ` · ${outstanding} item${outstanding === 1 ? '' : 's'} still outstanding` : ' · nothing outstanding'}`
+      )}
+
+      ${
+        outstanding
+          ? `<div class="panel-raised border-l-4 border-l-[var(--color-newsred)] p-4">
+               <p class="flex items-center gap-2 text-sm font-bold">
+                 <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                 Work is waiting on you
+               </p>
+               <p class="ink-muted mt-1 text-xs">
+                 Items under <strong>Pending</strong> are built but not yet live.
+                 They usually need a migration run in the Supabase SQL Editor.
+               </p>
+             </div>`
+          : ''
+      }
+
+      ${releases
+        .map(
+          (release) => `
+        <section class="space-y-4">
+          <div class="rule-soft flex flex-wrap items-baseline gap-3 border-b pb-3">
+            <h3 class="font-headline text-xl font-black tracking-wide uppercase">
+              ${escapeHtml(release.version)}
+            </h3>
+            ${
+              release.date
+                ? `<span class="ink-muted text-xs">${escapeHtml(release.date)}</span>`
+                : ''
+            }
+            ${
+              release.version === 'Unreleased'
+                ? '<span class="badge badge-amber">Not yet deployed</span>'
+                : '<span class="badge badge-emerald">Live</span>'
+            }
+          </div>
+
+          ${release.sections
+            .map(
+              (section) => `
+            <div class="panel-raised p-5">
+              <h4 class="font-headline flex items-center gap-2 text-sm font-bold tracking-wide uppercase">
+                <i class="fa-solid ${sectionIcon(section.title)} ink-muted" aria-hidden="true"></i>
+                ${escapeHtml(section.title)}
+              </h4>
+              <ul class="mt-3 space-y-2">
+                ${section.items
+                  .map(
+                    (item) => `
+                  <li class="flex gap-2 text-sm leading-relaxed">
+                    <i class="fa-solid fa-circle-dot mt-1.5 shrink-0 text-[0.4rem] ink-muted"
+                       aria-hidden="true"></i>
+                    <span class="min-w-0">${inlineMarkdown(item)}</span>
+                  </li>`
+                  )
+                  .join('')}
+              </ul>
+            </div>`
+            )
+            .join('')}
+        </section>`
+        )
+        .join('')}
+
+      <p class="ink-muted text-xs">
+        Sourced from <code>CHANGELOG.md</code> in the repository. Edit that file
+        and this panel updates with the next deploy — the two cannot fall out of
+        step.
+      </p>
+    </div>
+  `;
+}
+
+/**
+ * Render the small amount of inline markdown the changelog actually uses:
+ * `**bold**` and `` `code` ``. Everything is escaped first, so this can only
+ * ever add emphasis — it can never introduce markup from the file.
+ */
+function inlineMarkdown(text) {
+  return escapeHtml(text)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+/**
+ * The workspace tabs, each tagged with the weakest role allowed to see it.
+ *
+ * `minRole` is checked against auth.roleAtLeast(), so a tab appears for its
+ * role and for every role above it. `ownerOnly` is retained only where the gate
+ * must be exactly the single Owner seat (Accounts, Security) rather than a
+ * ranking — see visibleTabs().
+ */
 const TABS = [
-  { id: 'overview', label: 'Overview', icon: 'fa-gauge-high', render: renderOverview },
-  { id: 'content', label: 'Content', icon: 'fa-newspaper', render: renderContent },
-  { id: 'accounts', label: 'Accounts', icon: 'fa-user-check', render: renderAccountsTab },
-  { id: 'assignments', label: 'Assignments', icon: 'fa-clipboard-list', render: renderAssignmentsTab },
-  { id: 'breaking', label: 'Breaking', icon: 'fa-bolt', render: renderBreakingTab },
-  { id: 'broadcasts', label: 'Broadcasts', icon: 'fa-paper-plane', render: renderBroadcastsTab },
-  { id: 'curation', label: 'Curation', icon: 'fa-star', render: renderCurationTab },
-  { id: 'staff', label: 'Staff', icon: 'fa-users', render: renderStaffTab },
-  { id: 'credits', label: 'Credits', icon: 'fa-id-badge', render: renderCreditsTab },
-  { id: 'branding', label: 'Branding', icon: 'fa-font', render: renderBrandingTab },
-  { id: 'media', label: 'Media', icon: 'fa-images', render: renderMediaTab },
-  { id: 'security', label: 'Security', icon: 'fa-shield-halved', render: renderSecurityTab }
+  { id: 'overview', label: 'Overview', icon: 'fa-gauge-high', render: renderOverview, minRole: 'Editor' },
+  { id: 'content', label: 'Content', icon: 'fa-newspaper', render: renderContent, minRole: 'Editor' },
+  { id: 'accounts', label: 'Accounts', icon: 'fa-user-check', render: renderAccountsTab, ownerOnly: true },
+  { id: 'assignments', label: 'Assignments', icon: 'fa-clipboard-list', render: renderAssignmentsTab, minRole: 'Editor' },
+  { id: 'breaking', label: 'Breaking', icon: 'fa-bolt', render: renderBreakingTab, minRole: 'Board Manager' },
+  { id: 'broadcasts', label: 'Broadcasts', icon: 'fa-paper-plane', render: renderBroadcastsTab, minRole: 'Board Manager' },
+  { id: 'curation', label: 'Curation', icon: 'fa-star', render: renderCurationTab, minRole: 'Board Manager' },
+  { id: 'staff', label: 'Staff', icon: 'fa-users', render: renderStaffTab, minRole: 'Board Manager' },
+  { id: 'credits', label: 'Credits', icon: 'fa-id-badge', render: renderCreditsTab, minRole: 'Board Manager' },
+  { id: 'changelog', label: 'Changelog', icon: 'fa-clock-rotate-left', render: renderChangelogTab, ownerOnly: true },
+  { id: 'branding', label: 'Branding', icon: 'fa-font', render: renderBrandingTab, ownerOnly: true },
+  { id: 'media', label: 'Media', icon: 'fa-images', render: renderMediaTab, minRole: 'Editor' },
+  { id: 'security', label: 'Security', icon: 'fa-shield-halved', render: renderSecurityTab, ownerOnly: true }
 ];
+
+/**
+ * The tabs this session may actually see.
+ *
+ * A tab is dropped unless the signed-in account satisfies its `minRole`, and
+ * `ownerOnly` tabs are additionally reserved for the single Owner seat. Every
+ * consumer reads this list rather than TABS itself, so a gated tab is absent
+ * from the nav, unreachable via selectTab(), and never rendered — there is no
+ * separate check anywhere to forget. That is the fix for Editors previously
+ * walking straight into the Owner Control Center.
+ */
+function visibleTabs() {
+  const owner = isOwner();
+  const role = currentRole();
+  return TABS.filter((tab) => {
+    if (tab.ownerOnly) return owner;
+    return roleAtLeast(role, tab.minRole || 'Editor');
+  });
+}
+
+/** The workspace name this role sees. Not every account is the Owner. */
+function workspaceTitle() {
+  if (isOwner()) return 'Owner Control Center';
+  if (roleAtLeast(currentRole(), 'Board Manager')) return 'Board Manager Desk';
+  return 'Editorial Desk';
+}
 
 /** Repaint the active tab and sync the tab buttons. */
 function paintActiveTab() {
   const body = byId('admin-tab-body');
   if (!body) return;
 
-  const tab = TABS.find((entry) => entry.id === activeTab) || TABS[0];
+  const tabs = visibleTabs();
+  const tab = tabs.find((entry) => entry.id === activeTab) || tabs[0];
 
   // Tabs that load data asynchronously (Credits) check this before painting a
   // late response, so it must be stamped for every tab, not just that one.
@@ -1963,7 +2301,10 @@ function bindFilePickers() {
 
 /** Switch tabs, guarding against an unknown id. */
 export function selectTab(tabId) {
-  if (!TABS.some((tab) => tab.id === tabId)) return;
+  if (!visibleTabs().some((tab) => tab.id === tabId)) return;
+  // Leaving the Security tab must disarm the reset, so a later click on the
+  // plain button can never silently skip the confirmation step.
+  if (tabId !== 'security') resetArmed = false;
   activeTab = tabId;
   paintActiveTab();
 }
@@ -1973,7 +2314,7 @@ export function selectTab(tabId) {
 
 /** Full-page markup for the Owner Control Center. */
 function shellMarkup() {
-  const tabButtons = TABS.map(
+  const tabButtons = visibleTabs().map(
     (tab) => `
       <button
         class="admin-tab"
@@ -2082,6 +2423,7 @@ export function openAdmin() {
 export function closeAdmin() {
   if (!isMounted) return;
 
+  resetArmed = false;
   unsubscribeStore?.();
   unsubscribeStore = null;
   isMounted = false;
@@ -2095,6 +2437,10 @@ export function closeAdmin() {
   byId('publication-view')?.classList.remove('hidden');
   document.body.classList.remove('admin-active');
   window.scrollTo({ top: 0, behavior: 'auto' });
+
+  // Settings edited inside the workspace bypass the store's repaint (it skips
+  // work while the workspace is open), so nudge the public site to catch up.
+  window.dispatchEvent(new Event('wire:settings-changed'));
 }
 
 /** True while the control centre is on screen. */
@@ -2890,6 +3236,38 @@ function handleClick(event) {
           showToast('Local data reset to defaults.', { type: 'success' });
         });
       }
+      break;
+
+    /* --- reset all settings (Owner only, two steps) --- */
+    case 'reset-settings':
+      // Step one only: reveal the confirmation. No write happens here.
+      resetArmed = true;
+      paintActiveTab();
+      break;
+
+    case 'reset-settings-cancel':
+      resetArmed = false;
+      paintActiveTab();
+      break;
+
+    case 'reset-settings-confirm':
+      // Re-check the gate. A stale armed state must not be exploitable if the
+      // Owner's session changed between the click and the confirmation.
+      if (!isOwner()) {
+        resetArmed = false;
+        paintActiveTab();
+        showToast('Only the Owner can reset settings.', { type: 'error' });
+        break;
+      }
+      resetArmed = false;
+      guard(async () => {
+        await store.resetAllSettings();
+        // No explicit public repaint: the store subscription in app.js already
+        // re-renders the masthead and banner on every commit, which is how the
+        // branding and breaking-news saves behave.
+        paintActiveTab();
+        showToast('All settings returned to their defaults.', { type: 'success' });
+      });
       break;
 
     /* --- account approvals --- */
