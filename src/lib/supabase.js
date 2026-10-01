@@ -131,5 +131,18 @@ export function describeAuthError(error) {
   if (lower.includes('failed to fetch') || lower.includes('network')) {
     return 'Could not reach the authentication server. Check your connection.';
   }
+
+  // wire_approve_account's role guard. This one message has been the visible
+  // symptom of TWO separate server bugs: a pre-rename body comparing against
+  // 'Editor', and a body that lowercased the role before comparing it against
+  // the capitalised names. Both look identical from the UI, so name the file
+  // that has to be re-pasted instead of leaving the Owner to guess.
+  if (lower.includes('unknown role')) {
+    return (
+      'The newsroom server rejected that role. Re-paste ' +
+      'supabase/012_fix_live_signup_function.sql in the Supabase SQL editor.'
+    );
+  }
+
   return message;
 }

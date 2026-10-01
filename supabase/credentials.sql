@@ -417,7 +417,14 @@ security definer
 set search_path = public, extensions
 as $$
 declare
-  v_role text := lower(trim(coalesce(p_role, '')));
+  -- DO NOT lower() this. v_role is compared below against the canonical,
+  -- capitalised role names and then STORED, so lowercasing on the way in turns
+  -- the client's 'Writer' into 'writer', which is not in the CHECK either, and
+  -- approval dies with 'Unknown role.' The case-insensitive comparison is done
+  -- against a separate lowercased copy further down, so the stored value always
+  -- keeps its canonical spelling. 012_fix_live_signup_function.sql carries the
+  -- same correction and the history of why it matters.
+  v_role text := coalesce(nullif(trim(p_role), ''), 'Writer');
   v_out  jsonb;
 begin
   if not public.is_owner() then
@@ -425,9 +432,17 @@ begin
   end if;
 
   -- Accept the old spelling from a stale browser tab or saved form.
-  if v_role = 'editor' then
+  if lower(v_role) = 'editor' then
     v_role := 'Writer';
   end if;
+
+  -- Case-insensitive on the way IN, canonical on the way OUT.
+  v_role := case lower(v_role)
+              when 'owner'         then 'Owner'
+              when 'writer'        then 'Writer'
+              when 'board manager' then 'Board Manager'
+              else v_role
+            end;
 
   if v_role not in ('Owner','Writer','Board Manager') then
     raise exception 'Unknown role.';

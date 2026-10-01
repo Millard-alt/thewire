@@ -53,7 +53,11 @@ create table if not exists public.staff (
   -- (`<username>@<VITE_AUTH_EMAIL_DOMAIN>`). Staff never see or type it.
   shadow_email text        unique,
   email        text,
-  role         text        not null default 'Editor',
+  -- 'Writer', not 'Editor'. 'Editor' was the pre-rename role and nothing in the
+  -- client sends it any more, so a row created without an explicit role would
+  -- be rejected by the role vocabulary in src/lib/auth.js. scripts/role-
+  -- consistency.mjs fails the build if a retired name reappears here.
+  role         text        not null default 'Writer',
   status       text        not null default 'Active',
   created_at   timestamptz not null default now()
 );

@@ -13,6 +13,42 @@ its migrations have been run in the Supabase SQL Editor.**
 
 Verified against `iguzwwqjufzzdblkqroj` on 10 Oct 2026.
 
+### 0. Signup FIXED (012 applied). Approval then failed with "Unknown role."
+
+Signup works now, so the first `012` paste landed. Setting a role on an account
+then raised `Unknown role.` immediately.
+
+**Cause: a bug I introduced in the same migration.** The `012` I wrote declared
+
+```sql
+v_role text := lower(trim(coalesce(p_role, '')));   -- WRONG
+```
+
+which lowercases the role on the way *in*. The client sends `'Writer'`; it
+arrived as `'writer'`; the very next line compared it against the canonical
+capitalised names with `v_role not in ('Owner','Writer','Board Manager')`,
+so it failed and every approval raised `Unknown role.`
+
+It was invisible in review because `v_role` had been renamed to `v_role_in`
+elsewhere in the file, so the declaration and its consumers looked unrelated.
+Fixed in both `012_fix_live_signup_function.sql` and `credentials.sql`: the
+value is kept as sent, the legacy `'editor'` alias is matched case-insensitively,
+and a separate `case lower(v_role)` normalises *to* the canonical spelling
+*without* changing what is stored. `'writer'`, `'WRITER'`, `'Writer'` and the
+stale `'Editor'` all resolve correctly now.
+
+**Why the migration's own probe missed it:** the probe only inserted the three
+canonical spellings and asserted the CHECK accepted them. That proves the
+constraint is healthy — it cannot see a bug in the normalisation *before* the
+constraint. A new step 4 evaluates the real normalisation expression against all
+8 input spellings, as a pure SELECT: no rows written, and it raises naming the
+failing input rather than reporting success.
+
+> ### Action required
+> **Re-paste `supabase/012_fix_live_signup_function.sql`** into the Supabase SQL
+> Editor to pick up the approval fix. It is idempotent — safe to run again
+> whether or not you have already run the earlier revision.
+
 ### 1. Signup is broken — ROOT CAUSE FOUND, FIX WRITTEN, NOT YET APPLIED
 
 `ERROR: 23514: new row for relation "staff_accounts" violates check

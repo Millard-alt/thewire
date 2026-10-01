@@ -132,7 +132,16 @@ security definer
 set search_path = public, extensions
 as $$
 declare
-  v_role text := lower(trim(coalesce(p_role, '')));
+  -- DO NOT lower() this. v_role is compared below against the canonical,
+  -- capitalised role names ('Owner','Writer','Board Manager') and then STORED,
+  -- so lowercasing on the way in turns the client's 'Writer' into 'writer',
+  -- which is not in the CHECK either, and approval dies with 'Unknown role.'
+  --
+  -- This is not hypothetical: that exact line is what broke account approval
+  -- after signup was fixed. The case-insensitive comparison is done against a
+  -- separate lowercased copy further down, so the stored value keeps its
+  -- canonical spelling and the CHECK always has something valid to check.
+  v_role text := coalesce(nullif(trim(p_role), ''), 'Writer');
   v_out  jsonb;
 begin
   if not public.is_owner() then
@@ -140,9 +149,19 @@ begin
   end if;
 
   -- Accept the old spelling from a stale browser tab or saved form.
-  if v_role = 'editor' then
+  if lower(v_role) = 'editor' then
     v_role := 'Writer';
   end if;
+
+  -- Case-insensitive on the way IN, canonical on the way OUT. This is what lets
+  -- 'writer', 'Writer' and 'BOARD MANAGER' all resolve to one of the three
+  -- stored values, instead of three of them resolving to nothing.
+  v_role := case lower(v_role)
+              when 'owner'         then 'Owner'
+              when 'writer'        then 'Writer'
+              when 'board manager' then 'Board Manager'
+              else v_role
+            end;
 
   if v_role not in ('Owner','Writer','Board Manager') then
     raise exception 'Unknown role.';
@@ -263,6 +282,9 @@ declare
   v_probe_role text;
   v_probe_stat text;
   v_probe_user text := 'probe' || substr(md5(random()::text), 1, 8);
+  v_canonical   text;
+  v_stored      text;
+  v_norm_problem text;
 begin
   v_out := public.wire_request_account(v_probe_user, 'Sql Probe', 'probe-password-123');
 
@@ -285,7 +307,103 @@ begin
     raise exception 'probe row was not cleaned up (id %) -- remove it by hand', v_probe_id;
   end if;
 
-  raise notice 'FIXED AND VERIFIED: signup works. role=% status=%. probe row deleted.',
+  -- STEP 3: prove every canonical role the approval UI can submit is actually
+  -- ACCEPTED by the CHECK, then clean up.
+  --
+  -- This exists because of a bug the earlier probe could not see. Approval was
+  -- broken by a single line in wire_approve_account:
+  --
+  --   v_role text := lower(trim(coalesce(p_role, '')));   -- WRONG
+  --
+  -- It lowercased the role on the way IN and then compared the result against
+  -- the capitalised names, so the client's 'Writer' arrived as 'writer', failed
+  -- the check, and every approval raised 'Unknown role.' -- while signup and
+  -- the CHECK itself were both perfectly healthy the whole time.
+  --
+  -- wire_approve_account cannot be called here: it requires public.is_owner(),
+  -- and the SQL Editor runs with no session token. So this proves the thing the
+  -- bug actually broke -- that each canonical spelling survives the CHECK as a
+  -- STORED value -- by round-tripping the same three values through the column
+  -- directly. If a future edit re-introduces a lower()/upper() mismatch, this
+  -- raises instead of letting the Owner discover it in the UI.
+  foreach v_canonical in array array['Owner', 'Writer', 'Board Manager'] loop
+    insert into public.staff_accounts
+      (username, password_hash, display_name, role, status, is_owner, approved_at)
+    values
+      ('__canon_probe_' || lower(v_canonical), 'x', 'Canon Probe', v_canonical, 'pending', false, null);
+
+    select role into v_stored from public.staff_accounts where username = '__canon_probe_' || lower(v_canonical);
+
+    if v_stored is distinct from v_canonical then
+      raise exception 'CANONICAL PROBE FAILED: submitted %, stored %. The CHECK and the canonical role list disagree.',
+        v_canonical, coalesce(v_stored, '(null)');
+    end if;
+
+    delete from public.staff_accounts where username = '__canon_probe_' || lower(v_canonical);
+  end loop;
+
+  -- STEP 4: prove the NORMALISATION, not just the CHECK.
+  --
+  -- Step 3 only proves the three canonical spellings are storable. It cannot see
+  -- the bug that actually shipped, because the bug was in the expression that
+  -- mapped an incoming role to a canonical one: `lower()` on the way in turned
+  -- the client's 'Writer' into 'writer', which then failed the `not in (...)`
+  -- comparison and raised 'Unknown role.' The CHECK was healthy the whole time,
+  -- which is exactly why step 3 passed while the UI was still broken.
+  --
+  -- So evaluate the real normalisation expression against every spelling the
+  -- client and a stale browser tab can produce. Pure SELECT: no rows created,
+  -- nothing to clean up, and no need for the Owner session that
+  -- wire_approve_account demands.
+  with expected (input, want) as (
+    values
+      ('Writer',        'Writer'),        -- what the client actually sends
+      ('Board Manager', 'Board Manager'),
+      ('Owner',         'Owner'),
+      ('writer',        'Writer'),        -- lowercased, as the bug produced
+      ('WRITER',        'Writer'),
+      ('board manager', 'Board Manager'),
+      ('Editor',        'Writer'),        -- stale tab or saved form
+      ('editor',        'Writer')
+  ),
+  step1 as (
+    -- the declaration: coalesce(nullif(trim(p_role), ''), 'Writer')
+    select input, want, coalesce(nullif(trim(input), ''), 'Writer') as role_in
+    from expected
+  ),
+  step2 as (
+    -- the legacy alias: if lower(v_role) = 'editor' then 'Writer'
+    select input, want, role_in,
+           case when lower(role_in) = 'editor' then 'Writer' else role_in end as aliased
+    from step1
+  ),
+  resolved as (
+    -- the normalisation: case lower(v_role) ... else v_role end
+    select input, want,
+           case lower(aliased)
+             when 'owner'         then 'Owner'
+             when 'writer'        then 'Writer'
+             when 'board manager' then 'Board Manager'
+             else aliased
+           end as got
+    from step2
+  )
+  select case
+           when count(*) filter (where got is distinct from want) = 0 then null
+           else 'NORMALISATION STILL BROKEN for: ' || string_agg(
+                  input || ' -> ' || coalesce(got, '(null)')
+                  || ' (want ' || want || ')', ', ')
+         end
+    into v_norm_problem
+    from resolved;
+
+  if v_norm_problem is not null then
+    raise exception '%', v_norm_problem;
+  end if;
+
+  raise notice 'FIXED AND VERIFIED: signup works (role=% status=%), all 3 canonical roles '
+    'pass the CHECK, and normalisation accepts all 8 spellings including lowercase. '
+    'probe rows deleted.',
     v_probe_role, v_probe_stat;
 end;
 $$;
