@@ -89,14 +89,14 @@ function instructions(permission) {
   } else if (permission === 'denied') {
     steps.push(
       'Your browser is blocking notifications for this site.',
-      'Tap the padlock or the â€œiâ€ icon beside the address bar, then choose ' +
-        'â€œAllow notificationsâ€ for The Wire.',
+      'Tap the padlock or the “i” icon beside the address bar, then choose ' +
+        '“Allow notifications” for The Wire.',
       'Reload the page afterwards.'
     );
   } else {
     steps.push(
-      'Tap â€œTurn on alertsâ€. Your phone will ask you to confirm.',
-      'Choose â€œAllowâ€ so The Wire can reach you when a dispatch breaks.'
+      'Tap “Turn on alerts”. Your phone will ask you to confirm.',
+      'Choose “Allow” so The Wire can reach you when a dispatch breaks.'
     );
   }
 
