@@ -9,6 +9,38 @@ Migrations are numbered and live in `supabase/`. They are additive and
 idempotent, so re-running one is safe. **A new release is not functional until
 its migrations have been run in the Supabase SQL Editor.**
 
+## Live database status
+
+Verified by read-only probes against `iguzwwqjufzzdblkqroj` on 10 Oct 2026.
+Only `anon` credentials were used; nothing was written.
+
+| Migration | State | Effect if not run |
+|---|---|---|
+| `schema.sql`, `credentials.sql`, `001`, `002` | applied | — |
+| `003_subscriptions_and_gallery.sql` | **applied** | — |
+| `004_device_registration.sql` | **NOT applied** | `wire_register_device` / `wire_unregister_device` return 404, so a reader who turns on alerts is silently not subscribed. Broadcasts stay in-app only. |
+| `005_portraits_and_credits.sql` | **NOT applied** | No `portrait_url` / `portrait_status` / `credits_*` columns. **The Credits tab and the forced-portrait signup flow cannot work.** `wire_submit_portrait`, `wire_assign_portrait`, `wire_set_portrait_status`, `wire_set_credits` all return 404. |
+| `006_roles_and_privileges.sql` | **partially applied** | `is_owner()` exists but `wire_default_permissions` returns 404, so the capabilities jsonb falls back to the `{}` default. |
+| `007_article_ownership.sql` | **NOT applied** | No `articles.author_account_id`. Writer-scoped deletes are **not** enforced in the database; the blanket `articles_staff_write` policy still lets any staff account delete any article. |
+| `008_reset_non_owner_accounts.sql` | **not yet written to prod** | Deletes every non-Owner account and logs all browsers out. |
+
+**Run these four, in this order, in the Supabase SQL Editor:**
+
+1. `supabase/004_device_registration.sql`
+2. `supabase/005_portraits_and_credits.sql`
+3. `supabase/006_roles_and_privileges.sql`
+4. `supabase/007_article_ownership.sql`
+
+Then run `supabase/008_reset_non_owner_accounts.sql` last — it logs everyone out,
+so do it once the others are in place.
+
+Until 005 and 007 are applied, **the site is not production ready**: the Credits
+tab has nothing to write to, the portrait gate has no column to check, and the
+writer-scoped delete guarantee is client-side only. The client degrades safely in
+all three cases (it probes for the ownership column and omits it if absent, and
+every missing RPC surfaces a message naming the migration to run), so nothing
+crashes — but the guarantees are not real yet.
+
 ## [Unreleased]
 
 ### Fixed

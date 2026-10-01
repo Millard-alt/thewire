@@ -12,6 +12,7 @@
     "build": "vite build",
     "preview": "vite preview --port 4173",
     "test": "node tests/roles.mjs",
+    "lint:encoding": "node scripts/encoding-check.mjs",
     "test:install": "playwright install chromium"
   },
   "dependencies": {
