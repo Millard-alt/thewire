@@ -24,7 +24,8 @@
  * tree was fine except for one genuine defect in src/views/alerts.js.
  *
  * It also knows the correct decoder. The real damage is Windows-1252, not
- * Latin-1: 'â€œ' is the three codepoints U+00E2 U+20AC U+0153. Mapping those
+ * Latin-1: a left double quote is three bytes E2 80 9C, and reading those as
+ * CP1252 yields U+00E2 U+20AC U+0153. Mapping those
  * back through CP1252 gives the bytes E2 80 9C, which decode as UTF-8 to a
  * proper left double quote U+201C. A Latin-1 pass maps U+20AC to 0x80 by
  * luck but U+0153 to nothing at all, which is why attempt 2 silently failed.
@@ -96,8 +97,12 @@ for (const file of targets) {
     continue;
   }
 
+  // Read the BOM off the decoded string, not just the byte array.
+  // buf.toString('utf8') keeps it as a U+FEFF character, so writing the decoded
+  // text straight back re-emits the BOM as three UTF-8 bytes and the file never
+  // actually changes. Every fix has to start from a BOM-free string.
   const bom = isBom(buf);
-  const text = buf.toString('utf8');
+  const text = (bom ? buf.toString('utf8').replace(/^\uFEFF/, '') : buf.toString('utf8'));
 
   const found = new Set();
   let replacement = 0;
@@ -133,10 +138,17 @@ for (const file of targets) {
 
     const after = [...repaired].filter((c) => isC1(c.codePointAt(0)));
     const out = Buffer.from(repaired, 'utf8');
-    const outBuf = bom ? Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), out]) : out;
 
-    if (after.length < [...text].filter((c) => isC1(c.codePointAt(0))).length) {
-      writeFileSync(file, outBuf);
+    // Write when either defect shrank. A BOM-only file has no C1 controls to
+    // reduce, so keying the write on C1 alone left BOMs permanently unrepairable
+    // and the --fix pass silently did nothing.
+    const c1Before = [...text].filter((c) => isC1(c.codePointAt(0))).length;
+    const improved = bom || after.length < c1Before;
+
+    if (improved) {
+      // Drop the BOM rather than re-prepending it: it is never wanted, and the
+      // task brief requires SQL pasted into the Supabase editor to be BOM-free.
+      writeFileSync(file, out);
       report.fixed = true;
       report.remaining = after.length;
     }

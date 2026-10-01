@@ -1,5 +1,5 @@
 /* =============================================================================
-   src/views/public.js â€” THE PUBLIC PUBLICATION
+   src/views/public.js — THE PUBLIC PUBLICATION
    -----------------------------------------------------------------------------
    Renders the reader-facing newspaper: the breaking-news ticker, Today's Pick,
    the latest front-page grid, the three weekly feature slots, the public
@@ -158,7 +158,7 @@ function articleCard(article, { showBody = false, size = 'md' } = {}) {
           showBody
             ? `<p class="mt-2 text-sm leading-relaxed ink-muted">${escapeHtml(
                 (article.body || '').slice(0, 220)
-              )}${(article.body || '').length > 220 ? 'â€¦' : ''}</p>`
+              )}${(article.body || '').length > 220 ? '…' : ''}</p>`
             : ''
         }
         ${
@@ -430,9 +430,9 @@ function renderAssignmentBoard(assignments) {
               ${
                 item.reporter
                   ? `Assigned to ${escapeHtml(item.reporter)}`
-                  : 'Unclaimed â€” reporters may submit a pitch'
+                  : 'Unclaimed — reporters may submit a pitch'
               }
-              ${item.deadline ? ` Â· deadline ${escapeHtml(item.deadline)}` : ''}
+              ${item.deadline ? ` · deadline ${escapeHtml(item.deadline)}` : ''}
             </p>
           </div>
           <span class="${statusBadge(item.status)}">${escapeHtml(item.status)}</span>

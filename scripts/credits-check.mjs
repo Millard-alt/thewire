@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Credits page checks, driven through the real UI in Chromium.
  *
  * Two things are asserted:

@@ -1,7 +1,7 @@
 /* =============================================================================
-   src/lib/auth.js â€” AUTHENTICATION (username + password, no Supabase Auth)
+   src/lib/auth.js — AUTHENTICATION (username + password, no Supabase Auth)
    -----------------------------------------------------------------------------
-   Staff authenticate with a USERNAME and a password. Nothing else â€” no e-mail
+   Staff authenticate with a USERNAME and a password. Nothing else — no e-mail
    address is asked for, stored, or required at any point.
 
    Supabase Auth is deliberately NOT used. It is e-mail-native, which forced
@@ -20,7 +20,7 @@
 
    Two rules make registration safe:
      1. The FIRST account ever created becomes the Owner and is approved
-        immediately â€” otherwise nobody could ever log in to approve anyone.
+        immediately — otherwise nobody could ever log in to approve anyone.
      2. Every account after that is a *request* the Owner must approve before it
         can sign in.
 
@@ -354,7 +354,7 @@ export async function initAuth() {
       if (me) {
         session = toSession(me);
       } else {
-        // The token is no longer valid â€” drop it so we stop sending it.
+        // The token is no longer valid — drop it so we stop sending it.
         setSessionToken(null);
         session = null;
       }
@@ -413,7 +413,7 @@ export async function signIn({ login, password }) {
 
   // wire_login raises a distinct, explicit error for every failure mode
   // (unknown username, wrong password, awaiting approval, suspended), so there
-  // is nothing to branch on here â€” describeAuthError renders it readably.
+  // is nothing to branch on here — describeAuthError renders it readably.
   const token = await rpc('wire_login', {
     p_username: login,
     p_password: password
@@ -428,7 +428,7 @@ export async function signIn({ login, password }) {
  *
  * The first account ever created on this database becomes the Owner and is
  * signed in immediately. Every subsequent request is recorded as `pending` and
- * CANNOT sign in until the Owner approves it â€” the database enforces this, not
+ * CANNOT sign in until the Owner approves it — the database enforces this, not
  * the browser, so skipping the UI gains nothing.
  *
  * @param {{name: string, login: string, password: string}} details
@@ -527,7 +527,7 @@ export async function setAccountPassword(id, password) {
   return rpc('wire_set_password', { p_id: id, p_password: password });
 }
 
-/** SIGN OUT â€” revoke the token server-side, then forget it locally. */
+/** SIGN OUT — revoke the token server-side, then forget it locally. */
 export async function signOut() {
   if (config.demoMode || !getSupabase()) {
     session = null;

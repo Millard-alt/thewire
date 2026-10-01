@@ -42,3 +42,7 @@ vercel-env.txt
 tmp-*.log
 tmp-*.err
 tmp-*.mjs
+
+# Ad-hoc local scratch/probe output
+tmp-*.txt
+tmp-*.cjs

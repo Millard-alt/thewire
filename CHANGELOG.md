@@ -113,10 +113,26 @@ crashes — but the guarantees are not real yet.
 - `scripts/smoke.mjs` targeted `#auth-signin-email`, a field that is actually
   `#auth-signin-login`, so its sign-in checks could never have passed. Fixed,
   and the smoke suite now runs green.
-- Mojibake and a stray UTF-8 BOM cleared from `src/lib/auth.js`,
-  `src/styles.css`, `src/views/public.js` and `scripts/smoke.mjs`.
-- `scripts/_encoding_check.mjs` now compares against `HEAD` and labels a
-  finding `PRE-EXISTING` when this change did not introduce it.
+- Mojibake cleared from `src/lib/auth.js`, `src/styles.css` and
+  `src/views/public.js` (11 sequences: em dashes, one ellipsis, one middle dot).
+  Every repair was made by explicit byte mapping, not a blanket rewrite: the
+  tree also contains *correct* em dashes and middle dots, and two earlier
+  automated attempts corrupted those instead of the mojibake.
+- **The ad-hoc encoding scripts are gone, folded into one tool.** Four
+  throwaway `_*.mjs` probes were deleted and `scripts/encoding-check.mjs` is now
+  the only encoding checker, reporting codepoint numbers rather than rendered
+  text (the PowerShell console renders a correct U+2014 exactly like mojibake,
+  which is what made earlier passes unreliable). It is wired up as
+  `npm run lint:encoding`.
+- **`npm run lint:encoding --fix` could not remove a BOM.** It reported the file
+  fixed, then found the same BOM on the next run. `buf.toString('utf8')` keeps
+  the BOM as a U+FEFF *character*, so writing the decoded string back re-emitted
+  the very bytes it was meant to delete. The decoder now strips it first, and the
+  write is no longer conditional on C1 controls shrinking. Cleared the BOM from
+  `scripts/credits-check.mjs`; all 58 tracked files are clean.
+- Five `tmp-*.txt` scratch files that had been committed by mistake are removed
+  from the repo, and `tmp-*.txt` / `tmp-*.cjs` are gitignored so a debugging
+  session cannot leave them behind again.
 
 ### Added
 - **The Login button now says who it is for.** It reads "Press login" with an
