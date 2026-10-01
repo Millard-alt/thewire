@@ -36,12 +36,28 @@
 --    alter a CHECK in place across Postgres versions, so it is dropped and
 --    re-added rather than ALTERed.
 do $$
+declare
+  v_constraint text;
 begin
-  if exists (
-    select 1 from pg_constraint where conname = 'staff_accounts_role_check'
-  ) then
-    alter table public.staff_accounts drop constraint staff_accounts_role_check;
-  end if;
+  -- Discovered from the catalog rather than matched by name. An earlier
+  -- revision dropped the constraint by the literal name 'staff_accounts_role_check',
+  -- which silently does nothing if the live copy is named differently or if a
+  -- second copy was added by a re-run. The symptom is a migration that reports
+  -- success and leaves the old CHECK in place, so the very next UPDATE still
+  -- fails with 23514 and the fix looks like it did not take.
+  for v_constraint in
+    select c.conname
+      from pg_constraint c
+      join pg_class t on t.oid = c.conrelid
+      join pg_namespace n on n.oid = t.relnamespace
+     where t.relname = 'staff_accounts'
+       and n.nspname = 'public'
+       and c.contype = 'c'
+       and pg_get_constraintdef(c.oid) ilike '%role%'
+  loop
+    execute format('alter table public.staff_accounts drop constraint %I', v_constraint);
+    raise notice 'dropped role check: %', v_constraint;
+  end loop;
 end
 $$;
 

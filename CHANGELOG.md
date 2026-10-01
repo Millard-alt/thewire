@@ -27,50 +27,87 @@ the object exists. Tables were checked with a `select` of the specific column.
 | `007_article_ownership.sql` | **applied** (after fix) | `articles.author_account_id` selects `200`; `wire_owns_article` returns a boolean |
 | `008_reset_non_owner_accounts.sql` | **not run — deliberately** | Destructive by design. The Owner's call when they want it. |
 | `009_credits_page.sql` | **applied** | `credits_people` exists and is empty; `wire_credits_people_list()` returns `[]`; all three write functions resolve and reject `anon` with "only the Owner can change the Credits page" |
+| `010_repair_role_constraint.sql` | **NOT YET RUN — you must run this** | The live `staff_accounts_role_check` still rejects `'Writer'`. See the third failure below. |
 
-**Every migration this release depends on is now applied.** The Owner-only
-guarantee is enforced in the database, not just the UI: I confirmed the three
-`wire_credits_people_*` write functions actively refuse an `anon` caller.
+**One migration is still outstanding: `supabase/010_repair_role_constraint.sql`.**
+Until it is applied, approving or editing any account fails with
+`ERROR: 23514 ... violates check constraint "staff_accounts_role_check"`.
+Everything else in this release is applied and verified. The Owner-only
+guarantee on the Credits page is enforced in the database, not just the UI: I
+confirmed the three `wire_credits_people_*` write functions actively refuse an
+`anon` caller.
 
 Tables `articles`, `staff` and `credits_people` are all currently empty, which
 is expected for a fresh install.
 
-### How the two failures were resolved
+### The three migration failures and how they were resolved
 
-Both were diagnosed, fixed, re-run by the Owner, and confirmed applied. They are
-recorded because the fixes are load-bearing, not cosmetic.
+All three were diagnosed from the error text, fixed in the committed SQL, and
+confirmed by re-probing. They are recorded because the fixes are load-bearing,
+not cosmetic.
 
-**`006_roles_and_privileges.sql` — `ERROR: 23514`**
+#### 1. `007_article_ownership.sql` — `ERROR: 42883: function min(uuid) does not exist`
+
+The backfill that linked existing articles to their author tried to pick one
+account per name with `min(id)`. **Postgres has no `min` aggregate for `uuid`.**
+Rewritten as `min(id::text)::uuid`, which sorts identically and casts back.
+
+#### 2. `006_roles_and_privileges.sql` — `ERROR: 23514`, role CHECK ordering
+
+The script tried to rewrite rows to `'Writer'` before the constraint that
+rejected `'Writer'` had been replaced. Postgres evaluates statements in order,
+so the normalising `UPDATE` was blocked by the very constraint the migration
+existed to fix. The constraint is now dropped first, the data normalised, then
+one correct guard added.
+
+#### 3. `staff_accounts_role_check` still rejects `'Writer'` — **the live one**
 
 ```
-new row for relation "staff_accounts" violates check constraint "staff_accounts_role_check"
-DETAIL: Failing row contains (d55cc93e-..., editor, ..., Editor, Writer, active, ...)
+ERROR:  23514: new row for relation "staff_accounts" violates check
+        constraint "staff_accounts_role_check"
+DETAIL:  Failing row contains (..., 'editor', ..., 'Editor', 'Writer',
+         'active', ...)
 ```
 
-The migration folds the legacy `'Editor'` role onto `'Writer'`. The CHECK
-constraint already on the database accepted only `'Owner'` and `'Editor'`, so the
-`UPDATE` wrote a value the constraint rejected, and the whole migration aborted.
+The failing row's role is `'Writer'` — the value the entire product now uses.
+So the constraint doing the rejecting **is not the one in `credentials.sql`**;
+that file already listed `'Writer'`. A second, older CHECK was still live, from
+before the Editor-to-Writer rename.
 
-The fix reorders it: **drop the CHECK, normalise the rows, then re-add the CHECK**
-asserting the real three roles. Relax first, mutate second, assert last. A
-constraint dropped and never re-attached would be worse than the original error,
-so the three steps are explicitly sequenced and commented as load-bearing.
+The reason the earlier fix appeared to succeed but changed nothing: it dropped
+the constraint *by literal name*. A differently-named copy, or a second copy
+added by a re-run, simply does not match and is never dropped. The migration
+reports success and leaves the old CHECK in place, so the next write fails with
+the identical error and the fix looks like it did not take.
 
-**`007_article_ownership.sql` — `ERROR: 42883`**
+`supabase/010_repair_role_constraint.sql` fixes this properly:
 
-```
-function min(uuid) does not exist
-```
+- **Discovers every CHECK on the role column from the system catalog** and drops
+  all of them, matched on `pg_constraint` and `pg_get_constraintdef` rather than
+  on `conname`. It repairs the column whatever the constraint is called and
+  however many stale copies exist. `status` and `username` checks are untouched
+  because the definition must mention `role`.
+- **Normalises every row with no CHECK attached**, so nothing can block it.
+  Handled case-insensitively: `editor`, `reporter`, `managing editor`,
+  `photographer` and `board manager` all fold onto a real role. Anything
+  unrecognised falls to `Writer`, the weakest role, so a stray value can never
+  grant more access than intended. `is_owner` is honoured first, so the Owner
+  seat is never demoted by a leftover role string.
+- **De-duplicates `is_owner` to at most one row**, deliberately by removal
+  rather than by promotion: choosing which account becomes the Owner from a query
+  would hand the entire Control Center to an arbitrary row. An Ownerless
+  newsroom is a loud state you fix on purpose.
+- **Adds exactly one guard** matching `ROLES` in `src/lib/auth.js`.
+- **Asserts its own result.** An unexpected role raises with the offending rows
+  named, rather than reporting success with bad data behind it.
 
-The ownership backfill picked a deterministic account id per author name using
-`min(id)`. Postgres has no `min()` aggregate for `uuid`. Sitting inside the same
-statement as the backfill, the failure aborted the migration *before* the RLS
-policies further down were created, leaving the database half-migrated.
+Everything runs inside one `DO` block, so it is atomic. The Supabase SQL Editor
+wraps a paste in a single implicit transaction, which means a mid-script failure
+rolls the whole thing back and leaves the table untouched — that is what makes a
+half-applied fix indistinguishable from no fix, and it is why the statement
+order matters.
 
-The fix is `min(id::text)::uuid`: casting to `text` gives `min()` a sortable
-type, the canonical hyphenated uuid text format makes lexical order stable, and
-the `::text::uuid` round trip is lossless. Neither migration needed a data
-cleanup, and no rows were altered beyond the role fold 006 performs by design.
+Idempotent, and safe to run before or after 006.
 
 
 ## [Unreleased]
@@ -109,6 +146,14 @@ cleanup, and no rows were altered beyond the role fold 006 performs by design.
   every other `staff_accounts` row and wipes `wire_sessions` so all browsers are
   logged out. Wrapped in a transaction, prints what it removed and asserts the
   result. **Not yet run.**
+- `supabase/010_repair_role_constraint.sql` — repairs the `staff_accounts.role`
+  CHECK that still rejects `'Writer'` and blocked every account approval. It
+  discovers and drops **every** CHECK on the role column from the system catalog
+  rather than matching one by name, normalises every row with no constraint
+  attached, de-duplicates `is_owner`, re-adds exactly one guard matching
+  `ROLES` in `src/lib/auth.js`, and raises if any row still violates it.
+  Atomic, idempotent, and safe to run in any order relative to 006.
+  **Run this next — see the third failure above.**
 
 ### Changed
 - The Credits tab is gated on **Owner** specifically, not on "any elevated
@@ -121,9 +166,19 @@ cleanup, and no rows were altered beyond the role fold 006 performs by design.
   Owner's private one. A regression test asserts the old wording cannot return.
 - **The role is "Writer", not "Editor."** All user-facing strings, dropdown
   labels, seed data and SQL now say Writer. `supabase/006_roles_and_privileges.sql`
-  accepts both spellings and normalises legacy `'Editor'` rows to `'Writer'`, so
-  existing accounts keep working. The role set is `Owner`, `Board Manager`,
-  `Writer`; the never-real `Reporter` is gone and folds into `Writer`.
+  and `supabase/010_repair_role_constraint.sql` normalise legacy `'Editor'` rows
+  to `'Writer'`, so existing accounts keep working. The role set is `Owner`,
+  `Board Manager`, `Writer`; the never-real `Reporter` is gone and folds into
+  `Writer`.
+- **`credentials.sql` no longer creates a database born broken.** Its
+  `staff_accounts` CHECK listed the retired `'Editor'` alongside the real roles,
+  and `wire_approve_account` defaulted to `'Editor'` while validating against
+  `('Owner','Editor','Board Manager')` — so it rejected `'Writer'` with
+  "Unknown role" and the Owner could not approve anybody at all. The CHECK now
+  lists exactly the three real roles and refuses the retired spelling, and the
+  approval function defaults to `'Writer'` while folding a stray `'Editor'` onto
+  it rather than failing. A fresh install from this file alone is now correct
+  without needing 006 or 010 to patch it afterwards.
 
 ### Security
 - Writers can delete only their own articles, enforced by RLS rather than by the
@@ -223,9 +278,13 @@ cleanup, and no rows were altered beyond the role fold 006 performs by design.
   table is genuinely empty. I did not intend to call a write function and have
   not done so since.
 
-### Outstanding — none blocking
-- **No migration is outstanding.** Everything this release depends on is applied
-  and confirmed against the live database. See *Live database status* above.
+### Outstanding — one item, and it needs you
+- **`supabase/010_repair_role_constraint.sql` has not been run.** Until it is,
+  approving or editing any account fails with
+  `ERROR: 23514 ... violates check constraint "staff_accounts_role_check"`, and
+  the next write fails with the identical error no matter what else is fixed.
+  It is idempotent, runs in one transaction, and is safe to run before or after
+  006. Nothing else in this release is blocked on it.
 - `supabase/008_reset_non_owner_accounts.sql` is available but deliberately not
   run. It deletes every non-Owner account and logs all browsers out.
 - Push delivery still requires a server-side sender. Browsers subscribe and
