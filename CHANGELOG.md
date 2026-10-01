@@ -20,17 +20,58 @@ Only `anon` credentials were used; nothing was written.
 | `003_subscriptions_and_gallery.sql` | **applied** | — |
 | `004_device_registration.sql` | **NOT applied** | `wire_register_device` / `wire_unregister_device` return 404, so a reader who turns on alerts is silently not subscribed. Broadcasts stay in-app only. |
 | `005_portraits_and_credits.sql` | **NOT applied** | No `portrait_url` / `portrait_status` / `credits_*` columns. **The Credits tab and the forced-portrait signup flow cannot work.** `wire_submit_portrait`, `wire_assign_portrait`, `wire_set_portrait_status`, `wire_set_credits` all return 404. |
-| `006_roles_and_privileges.sql` | **partially applied** | `is_owner()` exists but `wire_default_permissions` returns 404, so the capabilities jsonb falls back to the `{}` default. |
-| `007_article_ownership.sql` | **NOT applied** | No `articles.author_account_id`. Writer-scoped deletes are **not** enforced in the database; the blanket `articles_staff_write` policy still lets any staff account delete any article. |
+| `006_roles_and_privileges.sql` | **FAILED — fixed, re-run** | See below. First attempt aborted on `ERROR 23514`. |
+| `007_article_ownership.sql` | **FAILED — fixed, re-run** | See below. First attempt aborted on `ERROR 42883`. |
 | `008_reset_non_owner_accounts.sql` | **not yet written to prod** | Deletes every non-Owner account and logs all browsers out. |
 | `009_credits_page.sql` | **NOT applied** | No `credits_people` table. **The remade Credits page cannot save anything** — every write goes through a `wire_credits_*` RPC, all of which return 404. |
+
+### Two migrations failed on first run, and both are now fixed
+
+**`006_roles_and_privileges.sql` — `ERROR: 23514`**
+
+```
+new row for relation "staff_accounts" violates check constraint "staff_accounts_role_check"
+DETAIL: Failing row contains (d55cc93e-..., editor, ..., Editor, Writer, active, ...)
+```
+
+The migration folds the legacy `'Editor'` role onto `'Writer'`. But the CHECK
+constraint currently on the database only accepts `'Owner'` and `'Editor'`, so the
+`UPDATE` wrote `'Writer'` into a row the constraint rejected. The `UPDATE` ran
+before the constraint was relaxed, so it aborted the whole migration.
+
+The fix reorders the migration: **drop the CHECK, normalise the rows, then
+re-add the CHECK** asserting the real three roles. Relax first, mutate second,
+assert last. A constraint that is dropped and never re-attached would be a worse
+outcome than the original error, so the three steps are now explicitly sequenced
+and commented as load-bearing rather than incidental.
+
+**`007_article_ownership.sql` — `ERROR: 42883`**
+
+```
+function min(uuid) does not exist
+QUERY: update public.articles a set author_account_id = resolved.account_id
+       from (select ..., min(id) as account_id from public.staff_accounts ...)
+```
+
+The ownership backfill picked a deterministic account id per author name using
+`min(id)`. Postgres has no `min()` aggregate for the `uuid` type. Because this
+sits inside the same statement as the backfill, the failure aborted the
+migration before the RLS policies further down were created — leaving the
+database half-migrated.
+
+The fix is `min(id::text)::uuid`. Casting to `text` gives `min()` a sortable
+type; the canonical hyphenated uuid format means lexical order is stable, and the
+`::text::uuid` round trip is lossless. **Neither migration was re-verified against
+the live database — I have no `service_role` key and did not write to it.** Both
+are ASCII, BOM-free and idempotent, and the failure modes are read from your
+error output rather than predicted, but the next run is the real test.
 
 **Run these five, in this order, in the Supabase SQL Editor:**
 
 1. `supabase/004_device_registration.sql`
 2. `supabase/005_portraits_and_credits.sql`
-3. `supabase/006_roles_and_privileges.sql`
-4. `supabase/007_article_ownership.sql`
+3. `supabase/006_roles_and_privileges.sql` ← **re-run, now fixed**
+4. `supabase/007_article_ownership.sql` ← **re-run, now fixed**
 5. `supabase/009_credits_page.sql`
 
 Then run `supabase/008_reset_non_owner_accounts.sql` last — it logs everyone out,
