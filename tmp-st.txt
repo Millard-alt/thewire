@@ -1,0 +1,16 @@
+﻿M  CHANGELOG.md
+ M package-lock.json
+ M package.json
+M  scripts/credits-check.mjs
+M  src/lib/changelog.js
+M  supabase/006_roles_and_privileges.sql
+M  supabase/007_article_ownership.sql
+M  supabase/credentials.sql
+?? tmp-r.txt
+?? tmp-st.txt
+34a5164 Drop illegal SPI savepoints from 011 repair probe; reorder diagnostic so CHECK constraints print last
+3c90f0a Match role CHECK by column id, not text; add diagnostic; renumber repair to 011
+2e07376 Add 010 to repair the live staff_accounts role CHECK; fix catalog-based constraint drop in 006 and the legacy role model in credentials.sql
+29fcf7d Confirm every migration applied; register changelog release sections
+42e0e0e Restructure CHANGELOG: consolidate duplicate Pending, record the two fixed migration failures and the live-database status
+e708d84 Fix two migration failures: role CHECK ordering and min(uuid)

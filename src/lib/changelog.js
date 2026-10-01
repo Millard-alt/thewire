@@ -17,9 +17,6 @@ import source from '../../CHANGELOG.md?raw';
 
 /** Section heading -> the icon shown beside it. */
 const SECTION_ICONS = {
-  'Live database status': 'fa-database',
-  Verified: 'fa-circle-check',
-  Untested: 'fa-flask',
   Added: 'fa-plus',
   Changed: 'fa-arrows-rotate',
   Deprecated: 'fa-triangle-exclamation',
@@ -37,21 +34,13 @@ const SECTION_ICONS = {
  */
 const SECTION_ORDER = [
   'Pending — required before these features work',
-  'Live database status',
   'Added',
   'Changed',
   'Fixed',
   'Security',
   'Deprecated',
   'Removed',
-  'Known limitations',
-  // Release assurance goes last: it is context on everything above it, not a
-  // category of change. Quoted because these are headings in the markdown, not
-  // variables -- `Verified,` here would be a shorthand property reference to an
-  // undeclared identifier and throws at module load.
-  'Outstanding — none blocking',
-  'Verified',
-  'Untested'
+  'Known limitations'
 ];
 
 /**

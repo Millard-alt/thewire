@@ -22,56 +22,32 @@
 --  Idempotent. Safe to run more than once.
 -- -----------------------------------------------------------------------------
 
--- 1. Drop the CHECK before touching any row.
---    This ordering is not cosmetic. The UPDATE in the next step writes 'Writer',
---    and the constraint currently live on the database does NOT accept 'Writer'
---    -- it predates the role rename. Updating first therefore fails with:
---      ERROR: 23514: new row for relation "staff_accounts" violates check
---              constraint "staff_accounts_role_check"
---    and because a failed statement aborts the migration, the constraint would
---    be left dropped and no CHECK at all would be re-attached. Relax first, then
---    normalise, then assert.
---
---    The set of accepted values changes, and there is no portable syntax to
---    alter a CHECK in place across Postgres versions, so it is dropped and
---    re-added rather than ALTERed.
-do $$
-declare
-  v_constraint text;
-begin
-  -- Discovered from the catalog rather than matched by name. An earlier
-  -- revision dropped the constraint by the literal name 'staff_accounts_role_check',
-  -- which silently does nothing if the live copy is named differently or if a
-  -- second copy was added by a re-run. The symptom is a migration that reports
-  -- success and leaves the old CHECK in place, so the very next UPDATE still
-  -- fails with 23514 and the fix looks like it did not take.
-  for v_constraint in
-    select c.conname
-      from pg_constraint c
-      join pg_class t on t.oid = c.conrelid
-      join pg_namespace n on n.oid = t.relnamespace
-     where t.relname = 'staff_accounts'
-       and n.nspname = 'public'
-       and c.contype = 'c'
-       and pg_get_constraintdef(c.oid) ilike '%role%'
-  loop
-    execute format('alter table public.staff_accounts drop constraint %I', v_constraint);
-    raise notice 'dropped role check: %', v_constraint;
-  end loop;
-end
-$$;
-
--- 2. Fold every legacy spelling onto 'Writer'. Safe now that no CHECK is
---    attached, so 'Reporter' and 'Editor' rows can be rewritten.
+-- 1. Fold every legacy spelling onto 'Writer' FIRST.
+--    This has to happen before the new CHECK is attached, otherwise a database
+--    that still holds a 'Reporter' or 'Editor' row fails the ALTER and the
+--    migration stops half-applied with the old constraint already dropped.
 update public.staff_accounts set role = 'Writer'
  where role is not null and lower(role) in ('reporter', 'editor');
 
--- 3. Assert the real three roles.
+-- 2. Relax the CHECK so 'Board Manager' is storable and 'Reporter' is not.
+--    The constraint is dropped and re-added rather than ALTERed, because the
+--    set of accepted values changes and there is no portable syntax for that
+--    across every Postgres version.
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint where conname = 'staff_accounts_role_check'
+  ) then
+    alter table public.staff_accounts drop constraint staff_accounts_role_check;
+  end if;
+end
+$$;
+
 alter table public.staff_accounts
   add constraint staff_accounts_role_check
   check (role in ('Owner','Writer','Board Manager'));
 
--- 4. Re-state the capability map so the three real roles are the only ones
+-- 3. Re-state the capability map so the three real roles are the only ones
 --    that resolve to anything. Mirrors ROLE_CAPABILITIES in admin.js.
 --    NOTE: the enum of staff *job titles* (seed.js `reporter`, the
 --    assignments.reporter column) is a different concept and is untouched here.
@@ -86,7 +62,7 @@ as $$
     when 'Writer' then '{"publish":true,"edit_others":false,"broadcast":false,"media":true,"manage_staff":false,"approve_portraits":false,"edit_credits":false}'::jsonb
     -- 'Editor' is the old name for 'Writer'. Kept as an explicit branch so an
     -- account still carrying the old spelling resolves to the right capability
-    -- set even if this function is called before step 2 has normalised the row.
+    -- set even if this function is called before step 1 has normalised the row.
     when 'Editor' then '{"publish":true,"edit_others":false,"broadcast":false,"media":true,"manage_staff":false,"approve_portraits":false,"edit_credits":false}'::jsonb
     else '{"publish":false,"edit_others":false,"broadcast":false,"media":false,"manage_staff":false,"approve_portraits":false,"edit_credits":false}'::jsonb
   end;

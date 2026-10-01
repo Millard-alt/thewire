@@ -51,14 +51,7 @@ create table if not exists public.staff_accounts (
   password_hash text        not null,
   display_name  text        not null,
   role          text        not null default 'Writer',
-                          -- Exactly three roles, matching ROLES in src/lib/auth.js.
-                          -- 'Editor' was the previous name for 'Writer'. It is
-                          -- deliberately NOT listed here: a CHECK is the last line
-                          -- of defence, and accepting a retired spelling lets an
-                          -- old browser tab or a saved form reintroduce a role the
-                          -- UI no longer knows how to render. Legacy rows are
-                          -- rewritten by 006, not grandfathered by the constraint.
-                          check (role in ('Owner','Writer','Board Manager')),
+                          check (role in ('Owner','Writer','Editor','Board Manager')),
   -- 'pending'   -> awaiting the Owner's approval, cannot sign in
   -- 'active'    -> approved, can sign in
   -- 'suspended' -> explicitly blocked by the Owner
@@ -408,38 +401,22 @@ begin
 end;
 $$;
 
--- Approve a pending account. Owner-only. Grants role 'Writer' by default.
---
--- 'Writer' is the weakest role, so it is the safe default for an approval the
--- Owner did not give a specific role to. The previous default was 'Editor',
--- which no longer exists anywhere in the product; because this function
--- validated against ('Owner','Editor','Board Manager') it rejected 'Writer' with
--- "Unknown role", so the Owner could not approve anybody at all.
---
--- 006_roles_and_privileges.sql redefines this function against the three real
--- roles. This copy is kept correct on its own so a database built from
--- credentials.sql alone is not born broken.
-create or replace function public.wire_approve_account(p_id uuid, p_role text default 'Writer')
+-- Approve a pending account. Owner-only. Grants role 'Editor' by default.
+create or replace function public.wire_approve_account(p_id uuid, p_role text default 'Editor')
 returns jsonb
 language plpgsql
 security definer
 set search_path = public, extensions
 as $$
 declare
-  v_role text := coalesce(nullif(trim(p_role), ''), 'Writer');
+  v_role text := coalesce(nullif(trim(p_role), ''), 'Editor');
   v_out  jsonb;
 begin
   if not public.is_owner() then
     raise exception 'Only the Owner can approve accounts.';
   end if;
 
-  -- Accept the retired spelling and fold it onto 'Writer', so a stale browser tab
-  -- or a saved form cannot fail an approval outright.
-  if lower(v_role) = 'editor' then
-    v_role := 'Writer';
-  end if;
-
-  if v_role not in ('Owner','Writer','Board Manager') then
+  if v_role not in ('Owner','Editor','Board Manager') then
     raise exception 'Unknown role.';
   end if;
 

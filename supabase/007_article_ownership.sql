@@ -166,19 +166,7 @@ begin
      set author_account_id = resolved.account_id
     from (
       select lower(trim(coalesce(display_name, ''))) as match_name,
-             -- Deterministic pick for the account id.
-             --
-             -- NOT min(id): Postgres has no min() aggregate for the uuid type
-             -- (it was only added in PG 16 for some types, and not portably for
-             -- the versions Supabase runs). Written naively this fails with
-             --   ERROR: 42883: function min(uuid) does not exist
-             -- which aborts the migration before the RLS policies below it are
-             -- ever created, leaving the database in a half-migrated state.
-             --
-             -- Casting the uuid to text gives min() a sortable type; the
-             -- canonical hyphenated uuid format means lexical order is stable
-             -- and the ::text::uuid round trip is lossless.
-             min(id::text)::uuid as account_id
+             min(id)                    as account_id
         from public.staff_accounts
        where display_name is not null
        group by lower(trim(coalesce(display_name, '')))
