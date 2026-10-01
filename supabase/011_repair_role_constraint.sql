@@ -1,5 +1,36 @@
 -- 011_repair_role_constraint.sql
 -- -----------------------------------------------------------------------------
+-- SUPERSEDED BY 012_fix_live_signup_function.sql -- DO NOT RUN THIS.
+--
+-- Kept in the repo only as a record of what was tried, and because deleting it
+-- would leave the changelog referring to a file that no longer exists.
+--
+-- WHAT THIS FILE GOT WRONG
+--   It assumed the CHECK constraint was stale and set about dropping it. The
+--   constraint was correct all along. Measured against the live database by
+--   inserting one throwaway row per candidate role and deleting it again:
+--
+--     role = 'Writer'           ACCEPTED
+--     role = 'Editor'           REJECTED 23514
+--     role = 'Managing Editor'  REJECTED 23514
+--
+--   So every repair this file performed was a no-op on the guard, which is why
+--   each run "succeeded" and the very next signup failed with the identical
+--   message. The real cause was the FUNCTION: the deployed
+--   wire_request_account is a stale pre-rename copy that hardcodes
+--   v_role := 'Editor', and 006 tightened the CHECK without redefining it.
+--
+--   The general lesson, now enforced in 012: a migration that only repairs the
+--   table cannot prove the signup path works. 012 ends by calling
+--   wire_request_account itself and asserting the row lands as a pending
+--   Writer, which is the only check that would have caught this.
+-- -----------------------------------------------------------------------------
+--
+-- Original header retained below for reference.
+-- -----------------------------------------------------------------------------
+
+-- 011_repair_role_constraint.sql
+-- -----------------------------------------------------------------------------
 -- FIXES the live signup failure:
 --   ERROR: 23514: new row for relation "staff_accounts" violates check
 --          constraint "staff_accounts_role_check"
@@ -16,63 +47,13 @@
 --
 --   The diagnostic half now lives in 010_diagnose_role.sql, on its own, where a
 --   mistake in it cannot block the repair. Run 010 if you want the evidence;
---   run THIS file to fix it.
+--   run 012 to fix it.
 --
--- WHAT IT DOES
---   1. Finds the role column by name (not by ordinal position).
---   2. Drops EVERY check constraint that references that column, matched on
---      pg_constraint.conkey -- an exact structural test that finds the check
---      whatever it is named, however many stale copies exist, and whether or
---      not its rendered definition happens to contain the substring 'role'.
---   3. Leaves at most ONE is_owner row, by removing duplicates only. It never
---      promotes anybody: picking a winner from a query would hand the whole
---      Control Center to an arbitrary account.
---   4. Normalises every role with no check attached, so nothing can block it.
---   5. Adds exactly ONE guard, matching ROLES in src/lib/auth.js.
---   6. Proves the result twice: no invalid role remains, AND a real INSERT of
---      role=Writer through the same column list the app uses succeeds. The
---      probe row is deleted immediately after.
---
--- Steps 1-5 can all pass while signup still fails, because they only prove the
--- table is internally consistent -- they never prove a new row can be created.
--- That gap is what let a "successful" migration reproduce the bug on the very
--- next signup, so step 6 exists.
+-- Steps 1-5 below can all pass while signup still fails, because they only prove
+-- the table is internally consistent -- they never prove a new row can be
+-- created by the function the app actually calls.
 --
 -- Idempotent. Safe to run more than once, and in any order relative to 006.
--- -----------------------------------------------------------------------------
-
--- Repair public.staff_accounts.role so the database agrees with the client.
---
--- THE FAILURE THIS FIXES
---   ERROR: 23514: new row for relation "staff_accounts" violates check
---          constraint "staff_accounts_role_check"
---   DETAIL: Failing row contains (..., 'editor', ..., 'Editor', 'Writer',
---           'active', ...)
---
--- The failing row's role is 'Writer', which is the value the whole product now
--- uses. So the constraint rejecting it is NOT the one written in credentials.sql
--- -- that file already lists 'Writer'. A DIFFERENT, older copy of the CHECK is
--- still live, and it predates the Writer rename.
---
--- 006_roles_and_privileges.sql tried to fix this by dropping the constraint
--- first and re-adding it after. That only works if the constraint is named
--- exactly 'staff_accounts_role_check'. This file instead DISCOVERS every CHECK
--- attached to the role column via the system catalog and drops all of them, so
--- it repairs the column regardless of what the constraint is called or how many
--- stale copies exist. 006 could leave a second, stale constraint behind for
--- exactly this reason, and the symptom then looks like "the fix did not take".
---
--- Everything runs inside ONE DO block, so it is a single atomic unit: either the
--- column ends up consistent and guarded, or nothing changes at all. That also
--- matters because the Supabase SQL Editor wraps a pasted script in one implicit
--- transaction, so a mid-script failure rolls the whole paste back and leaves the
--- table as it was -- which is how a half-applied fix becomes indistinguishable
--- from no fix at all.
---
--- The final check RAISEs if any row still violates the intended set, rather
--- than reporting success while leaving bad data behind.
---
--- Idempotent. Safe to run more than once, in any order relative to 006.
 -- -----------------------------------------------------------------------------
 
 do $$

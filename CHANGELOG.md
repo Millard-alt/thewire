@@ -11,8 +11,64 @@ its migrations have been run in the Supabase SQL Editor.**
 
 ## Live database status
 
-Verified by read-only probes against `iguzwwqjufzzdblkqroj` on 10 Oct 2026.
-Only `anon` credentials were used; nothing was written.
+Verified against `iguzwwqjufzzdblkqroj` on 10 Oct 2026.
+
+### 1. Signup is broken — ROOT CAUSE FOUND, FIX WRITTEN, NOT YET APPLIED
+
+`ERROR: 23514: new row for relation "staff_accounts" violates check
+constraint "staff_accounts_role_check"`
+
+**The CHECK constraint is correct.** This was never a constraint bug, and every
+attempt to fix it by dropping the constraint was treating a symptom.
+
+Measured directly against the live database by inserting one throwaway row per
+candidate role and deleting it again:
+
+```
+role="Writer"    ACCEPTED
+role="Board Manager"  ACCEPTED
+role="Owner"     ACCEPTED
+role="Editor"    REJECTED  23514
+```
+
+So the constraint already allowed `Writer`, which is the only value
+`wire_request_account` should ever insert. The live copy of that function is a
+**stale pre-rename body that still hardcodes `v_role := 'Editor'`**, and
+`'Editor'` is not in the constraint's set — hence the identical error on every
+signup, for four rounds of migrations that each reported success.
+
+Migration `006_roles_and_privileges.sql` tightened the CHECK and changed the
+client, but **never redefined the function**. Supabase keeps the function body it
+was last given; editing `credentials.sql` in the repo changes nothing on the
+server until that file is pasted.
+
+**To fix: paste `supabase/012_fix_live_signup_function.sql` into the Supabase
+SQL Editor.** It redefines the signup and approve functions with `'Writer'`, and
+its step 4 calls `wire_request_account` exactly as the browser does, asserts the
+row lands as a pending Writer, then deletes it. A migration that cannot create a
+Writer does not count as a repair.
+
+Also folded into the same file: `wire_approve_account` had
+`p_role default 'Editor'` and a guard reading
+`if v_role not in ('Owner','Editor','Board Manager')` — which *rejected* `Writer`,
+the one role the client actually sends. Approval raised `Unknown role.` even once
+signup worked. Both `012` and `credentials.sql` are corrected.
+
+### 2. The service_role key cannot repair this
+
+Worth recording, because it was asked twice. PostgREST can only call functions
+that exist in the schema, and this project has no arbitrary-SQL RPC
+(`exec_sql` → `PGRST202`). `service_role` bypasses RLS on tables and calls
+existing RPCs, but `ALTER TABLE ... DROP CONSTRAINT` is DDL and DDL only runs
+from the SQL Editor. It is a powerful diagnostic tool — it is how the table
+above was measured instead of guessed — but it cannot apply a fix.
+
+**Do not reset the database.** A reset cannot fix this: it recreates
+`staff_accounts` from `credentials.sql` with the same three-role CHECK, landing
+back on the same error, and it destroys the Owner seat and every approved
+session to do it.
+
+### 3. Migration status
 
 | Migration | State | Effect if not run |
 |---|---|---|
@@ -25,13 +81,15 @@ Only `anon` credentials were used; nothing was written.
 | `008_reset_non_owner_accounts.sql` | **not yet written to prod** | Deletes every non-Owner account and logs all browsers out. |
 | `009_credits_page.sql` | **NOT applied** | No `credits_people` table. **The remade Credits page cannot save anything** — every write goes through a `wire_credits_*` RPC, all of which return 404. |
 
-**Run these five, in this order, in the Supabase SQL Editor:**
+**Run these six, in this order, in the Supabase SQL Editor:**
 
-1. `supabase/004_device_registration.sql`
-2. `supabase/005_portraits_and_credits.sql`
-3. `supabase/006_roles_and_privileges.sql`
-4. `supabase/007_article_ownership.sql`
-5. `supabase/009_credits_page.sql`
+1. **`supabase/012_fix_live_signup_function.sql` — FIRST, signup is broken until
+   this is applied**
+2. `supabase/004_device_registration.sql`
+3. `supabase/005_portraits_and_credits.sql`
+4. `supabase/006_roles_and_privileges.sql`
+5. `supabase/007_article_ownership.sql`
+6. `supabase/009_credits_page.sql`
 
 Then run `supabase/008_reset_non_owner_accounts.sql` last — it logs everyone out,
 so do it once the others are in place.
@@ -44,6 +102,25 @@ every missing RPC surfaces a message naming the migration to run), so nothing
 crashes — but the guarantees are not real yet.
 
 ## [Unreleased]
+
+### Fixed
+- **Signup no longer dies on `staff_accounts_role_check`.** Root cause was a
+  stale server-side `wire_request_account` still inserting the pre-rename role
+  `'Editor'`; the CHECK was right all along. `012_fix_live_signup_function.sql`
+  redefines it with `'Writer'`. **Requires the SQL Editor paste to take effect.**
+- **Account approval no longer raises `Unknown role.`** `wire_approve_account`
+  defaulted to and validated against `'Editor'` while the client sends
+  `'Writer'`. Both it and `credentials.sql` now use the real three-role set and
+  fold the legacy spelling on the way in, so a stale browser tab cannot write a
+  value the CHECK refuses.
+- `src/lib/portrait.js` no longer tests `isAdmin` where it means "is Owner".
+  `isAdmin` is true for every active account since the roles were split, so the
+  portrait gate was exempting every new writer — the exact opposite of its
+  intent. Now correctly uses `isOwner`.
+- Seed data no longer invents roles: `'Assignment Manager'` was never accepted
+  by anything and was silently folded to `Writer`, and two `top_performers`
+  rows carried job titles (`'Senior Investigative Editor'`,
+  `'Photojournalist'`) where a role belongs.
 
 ### Added
 - **Credits page rebuilt as its own roster, editable only by the Owner.**

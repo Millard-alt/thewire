@@ -51,7 +51,7 @@ create table if not exists public.staff_accounts (
   password_hash text        not null,
   display_name  text        not null,
   role          text        not null default 'Writer',
-                          check (role in ('Owner','Writer','Editor','Board Manager')),
+                          check (role in ('Owner','Writer','Board Manager')),
   -- 'pending'   -> awaiting the Owner's approval, cannot sign in
   -- 'active'    -> approved, can sign in
   -- 'suspended' -> explicitly blocked by the Owner
@@ -401,22 +401,35 @@ begin
 end;
 $$;
 
--- Approve a pending account. Owner-only. Grants role 'Editor' by default.
-create or replace function public.wire_approve_account(p_id uuid, p_role text default 'Editor')
+-- Approve a pending account. Owner-only. Grants role 'Writer' by default.
+--
+-- 'Writer', not 'Editor'. The guard below used to read
+--   if v_role not in ('Owner','Editor','Board Manager')
+-- which made it REJECT 'Writer' -- the one role the client actually sends
+-- (approveAccount(id, role='Writer') in src/lib/auth.js), so approving anyone
+-- raised 'Unknown role.'. The default and the guard are now both the real
+-- three-role set, and the legacy spelling is folded on the way in so this
+-- function can never write a value the CHECK refuses.
+create or replace function public.wire_approve_account(p_id uuid, p_role text default 'Writer')
 returns jsonb
 language plpgsql
 security definer
 set search_path = public, extensions
 as $$
 declare
-  v_role text := coalesce(nullif(trim(p_role), ''), 'Editor');
+  v_role text := lower(trim(coalesce(p_role, '')));
   v_out  jsonb;
 begin
   if not public.is_owner() then
     raise exception 'Only the Owner can approve accounts.';
   end if;
 
-  if v_role not in ('Owner','Editor','Board Manager') then
+  -- Accept the old spelling from a stale browser tab or saved form.
+  if v_role = 'editor' then
+    v_role := 'Writer';
+  end if;
+
+  if v_role not in ('Owner','Writer','Board Manager') then
     raise exception 'Unknown role.';
   end if;
 
