@@ -210,41 +210,62 @@ begin
   end if;
 
   -- 6. Prove the guard actually ACCEPTS 'Writer', by running the real INSERT
-  --    path in a transaction that is always rolled back.
+  --    path and discarding the result.
   --
   --    Steps 1-5 can all pass while signup still fails, because they only prove
   --    the table is consistent -- they never prove a new row can be created.
   --    That gap is what let the original bug survive a "successful" migration
-  --    and then reproduce on the very next signup. This block writes a throwaway
-  --    row through the same column list the app uses, confirms it succeeds, and
-  --    discards it.
+  --    and then reproduce on the very next signup. This writes a throwaway row
+  --    through the same column list the app uses, confirms it succeeds, then
+  --    removes it.
   --
   --    Raises, rather than warning, if the insert is rejected: a migration that
   --    cannot create a Writer is not a repair.
   --
-  --    The probe is wrapped in a SAVEPOINT and rolled back to unconditionally, so
-  --    the throwaway row is discarded by Postgres itself rather than by a DELETE.
-  --    Two reasons this matters here:
-  --      * A failed migration would otherwise leave a junk account on the roster
-  --        for the Owner to notice and delete by hand.
-  --      * If the INSERT itself raises, control never reaches a DELETE, and the
-  --        block-level handler below would roll back the WHOLE migration -- the
-  --        repairs as well as the probe -- silently undoing the fix.
-  savepoint repair_probe;
+  --    WHY THERE IS NO SAVEPOINT HERE
+  --    An earlier revision wrapped this in `savepoint repair_probe;` /
+  --    `rollback to savepoint repair_probe;`. That is a syntax error at or near
+  --    "to" (SQLSTATE 42601): PL/pgSQL executes statements through SPI, and SPI
+  --    refuses transaction control inside a function. The whole script died at
+  --    line 241, AFTER steps 1-5 had already committed nothing -- so the repair
+  --    never applied and the very next signup failed with the identical error.
+  --    Two lessons, both now encoded below:
+  --      * The DO block's own BEGIN/EXCEPTION is already a subtransaction. When
+  --        the INSERT raises, Postgres rolls back the statement automatically.
+  --        An explicit savepoint is not just redundant here, it is illegal.
+  --      * Nothing in this block may rely on control flow that SPI rejects, or
+  --        the failure lands at the END of the script and looks like the repair
+  --        succeeded.
+  --
+  --    The throwaway row is deleted explicitly on the success path. Relying on
+  --    rollback alone is not safe: if the INSERT succeeds and the DELETE is
+  --    skipped by later control flow, a junk account sits on the real roster
+  --    waiting for the Owner to find and remove it by hand.
+  declare
+    v_probe_id uuid;
   begin
-    insert into public.staff_accounts
-      (username, password_hash, display_name, role, status, is_owner, approved_at)
-    values
-      ('__repair_probe__', 'x', 'Repair Probe', 'Writer', 'pending', false, null);
-  exception
-    when check_violation then
-      rollback to savepoint repair_probe;
-      raise exception
-        'STILL BROKEN: the database still rejects role=Writer. '
-        'A CHECK constraint outside the role column (or a domain/rule) is '
-        'blocking it. Constraint detail: %', sqlerrm;
+    begin
+      insert into public.staff_accounts
+        (username, password_hash, display_name, role, status, is_owner, approved_at)
+      values
+        ('__repair_probe__', 'x', 'Repair Probe', 'Writer', 'pending', false, null)
+      returning id into v_probe_id;
+    exception
+      when check_violation then
+        -- The insert is rolled back by this block's implicit subtransaction, so
+        -- nothing is left behind and the exception is safe to re-raise.
+        raise exception
+          'STILL BROKEN: the database still rejects role=Writer. '
+          'A CHECK constraint outside the role column, or a domain or rule, is '
+          'blocking it. Constraint detail: %', sqlerrm;
+    end;
+
+    delete from public.staff_accounts where id = v_probe_id;
+
+    if not found then
+      raise exception 'probe row was not cleaned up (id %) -- remove it by hand', v_probe_id;
+    end if;
   end;
-  rollback to savepoint repair_probe;
 
   raise notice
     'staff_accounts.role repaired; % account(s), all roles valid; '
