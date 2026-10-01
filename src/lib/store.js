@@ -334,13 +334,20 @@ export async function hydrate() {
         status: row.status,
         deadline: row.deadline || ''
       })),
+      // NOTE: portrait_url and portrait_status are carried through here on
+      // purpose. They were dropped by this mapper, so the Owner's Staff tab
+      // received rows with no photo and no review state, renderPortraitReview()
+      // always fell through to '' and there was nothing to approve -- a portrait
+      // the writer could submit successfully but that the Owner could never see.
       staff: (staff.data || []).map((row) => ({
         id: row.id,
         name: row.name,
         username: row.username,
         email: row.email || row.shadow_email || '',
         role: row.role,
-        status: row.status
+        status: row.status,
+        portrait_url: row.portrait_url || '',
+        portrait_status: row.portrait_status || 'none'
       })),
       topPerformers: (performers.data || []).map((row) => ({
         id: row.id,

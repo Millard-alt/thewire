@@ -119,8 +119,12 @@ as $$
   order by s.last_seen desc;
 $$;
 
-revoke execute on function public.wire_list_devices() from anon, public;
-grant execute on function public.wire_list_devices() to authenticated;
+revoke execute on function public.wire_list_devices() from public;
+grant execute on function public.wire_list_devices() to anon, authenticated;
+-- `anon`, not `authenticated` alone. This project does not use Supabase Auth, so
+-- the browser's PostgREST role is ALWAYS `anon` and never `authenticated`. A
+-- grant naming only `authenticated` is unreachable from the app, and the Owner
+-- panel's device list silently came back empty. See 016 for the live repair.
 
 -- -----------------------------------------------------------------------------
 -- 2c. TARGETED SEND

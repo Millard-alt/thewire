@@ -50,6 +50,47 @@ is refused, that `approved` persists, and it restores the row it touched. It
 creates and deletes nothing, because that is exactly what leaves debris behind
 when a paste aborts partway.
 
+### 0c. Owner panel RPC drift — root cause found, fixes written, NOT YET APPLIED
+
+Auditing the whole Owner panel turned up a cluster of **silent** failures. These
+never produce a console error, which is why they survived: PostgREST ignores any
+key it does not recognise, uses the parameter default, and returns `200 OK`.
+
+1. **Wrong argument names in the Credits client.** `src/lib/credits.js` sent
+   `p_visible` / `p_note`, while the functions take `p_is_visible` /
+   `p_note_text`. Both calls returned success and **discarded the value**, so the
+   Credits settings silently never saved.
+2. **Wrong argument names in the device registration.** `wire_register_device`
+   was sent a field the table does not have, so push registration silently
+   no-oped.
+3. **Three functions never granted to `anon`.** They existed and worked when
+   called as `service_role`, so they *looked* correct in the file — but the
+   browser always presents `anon`, and each call returned "permission denied for
+   function". Same class of bug as `014`, in a different file.
+
+**`016_grant_owner_panel_rpcs.sql`** re-grants all three to `anon` and keeps
+`authenticated`, then proves each grant by calling it.
+
+**`015_approve_creates_staff_row.sql`** fixes the structural cause behind the
+"not signed in" error on portrait submit. `wire_submit_portrait` resolves the
+caller through `staff`, and approving an account created a `staff_accounts` row
+with **no matching `staff` row** — so the lookup found nothing and reported the
+user as signed out. Approval now creates the `staff` row it always assumed.
+
+### 0d. A static guard so this class of bug cannot return
+
+`scripts/rpc-contract-check.mjs` parses every `rpc('name', { args })` in `src/`
+and every `create function name(params)` in `supabase/`, and fails on any RPC
+with no SQL definition or any argument the function does not declare. It runs as
+part of `npm test`, so drift is caught before it ships rather than after.
+
+It has been **verified by deliberately reintroducing both historical bugs**: it
+flagged all three removed credits calls against the pre-fix client, and flagged a
+single injected `p_name`→`p_nombre` rename. Both detection paths are proven, not
+assumed. It reads files only — no network, no database — and it cannot see
+grants, RLS or what is actually deployed; that is what `016` and the live probes
+are for.
+
 ### 0b. Account approval now works
 
 Signup works now, so the first `012` paste landed. Setting a role on an account

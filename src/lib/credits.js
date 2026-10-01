@@ -162,12 +162,22 @@ export async function addPerson(person) {
   const client = getSupabase();
   if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
 
-  const { data, error } = await client.rpc('wire_add_credits_person', {
+  // RPC NAME AND ARG NAMES MUST MATCH supabase/009_credits_page.sql.
+  //
+  // There is no wire_add_credits_person. The server exposes a single upsert,
+  // wire_credits_people_upsert, where p_id = NULL means INSERT and p_id = the
+  // uuid means UPDATE. Calling the three separate names that no longer exist
+  // returned PGRST202 "Could not find the function" for every add, save and
+  // remove, which is why the whole Credits tab was dead. The portrait argument
+  // is p_portrait, not p_portrait_url.
+  const { data, error } = await client.rpc('wire_credits_people_upsert', {
+    p_id: null,
     p_name: name,
     p_role_label: role,
     p_role_color: color,
     p_blurb: String(person.blurb || '').trim(),
-    p_portrait_url: String(person.portraitUrl || '').trim()
+    p_portrait: String(person.portraitUrl || '').trim(),
+    p_sort_order: 100
   });
 
   if (error) return { ok: false, message: describe(error, 'credits entry') };
@@ -179,7 +189,7 @@ export async function addPerson(person) {
  *
  * Every argument is nullable and the function coalesces, so sending only the
  * fields that changed cannot blank the rest. Passing an empty string to
- * `p_portrait_url` or `p_blurb` clears them on purpose.
+ * `p_portrait` or `p_blurb` clears them on purpose.
  *
  * @param {string} id
  * @param {{name?: string, role?: string, color?: string, blurb?: string,
@@ -215,13 +225,17 @@ export async function updatePerson(id, patch) {
   const client = getSupabase();
   if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
 
-  const { error } = await client.rpc('wire_update_credits_person', {
+  // The same single upsert as addPerson, with p_id set. There is no
+  // wire_update_credits_person on the server and there never was; calling it
+  // returned PGRST202 on every save, so edits silently did nothing. The
+  // portrait argument is p_portrait, not p_portrait_url.
+  const { error } = await client.rpc('wire_credits_people_upsert', {
     p_id: id,
     p_name: patch.name === undefined ? null : String(patch.name).trim(),
     p_role_label: patch.role === undefined ? null : String(patch.role).trim(),
     p_role_color: patch.color === undefined ? null : String(patch.color).trim(),
     p_blurb: patch.blurb === undefined ? null : String(patch.blurb).trim(),
-    p_portrait_url: patch.portraitUrl === undefined ? null : String(patch.portraitUrl).trim(),
+    p_portrait: patch.portraitUrl === undefined ? null : String(patch.portraitUrl).trim(),
     p_sort_order: patch.order === undefined ? null : Number(patch.order)
   });
 
@@ -251,8 +265,14 @@ export async function removePerson(id) {
   const client = getSupabase();
   if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
 
-  const { error } = await client.rpc('wire_remove_credits_person', { p_id: id });
+  const { data, error } = await client.rpc('wire_credits_people_delete', { p_id: id });
   if (error) return { ok: false, message: describe(error, 'credits entry') };
+
+  // The function returns boolean rather than jsonb, and returns FALSE when no
+  // row matched. Without this check a removed entry still reported success.
+  if (data === false) {
+    return { ok: false, message: 'That entry is no longer on the page.' };
+  }
   return { ok: true, message: 'Removed from the Credits page.' };
 }
 
