@@ -46,8 +46,7 @@ const EXPECTED = {
     'breaking',
     'broadcasts',
     'curation',
-    'staff',
-    'credits'
+    'staff'
   ],
   Owner: [
     'overview',
@@ -66,7 +65,22 @@ const EXPECTED = {
   ]
 };
 
-const OWNER_ONLY = ['accounts', 'changelog', 'branding', 'security'];
+/**
+ * Tabs only the Owner may open.
+ *
+ * `credits` is here because the Credits page was remade as a hand-curated page:
+ * the Owner adds a photo, a name, a free-text role and a colour, and the entries
+ * are contributors rather than accounts. Nobody but the Owner adds, edits or
+ * removes them, and supabase/009_credits_page.sql enforces the same rule server
+ * side so a leaked key is no help.
+ */
+const OWNER_ONLY = [
+  'accounts',
+  'changelog',
+  'branding',
+  'security',
+  'credits'
+];
 
 /**
  * Wording that must NOT reappear. "Owner Control Centre" was wrong: it is a

@@ -23,27 +23,67 @@ Only `anon` credentials were used; nothing was written.
 | `006_roles_and_privileges.sql` | **partially applied** | `is_owner()` exists but `wire_default_permissions` returns 404, so the capabilities jsonb falls back to the `{}` default. |
 | `007_article_ownership.sql` | **NOT applied** | No `articles.author_account_id`. Writer-scoped deletes are **not** enforced in the database; the blanket `articles_staff_write` policy still lets any staff account delete any article. |
 | `008_reset_non_owner_accounts.sql` | **not yet written to prod** | Deletes every non-Owner account and logs all browsers out. |
+| `009_credits_page.sql` | **NOT applied** | No `credits_people` table. **The remade Credits page cannot save anything** — every write goes through a `wire_credits_*` RPC, all of which return 404. |
 
-**Run these four, in this order, in the Supabase SQL Editor:**
+**Run these five, in this order, in the Supabase SQL Editor:**
 
 1. `supabase/004_device_registration.sql`
 2. `supabase/005_portraits_and_credits.sql`
 3. `supabase/006_roles_and_privileges.sql`
 4. `supabase/007_article_ownership.sql`
+5. `supabase/009_credits_page.sql`
 
 Then run `supabase/008_reset_non_owner_accounts.sql` last — it logs everyone out,
 so do it once the others are in place.
 
-Until 005 and 007 are applied, **the site is not production ready**: the Credits
-tab has nothing to write to, the portrait gate has no column to check, and the
-writer-scoped delete guarantee is client-side only. The client degrades safely in
-all three cases (it probes for the ownership column and omits it if absent, and
+Until 005, 007 and 009 are applied, **the site is not production ready**: the
+Credits tab has nothing to write to, the portrait gate has no column to check, and
+the writer-scoped delete guarantee is client-side only. The client degrades safely
+in all three cases (it probes for the ownership column and omits it if absent, and
 every missing RPC surfaces a message naming the migration to run), so nothing
 crashes — but the guarantees are not real yet.
 
 ## [Unreleased]
 
+### Added
+- **Credits page rebuilt as its own roster, editable only by the Owner.**
+  Previously the page was derived from the `staff` table, so it listed every
+  account that existed rather than the people the Owner had chosen to credit.
+  It is now backed by a dedicated `credits_people` table and nothing else — a
+  contributor with no account can be credited, and an account that is not
+  credited does not appear.
+- **"Add new person"** on the Credits tab: photo (file upload or pasted URL),
+  name, a free-text role, a role colour and a one-line blurb. The role is a
+  plain text field, not a fixed list — the Owner can type a label that has no
+  counterpart in the staff roles (a patron, a funder, a volunteer) and it is
+  stored and displayed verbatim.
+- **"Copy role colour"** lifts the colour off another person's card and applies
+  it to the one being edited, so a shared role stays visually consistent without
+  re-picking a hex value each time. It is available on every card and on the
+  add form.
+- **`scripts/credits-check.mjs`** — 7 checks driven through the real UI in
+  Chromium: the Owner-only tab gate, the add form, the typed role, the colour,
+  copy-colour-from-another-person, and survival across a reload.
+  Wired up as `npm run test:credits`.
+
+### Changed
+- The Credits tab is gated on **Owner** specifically, not on "any elevated
+  role". A Board Manager can open the Newsroom Panel but neither sees the tab
+  nor reaches its data. This is enforced in Postgres as well as the UI: every
+  write goes through a `wire_credits_*` function that raises unless `is_owner()`
+  is true, so a leaked anon key cannot edit the credits page.
+
+### Pending — required before these features work
+- `supabase/009_credits_page.sql` must be run in the Supabase SQL Editor before
+  any of the above works against the live database. Until then the Credits tab
+  renders and the Owner-only gate holds, but every save returns a message naming
+  the migration. No data was written to the live database while building this.
+
 ### Fixed
+- **Demo mode now persists credits entries.** In demo mode `addPerson` returned a
+  fabricated object and never stored it, so a person added in the local demo
+  vanished on the next repaint. The demo store is now a real local list that
+  survives a reload, which is what let the credits checks assert persistence.
 - **The Owner can now delete articles.** This was the headline bug and it was
   not an RLS problem. `mergeState()` in `src/lib/store.js` ran every list
   through `next.x?.length ? next.x : seed.x`, which reads "Postgres returned zero

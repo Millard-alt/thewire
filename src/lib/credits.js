@@ -1,74 +1,50 @@
 /* =============================================================================
-   src/lib/credits.js — THE CREDITS ROSTER
+   src/lib/credits.js — THE CREDITS PAGE
    -----------------------------------------------------------------------------
-   The public "Credits" page: who works on The Wire, in the order the Owner chose,
-   with their role, their blurb and their approved portrait.
+   The public "Credits" page: only the people the Owner has chosen to list, in the
+   order they chose, each with a role, a role colour and a photo.
 
-   The roster is read from the `credits_roster` view rather than the `staff`
-   table. That matters for two reasons:
+   It reads the `credits_people` table (migration 009), NOT `staff`. That
+   distinction is the whole point of the feature:
 
-     * `staff` holds e-mail and shadow addresses. Readers must never see a column
-       they do not need, so the view exposes name, role, blurb, portrait and
-       ordering — nothing else.
-     * The view only returns rows the Owner has both listed AND whose portrait
-       the Owner has approved, so an unreviewed selfie cannot leak by being
-       referenced from a public page.
+     * An account does not put you on the Credits page. The Owner does. Someone
+       can be credited without ever signing in — a photographer, a designer, a
+       patron — and someone with an account can be left off entirely.
+     * `staff` holds e-mail and shadow addresses, so a page reading it would need
+       a SECURITY DEFINER view purely to avoid leaking them. `credits_people`
+       holds only what the page already shows.
 
-   Everything the Owner controls (visibility, blurb, order, permissions) is
-   written through SECURITY DEFINER functions in migration 005, never by a
-   direct client-side update.
+   `role_label` is free text and `role_color` is a hex triplet, so the Owner can
+   invent a role that does not exist anywhere else and give it its own colour.
+   Two people sharing a role colour is normal, which is what "Copy role colour"
+   is for.
+
+   ONLY THE OWNER CAN WRITE. There is no insert/update/delete policy on the
+   table — RLS denies by default — so every save goes through a SECURITY DEFINER
+   function that calls `is_owner()` first. An anon key cannot change this page.
    ========================================================================== */
 
 import { getSupabase } from './supabase.js';
 import { config } from './config.js';
 import { escapeHtml, safeUrl } from './dom.js';
 
-const VIEW = 'credits_roster';
-
 /**
- * Set when the last roster read failed because the credits columns do not exist
- * yet. Migration 005 has to be run in the Supabase SQL Editor before any of this
- * can work, and an empty tab gives the Owner no way to tell that apart from
- * "nobody is on the roster". The flag lets the UI say which it is.
+ * Set when a roster read failed because `credits_people` does not exist yet.
+ * Migration 009 has to be run in the Supabase SQL Editor before any of this can
+ * work, and an empty page gives the Owner no way to tell that apart from
+ * "nobody is on the page yet". The flag lets the UI say which it is.
  */
 let migrationMissing = false;
 
-/** @returns {boolean} true when `credits_roster` / the credits columns are absent. */
+/** @returns {boolean} true when the credits_people table is absent. */
 export function isCreditsMigrationMissing() {
   return migrationMissing;
 }
 
 /**
- * The published roster, in the Owner's chosen order.
- * @returns {Promise<Array<object>>} empty array when the view is missing
- */
-export async function listCredits() {
-  if (config.demoMode) return demoRoster();
-
-  const client = getSupabase();
-  if (!client) return [];
-
-  const { data, error } = await client
-    .from(VIEW)
-    .select('id, name, role, portrait_url, credits_blurb, credits_order')
-    .order('credits_order', { ascending: true })
-    .order('name', { ascending: true });
-
-  if (error) {
-    // Migration 005 not applied yet. An empty credits page is a far better
-    // failure than a page of console noise for a reader.
-    migrationMissing = isMissingSchema(error);
-    console.warn('[credits] could not load the roster', error);
-    return [];
-  }
-  migrationMissing = false;
-  return data || [];
-}
-
-/**
- * PostgREST reports an absent table and an absent column as the same
- * "schema cache" error, which is also what a transient network blip looks like.
- * Only the explicit cache/column wording counts as "migration not run".
+ * PostgREST reports an absent table and an absent column as the same "schema
+ * cache" error, which is also what a transient network blip looks like. Only the
+ * explicit cache/column wording counts as "migration not run".
  * @param {unknown} error
  */
 function isMissingSchema(error) {
@@ -80,46 +56,213 @@ function isMissingSchema(error) {
   );
 }
 
+/** Turn a Postgres error into something a newsroom owner can act on. */
+function describe(error, what) {
+  const text = String(error?.message || '');
+  if (error?.code === '42883' || /wire_credits_people_/.test(text)) {
+    return 'The newsroom server is missing the credits page. Run supabase/009_credits_page.sql in the Supabase SQL editor.';
+  }
+  if (/only the Owner can change the Credits page/.test(text)) {
+    return 'Only the Owner can change the Credits page.';
+  }
+  if (/role colour/.test(text)) {
+    return 'The role colour must be a hex colour such as #1d4ed8.';
+  }
+  if (/a name is required/.test(text)) {
+    return 'Give this person a name.';
+  }
+  return `Could not save the ${what}: ${text || 'unknown error'}`;
+}
+
 /* -------------------------------------------------------------------------- */
-/* Owner actions                                                               */
+/* Public roster                                                               */
 /* -------------------------------------------------------------------------- */
 
 /**
- * Every staff member, with the credits fields, for the Owner's editing tab.
+ * Everyone the Owner has listed, in the Owner's chosen order.
  *
- * This deliberately reads the `staff` table rather than `credits_roster`:
- * the view filters to listed-and-approved rows, which is exactly what an
- * editor must not see (it would hide the people they still need to approve).
- * `staff` is readable by authenticated staff members under RLS.
+ * Rows come back snake_case because that is what the table stores. The public
+ * renderer reads them as-is, and the byline portrait index needs `name` and
+ * `portrait_url`, which kept their original column names.
  *
- * @returns {Promise<Array<object>>} empty array when unreadable
+ * @returns {Promise<Array<object>>} empty array when the table is missing
  */
-export async function listRoster() {
+export async function listCredits() {
   if (config.demoMode) return demoRoster();
 
   const client = getSupabase();
   if (!client) return [];
 
   const { data, error } = await client
-    .from('staff')
-    .select(
-      'id, name, role, status, portrait_url, portrait_status, credits_visible, credits_blurb, credits_order, permissions'
-    )
-    .order('credits_order', { ascending: true })
+    .from('credits_people')
+    .select('id, name, role_label, role_color, blurb, portrait_url, sort_order')
+    .order('sort_order', { ascending: true })
     .order('name', { ascending: true });
 
   if (error) {
+    // Migration 009 not applied yet. An empty credits page is a far better
+    // failure for a reader than a wall of console noise.
     migrationMissing = isMissingSchema(error);
-    console.warn('[credits] could not load the staff roster', error);
+    console.warn('[credits] could not load the page', error);
     return [];
   }
   migrationMissing = false;
   return data || [];
 }
 
+/* -------------------------------------------------------------------------- */
+/* Owner actions                                                               */
+/* -------------------------------------------------------------------------- */
 
 /**
- * Approve or reject a submitted portrait.
+ * The full Credits page as the Owner sees it, for editing.
+ *
+ * Same table the public page reads, plus `sort_order` for reordering. There is
+ * deliberately no second "roster" concept: if the Owner can see it here, it is
+ * on the page, and if it is on the page, it is editable here.
+ *
+ * @returns {Promise<Array<object>>} empty array when unreadable
+ */
+export async function listCreditsForOwner() {
+  return listCredits();
+}
+
+/**
+ * Add someone to the Credits page.
+ *
+ * Note there is no `auth_user_id` and no account is created. That is the point:
+ * the Credits page is a page about people, not about who can log in. A
+ * photographer who has never opened the site belongs on it.
+ *
+ * @param {{name: string, role: string, color: string, blurb?: string,
+ *          portraitUrl?: string}} person
+ */
+export async function addPerson(person) {
+  const name = String(person.name || '').trim();
+  if (!name) return { ok: false, message: 'Give this person a name.' };
+
+  const role = String(person.role || '').trim() || 'Contributor';
+  const color = String(person.color || '').trim() || '#1d4ed8';
+
+  if (config.demoMode) {
+    const rows = demoRoster();
+    const entry = {
+      id: `demo-${Date.now().toString(36)}`,
+      name,
+      role_label: role,
+      role_color: color,
+      blurb: String(person.blurb || '').trim(),
+      portrait_url: String(person.portraitUrl || '').trim() || null,
+      sort_order: nextDemoOrder(rows)
+    };
+    writeDemoRoster([...rows, entry]);
+    return { ok: true, person: entry };
+  }
+
+  const client = getSupabase();
+  if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
+
+  const { data, error } = await client.rpc('wire_add_credits_person', {
+    p_name: name,
+    p_role_label: role,
+    p_role_color: color,
+    p_blurb: String(person.blurb || '').trim(),
+    p_portrait_url: String(person.portraitUrl || '').trim()
+  });
+
+  if (error) return { ok: false, message: describe(error, 'credits entry') };
+  return { ok: true, person: data };
+}
+
+/**
+ * Save an edit to one person.
+ *
+ * Every argument is nullable and the function coalesces, so sending only the
+ * fields that changed cannot blank the rest. Passing an empty string to
+ * `p_portrait_url` or `p_blurb` clears them on purpose.
+ *
+ * @param {string} id
+ * @param {{name?: string, role?: string, color?: string, blurb?: string,
+ *          portraitUrl?: string, order?: number}} patch
+ */
+export async function updatePerson(id, patch) {
+  if (config.demoMode) {
+    const rows = demoRoster();
+    const index = rows.findIndex((row) => row.id === id);
+    if (index === -1) return { ok: false, message: 'That entry is no longer on the page.' };
+
+    // Mirror the SQL's coalesce semantics: an absent key means "leave alone",
+    // an explicit empty string means "clear it".
+    const pick = (key, field, fallback = '') =>
+      patch[key] === undefined ? rows[index][field] : String(patch[key]).trim() || fallback;
+
+    const next = rows[index];
+    next.name = pick('name', 'name', next.name);
+    next.role_label = pick('role', 'role_label', next.role_label);
+    next.role_color = pick('color', 'role_color', next.role_color);
+    next.blurb = patch.blurb === undefined ? next.blurb : String(patch.blurb).trim();
+    next.portrait_url =
+      patch.portraitUrl === undefined
+        ? next.portrait_url
+        : String(patch.portraitUrl).trim() || null;
+    if (patch.order !== undefined) next.sort_order = Number(patch.order);
+
+    rows[index] = next;
+    writeDemoRoster(rows);
+    return { ok: true, message: 'Saved.' };
+  }
+
+  const client = getSupabase();
+  if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
+
+  const { error } = await client.rpc('wire_update_credits_person', {
+    p_id: id,
+    p_name: patch.name === undefined ? null : String(patch.name).trim(),
+    p_role_label: patch.role === undefined ? null : String(patch.role).trim(),
+    p_role_color: patch.color === undefined ? null : String(patch.color).trim(),
+    p_blurb: patch.blurb === undefined ? null : String(patch.blurb).trim(),
+    p_portrait_url: patch.portraitUrl === undefined ? null : String(patch.portraitUrl).trim(),
+    p_sort_order: patch.order === undefined ? null : Number(patch.order)
+  });
+
+  if (error) return { ok: false, message: describe(error, 'credits entry') };
+  return { ok: true, message: 'Saved.' };
+}
+
+/**
+ * Remove someone from the Credits page. Only the Owner can reach this: the
+ * table has no delete policy at all, and the RPC checks is_owner() before it
+ * runs. Removing an entry deletes nobody's account and revokes no access — the
+ * two were never connected.
+ *
+ * @param {string} id
+ */
+export async function removePerson(id) {
+  if (config.demoMode) {
+    const rows = demoRoster();
+    const next = rows.filter((row) => row.id !== id);
+    if (next.length === rows.length) {
+      return { ok: false, message: 'That entry is no longer on the page.' };
+    }
+    writeDemoRoster(next);
+    return { ok: true, message: 'Removed from the Credits page.' };
+  }
+
+  const client = getSupabase();
+  if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
+
+  const { error } = await client.rpc('wire_remove_credits_person', { p_id: id });
+  if (error) return { ok: false, message: describe(error, 'credits entry') };
+  return { ok: true, message: 'Removed from the Credits page.' };
+}
+
+/**
+ * Approve or reject a submitted portrait on a staffer's row.
+ *
+ * This is about IDENTITY, not the Credits page: it controls whether a photo may
+ * appear next to that person's bylines anywhere on the site. It stays in the
+ * Staff tab.
+ *
  * @param {string} staffId
  * @param {'approved'|'rejected'|'none'} status
  */
@@ -143,27 +286,6 @@ export async function setPortraitStatus(staffId, status) {
           ? 'Portrait rejected. It stays hidden until a new one is approved.'
           : 'Portrait cleared.'
   };
-}
-
-/**
- * Update one row of the credits roster.
- * @param {string} staffId
- * @param {{visible: boolean, blurb: string, order: number, permissions: object}} patch
- */
-export async function setCredits(staffId, patch) {
-  const client = getSupabase();
-  if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
-
-  const { error } = await client.rpc('wire_set_credits', {
-    p_staff_id: staffId,
-    p_visible: patch.visible,
-    p_blurb: patch.blurb,
-    p_order: patch.order,
-    p_permissions: patch.permissions || {}
-  });
-
-  if (error) return { ok: false, message: describe(error, 'credits entry') };
-  return { ok: true, message: 'Credits entry saved.' };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -210,57 +332,89 @@ export async function assignPortrait(staffId, url) {
   };
 }
 
-/** Turn a Postgres error into something a newsroom owner can act on. */
-function describe(error, what) {
-  const text = error?.message || '';
-  if (error?.code === '42883' || /wire_set_(portrait_status|credits)/.test(text)) {
-    return 'The newsroom server is missing the credits tables. Run supabase/005_portraits_and_credits.sql in the Supabase SQL editor.';
-  }
-  if (/not on the staff roster/.test(text)) {
-    return 'Only someone on the staff roster can do that.';
-  }
-  return `Could not save the ${what}: ${text || 'unknown error'}`;
-}
+const DEMO_KEY = 'wire.credits.demo.v1';
 
 /**
- * Demo roster, so the credits page is never empty while previewing offline.
- * Mirrors the seed's staff so the page looks believable in demo mode.
+ * Read the demo roster out of localStorage, seeding it on first run.
+ *
+ * WHY THIS IS A STORE AND NOT A CONSTANT
+ * `demoRoster()` used to return a hardcoded array. `addPerson()` returned a
+ * fabricated object without ever storing it, so the next read rebuilt the same
+ * four names and every edit made in demo mode vanished on refresh. The Owner
+ * could not try the editor at all.
+ *
+ * Same contract as the Postgres path: read returns the list, writes persist,
+ * and a corrupt payload falls back to the seed rather than throwing.
+ *
+ * @returns {Array<object>}
  */
 export function demoRoster() {
-  return [
+  const fallback = [
     {
       id: 'demo-owner',
       name: 'The Owner',
-      role: 'Owner',
+      role_label: 'Owner',
+      role_color: '#8c1d11',
+      blurb: 'Sets the line, and answers for it.',
       portrait_url: null,
-      credits_blurb: 'Editor-in-chief. Sets the line, and answers for it.',
-      credits_order: 1
+      sort_order: 1
     },
     {
       id: 'demo-1',
       name: 'Amara K.',
-      role: 'Senior Reporter',
+      role_label: 'Senior Reporter',
+      role_color: '#1d4ed8',
+      blurb: 'Covers local government and civic affairs.',
       portrait_url: null,
-      credits_blurb: 'Covers local government and civic affairs.',
-      credits_order: 10
+      sort_order: 10
     },
     {
       id: 'demo-2',
       name: 'Brian O.',
-      role: 'Sports Correspondent',
+      role_label: 'Sports Correspondent',
+      role_color: '#047857',
+      blurb: 'Football, athletics, and the people who fund them.',
       portrait_url: null,
-      credits_blurb: 'Football, athletics, and the people who fund them.',
-      credits_order: 20
+      sort_order: 20
     },
     {
       id: 'demo-3',
       name: 'Lilian W.',
-      role: 'Photo Editor',
+      role_label: 'Photo Editor',
+      role_color: '#b45309',
+      blurb: 'Runs the picture desk and the gallery.',
       portrait_url: null,
-      credits_blurb: 'Runs the picture desk and the gallery.',
-      credits_order: 30
+      sort_order: 30
     }
   ];
+
+  let rows;
+  try {
+    const raw = window.localStorage.getItem(DEMO_KEY);
+    rows = raw ? JSON.parse(raw) : fallback;
+  } catch {
+    rows = fallback;
+  }
+
+  if (!Array.isArray(rows)) rows = fallback;
+
+  return [...rows].sort(
+    (a, b) => (a.sort_order ?? 100) - (b.sort_order ?? 100) || String(a.name).localeCompare(String(b.name))
+  );
+}
+
+/** @param {Array<object>} rows */
+function writeDemoRoster(rows) {
+  try {
+    window.localStorage.setItem(DEMO_KEY, JSON.stringify(rows));
+  } catch {
+    /* private mode / quota: the edit still applies to this page view */
+  }
+}
+
+/** Highest sort_order in use, so a new entry lands last. */
+function nextDemoOrder(rows) {
+  return rows.reduce((max, row) => Math.max(max, Number(row.sort_order) || 0), 0) + 10;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -442,16 +596,13 @@ function emptyState() {
 }
 
 function template(people) {
-  const editors = people.filter((p) => p.role !== 'Owner').length;
-
   return `
     <div class="mx-auto max-w-4xl">
       <header class="mb-8 text-center">
         <p class="eyebrow">About the newsroom</p>
         <h1 class="font-headline text-3xl font-bold sm:text-4xl">Credits</h1>
         <p class="rule-soft mx-auto mt-3 max-w-2xl text-sm ink-muted">
-          ${people.length} ${people.length === 1 ? 'person' : 'people'} make
-          The Wire${editors ? `, ${editors} reporting and editing for it` : ''}.
+          ${people.length} ${people.length === 1 ? 'person makes' : 'people make'} The Wire.
         </p>
       </header>
 
@@ -462,8 +613,59 @@ function template(people) {
   `;
 }
 
+/**
+ * Normalise an Owner-supplied colour to `#rrggbb`, or null when it is not one.
+ *
+ * The value reaches an inline `style` attribute, so it has to be validated
+ * rather than escaped. Strict by design: six hex digits and nothing else. A role
+ * colour is a choice, not a document, so there is nothing to gain from accepting
+ * rgb()/hsl()/named colours and a lot to lose from accepting arbitrary CSS.
+ *
+ * @param {unknown} value
+ * @returns {string|null} e.g. "#1d4ed8"
+ */
+export function normaliseColour(value) {
+  const raw = String(value ?? '').trim();
+  const hex = raw.startsWith('#') ? raw.slice(1) : raw;
+  if (/^[0-9a-f]{6}$/i.test(hex)) return `#${hex.toLowerCase()}`;
+  if (/^[0-9a-f]{3}$/i.test(hex)) {
+    // Expand #abc into #aabbcc so downstream only ever sees six digits.
+    return `#${hex
+      .toLowerCase()
+      .split('')
+      .map((c) => c + c)
+      .join('')}`;
+  }
+  return null;
+}
+
+/**
+ * A legible text colour for a role chip, given its background.
+ *
+ * A role colour is free and the Owner may pick black or white, so the label
+ * cannot always be light. Relative luminance decides it (WCAG 2.1), because a
+ * contrast checker would be overkill for a badge and this is the whole rule.
+ *
+ * @param {string} hex `#rrggbb`
+ * @returns {string} `#ffffff` or `#111111`
+ */
+export function readableOn(hex) {
+  const clean = normaliseColour(hex);
+  if (!clean) return '#ffffff';
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const channel = parseInt(clean.slice(i, i + 2), 16) / 255;
+    return channel <= 0.03928
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  // 0.179 is the crossover point between the two contrast ratios on white/black.
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.179 ? '#111111' : '#ffffff';
+}
+
 function card(person) {
   const portrait = safeUrl(person.portrait_url);
+  const colour = normaliseColour(person.role_color);
+  const role = String(person.role_label || 'Contributor').trim();
 
   return `
     <li class="panel-raised flex flex-col items-center p-5 text-center">
@@ -483,12 +685,17 @@ function card(person) {
              </span>`
       }
       <h2 class="mt-3 font-headline text-lg font-bold">${escapeHtml(person.name || 'Staff member')}</h2>
-      <p class="mt-0.5 text-[0.6875rem] font-bold tracking-[0.12em] uppercase text-[var(--color-newsred)]">
-        ${escapeHtml(person.role || 'Contributor')}
-      </p>
+      <p
+        class="mt-1.5 inline-block rounded-full px-2.5 py-1 text-[0.6875rem] font-bold tracking-[0.12em] uppercase"
+        style="${
+          colour
+            ? `background:${colour};color:${readableOn(colour)}`
+            : 'background:var(--color-newsred);color:#ffffff'
+        }"
+      >${escapeHtml(role)}</p>
       ${
-        person.credits_blurb
-          ? `<p class="mt-2 text-sm ink-muted">${escapeHtml(person.credits_blurb)}</p>`
+        person.blurb
+          ? `<p class="mt-2 text-sm ink-muted">${escapeHtml(person.blurb)}</p>`
           : ''
       }
     </li>

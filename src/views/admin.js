@@ -39,12 +39,15 @@ import * as push from '../lib/push.js';
 import { uploadImage, bindImagePicker } from '../lib/upload.js';
 import {
   listCredits,
-  listRoster,
-  setPortraitStatus,
+  listCreditsForOwner,
+  addPerson,
+  updatePerson,
+  removePerson,
   assignPortrait,
   primePortraits,
   isCreditsMigrationMissing,
-  setCredits
+  normaliseColour,
+  readableOn
 } from '../lib/credits.js';
 import {
   escapeHtml,
@@ -1899,77 +1902,105 @@ async function savePasswordFromForm() {
 
 /** Every workspace tab: label, icon, renderer. */
 /* -------------------------------------------------------------------------- */
-/* Tab — Credits (public roster)                                               */
+/* Tab - Credits (public page)                                                  */
 /* -------------------------------------------------------------------------- */
 
-/** Capability flags the Owner can grant an editor. Kept in one place so the
- *  labels here and the booleans written to the database cannot drift. */
-const CAPABILITIES = [
-  { key: 'write', label: 'Write dispatches', icon: 'fa-pen' },
-  { key: 'edit', label: 'Edit own stories', icon: 'fa-pen-to-square' },
-  { key: 'publish', label: 'Publish without review', icon: 'fa-upload' },
-  { key: 'broadcast', label: 'Send broadcasts', icon: 'fa-paper-plane' },
-  { key: 'assign', label: 'Assign stories', icon: 'fa-clipboard-list' },
-  { key: 'manage_media', label: 'Manage media', icon: 'fa-images' }
-];
-
 /**
- * Roster rows are fetched asynchronously, so keep the latest result here and
- * repaint when it lands.
+ * Rows load asynchronously, so the latest fetch is kept here and the tab
+ * repainted when it lands. Named `creditsPeople` rather than the old
+ * `creditsRoster` because it no longer mirrors the staff roster: these are
+ * hand-picked entries, most of which have no account at all.
  */
-let creditsRoster = null;
+let creditsPeople = null;
 
 /**
- * Tab renderers return an HTML string — `paintActiveTab` assigns the result to
- * `innerHTML`. This one has an async second phase, so it returns the loading
- * placeholder and fills itself in when the roster arrives.
+ * Re-read the Credits page from the database.
+ *
+ * Every write goes through here so the Owner never sees a card the database
+ * has already forgotten. A failure returns the previous list rather than
+ * blanking the tab, because a network blip is not a reason to make the Owner
+ * think their whole page was deleted.
+ *
+ * @returns {Promise<Array>}
+ */
+async function refreshCreditsPeople() {
+  try {
+    creditsPeople = await listCreditsForOwner();
+  } catch (error) {
+    console.error('[credits] refresh failed', error);
+  }
+  return creditsPeople || [];
+}
+
+/**
+ * The Credits page as the Owner edits it.
+ *
+ * This tab is OWNER-ONLY. The page itself is a curated list of people, not a
+ * roster of accounts, and the whole point of the redesign is that only the Owner
+ * decides who appears. `TABS` enforces that client-side and every write RPC in
+ * supabase/009_credits_page.sql re-checks `is_owner()` server-side, so the
+ * restriction survives a leaked anon key.
+ *
+ * Rows load asynchronously, so it returns a loading placeholder and fills itself
+ * in when the page arrives.
  */
 function renderCreditsTab() {
   const body = byId('admin-tab-body');
   if (!body) return '';
 
-  // Painting is immediate on a cached roster, async only the first time.
-  if (creditsRoster) return creditsPanel(creditsRoster);
+  // Guard the live session, not a cached value: someone signed in before a
+  // demotion must not keep reading this tab.
+  if (!isOwner()) {
+    return emptyState('Only the Owner can edit the Credits page.', 'fa-lock');
+  }
 
-  listRoster().then((people) => {
-    creditsRoster = people;
+  if (creditsPeople) return creditsPanel(creditsPeople);
+
+  listCreditsForOwner().then((people) => {
+    creditsPeople = people;
     if (!body.isConnected || body.dataset.tab !== 'credits') return;
     body.innerHTML = creditsPanel(people);
   });
 
   return `<div class="panel-sunken p-10 text-center">
     <i class="fa-solid fa-circle-notch spin-slow ink-muted text-xl" aria-hidden="true"></i>
-    <p class="ink-muted mt-3 text-sm">Loading the staff roster…</p>
+    <p class="ink-muted mt-3 text-sm">Loading the Credits page…</p>
   </div>`;
 }
 
-function creditsPanel(people) {
-  const pending = people.filter((p) => p.portrait_status === 'pending');
-  const listed = people.filter((p) => p.credits_visible && p.portrait_status === 'approved');
+/** Colour a new person starts from, so the picker is never empty. */
+const DEFAULT_ROLE_COLOR = '#c8102e';
 
+/**
+ * Render the Credits editor: an "add someone" form plus one card per person.
+ *
+ * @param {Array<object>} people
+ */
+function creditsPanel(people) {
   return `
     <div class="space-y-5">
       ${panelHeader(
         'Credits page',
-        `${listed.length} of ${people.length} on the public roster` +
-          (pending.length
-            ? ` · ${pending.length} portrait${pending.length === 1 ? '' : 's'} awaiting your approval`
-            : ''),
+        `${people.length} ${people.length === 1 ? 'person' : 'people'} listed` +
+          ' · only people you add here appear on the page',
         `<a class="btn btn-ghost" href="#credits" data-nav="credits">
            <i class="fa-solid fa-eye" aria-hidden="true"></i> Preview page
          </a>`
       )}
 
       <p class="panel-sunken p-4 text-xs ink-muted">
-        Someone appears on the public Credits page only when they are
-        <strong>listed</strong> <em>and</em> their portrait is
-        <strong>approved</strong>. Until both are true the page shows nothing for
-        them, and their bylines keep the plain text fallback.
+        <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+        This page is a list of <strong>people</strong>, not of accounts. Adding
+        someone here creates no login and grants no access — it only puts their
+        name, photo and role on the public page. The role is free text, so you can
+        write anything you like, and each role carries its own colour.
       </p>
+
+      ${creditsAddForm(people)}
 
       ${
         people.length
-          ? `<ul class="space-y-4">${people.map(creditsRow).join('')}</ul>`
+          ? `<ul class="space-y-4">${people.map(creditsPersonCard).join('')}</ul>`
           : isCreditsMigrationMissing()
             ? `<div class="panel-raised p-6 text-sm">
                  <p class="flex items-center gap-2 font-bold">
@@ -1977,133 +2008,229 @@ function creditsPanel(people) {
                    Database migration not applied yet
                  </p>
                  <p class="ink-muted mt-2">
-                   The credits columns do not exist in your Supabase project, so the
-                   roster cannot be read or saved. Run
-                   <code>supabase/005_portraits_and_credits.sql</code> in the Supabase
-                   SQL Editor, then reopen this tab.
+                   The Credits page table does not exist in your Supabase project, so
+                   it cannot be read or saved. Run
+                   <code>supabase/009_credits_page.sql</code> in the Supabase SQL
+                   Editor, then reopen this tab.
                  </p>
                </div>`
-            : emptyState('No staff records yet. Add someone from the Staff tab first.', 'fa-users')
+            : emptyState(
+                'Nobody is on the Credits page yet. Add the first person above.',
+                'fa-id-badge'
+              )
       }
     </div>
   `;
 }
 
-function creditsRow(person) {
+/**
+ * One person's card: photo, name, free-text role with its colour, blurb, order.
+ *
+ * The role is free text rather than a dropdown of staff roles on purpose: a
+ * credits page credits contributors, and contributors are not all accounts.
+ * Whatever the Owner types is what appears.
+ *
+ * @param {{id: string, name: string, role_label: string, role_color: string,
+ *          blurb: string, portrait_url: string, sort_order: number}} person
+ */
+function creditsPersonCard(person) {
   const id = escapeHtml(person.id || '');
-  const portrait = safeUrl(person.portrait_url);
-  const status = String(person.portrait_status || 'none');
-  const listed = Boolean(person.credits_visible);
-  const perms =
-    person.permissions && typeof person.permissions === 'object' ? person.permissions : {};
-  const order = Number(person.credits_order);
-  const notListedReason =
-    listed || status === 'approved' ? '' : 'listed, but the portrait is not approved yet';
+  const colour = normaliseColour(person.role_color) || DEFAULT_ROLE_COLOR;
+  const order = Number(person.sort_order) || 100;
+  const name = escapeHtml(person.name || 'Unnamed');
 
   return `
     <li class="panel-raised p-4" data-credits-row="${id}">
-      <div class="flex flex-wrap items-start gap-4">
-        <div class="relative shrink-0">
-          ${
-            portrait
-              ? `<img class="byline-sticker" src="${escapeHtml(portrait)}" alt=""
-                   width="96" height="96" loading="lazy" decoding="async" />`
-              : `<span class="byline-sticker byline-sticker-empty" aria-hidden="true">
-                   <i class="fa-solid fa-user"></i>
-                 </span>`
-          }
-          ${portraitBadge(status)}
-        </div>
+      <form class="space-y-3" data-credits-form="${id}" novalidate>
+        <div class="flex items-start gap-3">
+          ${avatar(person, 56)}
 
-        <div class="min-w-0 flex-1 space-y-3">
-          <div class="flex flex-wrap items-center gap-2">
-            <h3 class="font-headline text-base font-bold">
-              ${escapeHtml(person.name || 'Unnamed staffer')}
-            </h3>
-            <span class="badge badge-neutral">${escapeHtml(person.role || 'Contributor')}</span>
-            ${listed && status === 'approved' ? '<span class="badge badge-emerald">On the page</span>' : ''}
+          <div class="min-w-0 flex-1">
+            <label class="field-label" for="credits-name-${id}">Name</label>
+            <input id="credits-name-${id}" class="field" type="text" maxlength="80"
+              data-credits-name value="${name}" />
           </div>
 
-          <form id="credits-form-${id}" class="space-y-3" data-credits-form="${id}">
-            <div>
-              <label class="field-label" for="credits-blurb-${id}">Credits blurb</label>
-              <textarea id="credits-blurb-${id}" class="field" rows="2" maxlength="220"
-                placeholder="One line about what they do at The Wire."
-                data-credits-blurb>${escapeHtml(person.credits_blurb || '')}</textarea>
-            </div>
-
-            <div class="flex flex-wrap items-end gap-4">
-              <div class="w-28">
-                <label class="field-label" for="credits-order-${id}">Order</label>
-                <input id="credits-order-${id}" class="field" type="number" min="1" max="999"
-                  value="${order > 0 ? order : 100}" data-credits-order />
-              </div>
-              <label class="flex items-center gap-2 pb-2.5 text-xs font-semibold">
-                <input type="checkbox" class="checkbox" data-credits-visible ${listed ? 'checked' : ''} />
-                Show on the Credits page
-              </label>
-            </div>
-
-            <fieldset class="border-soft rounded p-3">
-              <legend class="px-1 text-[0.6875rem] font-bold tracking-[0.12em] uppercase">
-                Permissions
-              </legend>
-              <div class="flex flex-wrap gap-x-4 gap-y-2">
-                ${CAPABILITIES.map(
-                  (cap) => `
-                  <label class="flex items-center gap-1.5 text-xs">
-                    <input type="checkbox" class="checkbox" data-credits-perm="${cap.key}"
-                      ${perms[cap.key] ? 'checked' : ''} />
-                    <i class="fa-solid ${cap.icon} ink-muted" aria-hidden="true"></i>
-                    ${escapeHtml(cap.label)}
-                  </label>`
-                ).join('')}
-              </div>
-            </fieldset>
-
-            ${
-              notListedReason
-                ? `<p class="text-[0.6875rem] ink-muted">
-                     <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
-                     Not shown: ${escapeHtml(notListedReason)}.
-                   </p>`
-                : ''
-            }
-
-            <div class="flex flex-wrap gap-2 pt-1">
-              <button type="submit" class="btn btn-accent">
-                <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save
-              </button>
-              ${
-                portrait
-                  ? status === 'approved'
-                    ? `<button type="button" class="btn btn-ghost" data-action="credits-portrait"
-                        data-id="${id}" data-status="rejected">Reject portrait</button>`
-                    : `<button type="button" class="btn btn-accent" data-action="credits-portrait"
-                        data-id="${id}" data-status="approved">Approve portrait</button>`
-                  : `<span class="badge badge-amber">
-                       <i class="fa-solid fa-camera" aria-hidden="true"></i> No portrait uploaded
-                     </span>`
-              }
-            </div>
-          </form>
+          <button type="button" class="btn btn-ghost shrink-0 text-rose-600"
+            data-action="credits-remove" data-id="${id}"
+            aria-label="Remove ${name} from the Credits page">
+            <i class="fa-solid fa-trash" aria-hidden="true"></i>
+          </button>
         </div>
-      </div>
+
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label class="field-label" for="credits-role-${id}">Role</label>
+            <input id="credits-role-${id}" class="field" type="text" maxlength="60"
+              data-credits-role value="${escapeHtml(person.role_label || '')}" />
+          </div>
+          <div>
+            <label class="field-label" for="credits-order-${id}">Order</label>
+            <input id="credits-order-${id}" class="field" type="number" min="1"
+              max="999" data-credits-order value="${order > 0 ? order : 100}" />
+          </div>
+        </div>
+
+        <div>
+          <label class="field-label" for="credits-blurb-${id}">Note (optional)</label>
+          <textarea id="credits-blurb-${id}" class="field" rows="2" maxlength="220"
+            data-credits-blurb>${escapeHtml(person.blurb || '')}</textarea>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <input id="credits-color-${id}" type="color"
+            class="h-10 w-12 shrink-0 cursor-pointer rounded-lg border
+              border-ink/20 bg-transparent p-1"
+            data-credits-color value="${colour}"
+            aria-label="Role colour for ${name}" />
+
+          <span class="badge" style="background:${colour};color:${readableOn(colour)}">
+            ${escapeHtml(person.role_label || 'Contributor')}
+          </span>
+
+          <button type="button" class="btn btn-ghost"
+            data-action="credits-copy-colour" data-target="credits-color-${id}"
+            data-source="">
+            <i class="fa-solid fa-copy" aria-hidden="true"></i> Copy role colour
+          </button>
+        </div>
+
+        <div class="pt-1">
+          ${
+            person.portrait_url
+              ? `<button type="button" class="btn btn-ghost"
+                  data-action="credits-clear-photo" data-id="${id}">
+                  <i class="fa-solid fa-image-portrait" aria-hidden="true"></i>
+                  Remove photo
+                </button>`
+              : `<label class="btn btn-ghost cursor-pointer">
+                  <i class="fa-solid fa-camera" aria-hidden="true"></i> Add photo
+                  <input type="file" class="sr-only" data-credits-photo
+                    accept="image/jpeg,image/png,image/webp" />
+                </label>`
+          }
+        </div>
+
+        <button type="submit" class="btn btn-accent">
+          <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save
+        </button>
+      </form>
     </li>
   `;
 }
 
-function portraitBadge(status) {
-  const map = {
-    approved: 'badge-emerald',
-    pending: 'badge-amber',
-    rejected: 'badge-neutral'
-  };
-  const cls = map[status];
-  if (!cls) return '';
-  return `<span class="badge ${cls} absolute -bottom-1 -right-1" aria-hidden="true">
-    <i class="fa-solid fa-check"></i>
-  </span>`;
+/**
+ * Circular avatar for a Credits card, falling back to initials.
+ *
+ * `safeUrl` rejects anything that is not an http(s) or data image, so a hostile
+ * `portrait_url` cannot become a javascript: link.
+ *
+ * @param {{name: string, portrait_url: string}} person
+ * @param {number} size  rendered edge in px
+ */
+function avatar(person, size) {
+  const url = safeUrl(person.portrait_url);
+  const style = `width:${size}px;height:${size}px`;
+
+  if (url) {
+    return `<img src="${url}" alt="${escapeHtml(person.name || '')}" loading="lazy"
+      class="shrink-0 rounded-full object-cover" style="${style}" />`;
+  }
+
+  return `<span aria-hidden="true"
+    class="grid shrink-0 place-items-center rounded-full bg-ink/10 font-black ink-muted"
+    style="${style}">${escapeHtml(initialsOf(person.name))}</span>`;
+}
+
+/** First letters of the first and last name, e.g. "Amina Mohamed" -> "AM". */
+function initialsOf(name) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+
+/**
+ * The "Add new person" form.
+ *
+ * A photo is optional — plenty of contributors deserve a credit without a
+ * portrait, and the card falls back to their initials. Name and role are
+ * required, because a nameless card on a credits page is worse than no card.
+ *
+ * @param {Array<object>} people  used to offer existing roles as suggestions
+ */
+function creditsAddForm(people) {
+  const used = [...new Set(people.map((p) => p.role_label).filter(Boolean))];
+
+  return `
+    <form id="credits-add-form" class="panel-raised space-y-4 p-4" novalidate>
+      <div class="flex items-center gap-2">
+        <i class="fa-solid fa-user-plus ink-accent" aria-hidden="true"></i>
+        <h3 class="text-sm font-black tracking-tight">Add new person</h3>
+      </div>
+
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label class="field-label" for="credits-add-name">Name</label>
+          <input id="credits-add-name" class="field" type="text" maxlength="80"
+            placeholder="Amina Mohamed" required />
+        </div>
+        <div>
+          <label class="field-label" for="credits-add-role">Role</label>
+          <input id="credits-add-role" class="field" type="text" maxlength="60"
+            list="credits-role-suggestions" placeholder="Photographer" required />
+          <datalist id="credits-role-suggestions">
+            ${used.map((role) => `<option value="${escapeHtml(role)}"></option>`).join('')}
+          </datalist>
+          <p class="mt-1 text-[0.6875rem] ink-muted">
+            Any wording you like. It does not have to match a staff role.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label class="field-label" for="credits-add-photo">Photo</label>
+          <input id="credits-add-photo" class="field" type="file"
+            accept="image/jpeg,image/png,image/webp" />
+        </div>
+        <div>
+          <label class="field-label" for="credits-add-color">Role colour</label>
+          <div class="flex items-center gap-2">
+            <input id="credits-add-color" type="color"
+              class="h-11 w-14 shrink-0 cursor-pointer rounded-lg border
+                border-ink/20 bg-transparent p-1"
+              value="${DEFAULT_ROLE_COLOR}" />
+            <button type="button" class="btn btn-ghost shrink-0"
+              data-action="credits-copy-colour" data-target="credits-add-color"
+              data-source="">
+              <i class="fa-solid fa-copy" aria-hidden="true"></i> Copy role colour
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <details class="text-xs">
+        <summary class="cursor-pointer ink-muted">Or paste a photo URL</summary>
+        <input id="credits-add-url" class="field mt-2" type="url"
+          placeholder="https://…" />
+      </details>
+
+      <div>
+        <label class="field-label" for="credits-add-blurb">One line about them</label>
+        <input id="credits-add-blurb" class="field" type="text" maxlength="300"
+          placeholder="Covers local government and civic affairs." />
+      </div>
+
+      <button type="submit" class="btn btn-accent w-full sm:w-auto">
+        <i class="fa-solid fa-plus" aria-hidden="true"></i> Add to Credits page
+      </button>
+    </form>
+  `;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2236,7 +2363,11 @@ const TABS = [
   { id: 'broadcasts', label: 'Broadcasts', icon: 'fa-paper-plane', render: renderBroadcastsTab, minRole: 'Board Manager' },
   { id: 'curation', label: 'Curation', icon: 'fa-star', render: renderCurationTab, minRole: 'Board Manager' },
   { id: 'staff', label: 'Staff', icon: 'fa-users', render: renderStaffTab, minRole: 'Board Manager' },
-  { id: 'credits', label: 'Credits', icon: 'fa-id-badge', render: renderCreditsTab, minRole: 'Board Manager' },
+  // Owner only. The Credits page is a hand-curated public page, not a view of
+  // the staff roster: anybody the Owner chooses to list appears, and nobody
+  // listed by an account gets in automatically. A Board Manager must not be
+  // able to add or remove names from it.
+  { id: 'credits', label: 'Credits', icon: 'fa-id-badge', render: renderCreditsTab, ownerOnly: true },
   { id: 'changelog', label: 'Changelog', icon: 'fa-clock-rotate-left', render: renderChangelogTab, ownerOnly: true },
   { id: 'branding', label: 'Branding', icon: 'fa-font', render: renderBrandingTab, ownerOnly: true },
   { id: 'media', label: 'Media', icon: 'fa-images', render: renderMediaTab, minRole: 'Writer' },
@@ -2514,9 +2645,12 @@ function attachAdminListeners() {
       event.preventDefault();
       guard(() => savePasswordFromForm(form));
     } else if (form.dataset.creditsForm) {
-      // One form per person on the Credits tab, identified by the staff id.
+      // One form per person on the Credits tab, identified by the row id.
       event.preventDefault();
       guard(() => saveCreditsFromForm(form));
+    } else if (form.id === 'credits-add-form') {
+      event.preventDefault();
+      guard(() => addCreditsPersonFromForm(form));
     }
   });
 
@@ -2667,7 +2801,7 @@ async function saveStaffFromForm(form) {
 
   editingStaffId = null;
   closeDialog('staff-editor');
-  creditsRoster = null;
+  creditsPeople = null;
   paintActiveTab();
 }
 
@@ -2866,49 +3000,134 @@ async function saveBrandingFromForm() {
 }
 
 /**
- * Persist one person's Credits entry: blurb, position, visibility and the
- * capability flags. Every field is read from the form rather than a cached row
- * so a half-finished edit is never silently discarded.
+ * Persist one person's Credits entry.
+ *
+ * Every field is read off the form rather than a cached row so a half-finished
+ * edit is never silently discarded. The role is free text: whatever the Owner
+ * types is what appears on the page, and the colour travels with it.
+ *
  * @param {HTMLFormElement} form
  */
 async function saveCreditsFromForm(form) {
-  const staffId = form.dataset.creditsForm;
-  if (!staffId) return;
+  const personId = form.dataset.creditsForm;
+  if (!personId) return;
 
-  const blurb = form.querySelector('[data-credits-blurb]')?.value.trim() || '';
-  const orderRaw = Number(form.querySelector('[data-credits-order]')?.value);
-  const order = Number.isFinite(orderRaw) ? Math.min(999, Math.max(1, Math.round(orderRaw))) : 100;
-  const visible = Boolean(form.querySelector('[data-credits-visible]')?.checked);
-
-  const permissions = {};
-  for (const cap of CAPABILITIES) {
-    permissions[cap.key] = Boolean(
-      form.querySelector(`[data-credits-perm="${cap.key}"]`)?.checked
-    );
+  const name = form.querySelector('[data-credits-name]')?.value.trim() || '';
+  if (!name) {
+    showToast('A person needs a name.', { type: 'error' });
+    return;
   }
 
-  // Listing someone whose portrait is not approved would silently do nothing,
-  // because the public view requires both. Say so instead of letting the Owner
-  // wonder why the page did not change.
-  const person = (creditsRoster || []).find((p) => p.id === staffId);
-  const awaitingPortrait = visible && person && person.portrait_status !== 'approved';
+  const orderRaw = Number(form.querySelector('[data-credits-order]')?.value);
+  const order = Number.isFinite(orderRaw)
+    ? Math.min(999, Math.max(1, Math.round(orderRaw)))
+    : 100;
 
-  const result = await setCredits(staffId, { visible, blurb, order, permissions });
+  const result = await updatePerson(personId, {
+    name,
+    role_label: form.querySelector('[data-credits-role]')?.value.trim() || '',
+    role_color: form.querySelector('[data-credits-color]')?.value || '',
+    blurb: form.querySelector('[data-credits-blurb]')?.value.trim() || '',
+    sort_order: order
+  });
+
   if (!result.ok) {
     showToast(result.message, { type: 'error' });
     return;
   }
 
-  showToast(
-    awaitingPortrait
-      ? 'Saved. They stay off the Credits page until their portrait is approved.'
-      : 'Credits entry saved.',
-    { type: awaitingPortrait ? 'info' : 'success' }
-  );
-
-  // Refresh the cached roster so the tab reflects what the database now holds.
-  creditsRoster = await listRoster();
+  showToast(`${name} saved to the Credits page.`, { type: 'success' });
+  await refreshCreditsPeople();
   paintActiveTab();
+}
+
+/**
+ * Add a brand-new person to the Credits page.
+ *
+ * Note what is NOT required here: an account, a username, an e-mail or a staff
+ * role. The Owner types any role they like and picks its colour. That is the
+ * whole point of the page -- it credits contributors, who are not all staff.
+ *
+ * @param {HTMLFormElement} form
+ */
+async function addCreditsPersonFromForm(form) {
+  const name = byId('credits-add-name')?.value.trim() || '';
+  const role = byId('credits-add-role')?.value.trim() || '';
+
+  if (!name || !role) {
+    showToast('A person needs both a name and a role.', { type: 'error' });
+    return;
+  }
+
+  // The file input takes priority over the pasted URL, because it is the
+  // mobile path (a phone camera) and the one people actually use.
+  let portrait = '';
+  const pending = byId('credits-add-photo')?.files?.[0];
+  if (pending) {
+    const busy = showToast('Uploading the photo…', { type: 'info', duration: 0 });
+    try {
+      const { url, isLocal } = await uploadImage(pending);
+      portrait = url;
+      busy.remove();
+      if (isLocal) {
+        showToast('Storage is offline, so the photo stayed in this browser.', {
+          type: 'info'
+        });
+      }
+    } catch (error) {
+      busy.remove();
+      showToast(error.message || 'Photo upload failed.', { type: 'error' });
+      return;
+    }
+  } else {
+    portrait = byId('credits-add-url')?.value.trim() || '';
+  }
+
+  // FIELD NAMES MUST MATCH addPerson().
+  //
+  // This handler used to send { role_label, role_color, portrait_url } while
+  // addPerson() destructures { role, color, portraitUrl }. Every one of the three
+  // came through undefined, so the save silently fell back to "Contributor" with
+  // the default blue and no photo — and the form looked like it had worked.
+  // Same class of bug as the camelCase/snake_case drift, one layer further out.
+  const result = await addPerson({
+    name,
+    role,
+    color: byId('credits-add-color')?.value || '',
+    blurb: byId('credits-add-blurb')?.value.trim() || '',
+    portraitUrl: portrait
+  });
+
+  if (!result.ok) {
+    showToast(result.message, { type: 'error' });
+    return;
+  }
+
+  form.reset();
+  await refreshCreditsPeople();
+  paintActiveTab();
+  showToast(`${name} added to the Credits page.`, { type: 'success' });
+}
+
+/**
+ * Copy a role colour from one person onto another.
+ *
+ * Targets the colour input by id and fires a `change` event so the preview
+ * badge repaints immediately -- without it the picker changes but the badge
+ * keeps showing the old colour until the next save.
+ *
+ * @param {string} sourceId  id of the colour input to read from
+ * @param {string} targetId  id of the colour input to write to
+ */
+function copyRoleColour(sourceId, targetId) {
+  const source = byId(sourceId);
+  const target = byId(targetId);
+  if (!source || !target || source === target) return;
+
+  target.value = normaliseColour(source.value) || DEFAULT_ROLE_COLOR;
+  target.dispatchEvent(new Event('change', { bubbles: true }));
+  target.focus();
+  showToast('Role colour copied.', { type: 'info' });
 }
 
 /**
@@ -3198,17 +3417,72 @@ function handleClick(event) {
       }
       break;
 
-    /* --- credits / portrait approval --- */
-    case 'credits-portrait':
+    /* --- credits --- */
+    // Every one of these writes to public.credits_people through an RPC that
+    // re-checks is_owner() in Postgres, so this client-side gate is a
+    // convenience, not the enforcement.
+    case 'credits-remove':
+      if (askToDelete('person', title)) {
+        guard(async () => {
+          const result = await removePerson(id);
+          if (!result.ok) {
+            showToast(result.message, { type: 'error' });
+            return;
+          }
+          await refreshCreditsPeople();
+          paintActiveTab();
+          showToast('Removed from the Credits page.', { type: 'success' });
+        });
+      }
+      break;
+
+    case 'credits-copy-colour': {
+      // "Copy role colour" lifts a colour off ONE other person onto the row
+      // being edited, which is what makes a newsroom consistent: one colour per
+      // department.
+      //
+      // The source is resolved in this order:
+      //   1. data-source, when the markup names a specific person;
+      //   2. otherwise the first person who is NOT the row being edited.
+      //
+      // Step 2 matters. The fallback used to be unconditionally `people[0]`,
+      // which for a row's own button was frequently that same person -- the
+      // button set the colour to the value it already had, reported success,
+      // and the owner concluded the feature was broken.
+      const targetId = trigger.dataset.target;
+      const explicit = trigger.dataset.source;
+
+      let sourceId = explicit || null;
+      if (!sourceId) {
+        const ownId = creditsPeople?.find(
+          (p) => `credits-color-${p.id}` === targetId
+        )?.id;
+        const other = (creditsPeople || []).find((p) => p.id !== ownId);
+        if (other) sourceId = `credits-color-${other.id}`;
+      }
+
+      if (!sourceId) {
+        showToast(
+          (creditsPeople || []).length
+            ? 'Add a second person first, then copy their role colour.'
+            : 'Add a person first, then copy their role colour.',
+          { type: 'info' }
+        );
+        break;
+      }
+      copyRoleColour(sourceId, targetId);
+      break;
+    }
+
+    case 'credits-clear-photo':
       guard(async () => {
-        const result = await setPortraitStatus(id, status);
+        const result = await updatePerson(id, { portrait_url: '' });
         if (!result.ok) {
           showToast(result.message, { type: 'error' });
           return;
         }
-        creditsRoster = await listRoster();
+        await refreshCreditsPeople();
         paintActiveTab();
-        showToast(result.message, { type: status === 'approved' ? 'success' : 'info' });
       });
       break;
 
