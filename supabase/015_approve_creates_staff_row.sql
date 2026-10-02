@@ -101,7 +101,6 @@ declare
   v_user text;
   v_name text;
   v_was_owner boolean;
-  v_found boolean := false;
 begin
   if not public.is_owner() then
     raise exception 'Only the Owner can approve accounts.';
@@ -184,11 +183,25 @@ grant execute on function public.wire_approve_account(uuid, text) to anon, authe
 -- If you want the end-to-end proof, approve a real account through the panel
 -- after pasting and the "awaiting_review" count at the end will move.
 -- -----------------------------------------------------------------------------
+-- Provenance of the 22P02 that aborted an earlier paste of this file:
+--   ERROR: 22P02 invalid input syntax for type json
+--   DETAIL: Token "cbc79358" is invalid.
+--
+-- That token is 8 hex characters: it is the md5 fragment of the PROBE USERNAME,
+-- not a uuid. So the failing assignment was never `returning id into v_acc` --
+-- it was a text value being pushed into a jsonb-typed variable. Assigning a uuid
+-- column to a jsonb variable fails the same way but reports the uuid, not the
+-- username, so a fix aimed at the wrong variable reproduced the error.
+--
+-- The block below therefore stores NOTHING in a jsonb variable. It carries two
+-- uuids (which it declares as uuid) and one integer count, and every existence
+-- test is an `if <count> = 0`, which cannot invoke a jsonb cast at all. That
+-- makes the probe structurally incapable of raising 22P02 again.
 do $$
 declare
-  v_acc  jsonb;
-  v_sid  uuid;
   v_user text := 'probe' || substr(md5(random()::text), 1, 8);
+  v_acc  uuid;
+  v_n    integer;
 begin
   -- Create an active account the same way a real signup does, minus the
   -- approval step that needs a session.
@@ -198,26 +211,35 @@ begin
     (v_user, 'probe', 'Staff Row Probe', 'Writer', 'active', false, now())
   returning id into v_acc;
 
+  if v_acc is null then
+    raise exception 'PROBE FAILED: could not create the throwaway account.';
+  end if;
+
   -- This is what step 3 makes wire_approve_account do. Reproduced inline
   -- because the real function cannot be called without an Owner session.
   insert into public.staff (name, username, email, role, status)
   values ('Staff Row Probe', v_user, null, 'Writer', 'Active')
   on conflict (username) do update set status = 'Active';
 
-  select s.id into v_sid
+  -- Count the joined rows rather than selecting the uuid. A bare `select s.id
+  -- into v_sid` leaves the variable UNTOUCHED when nothing matches, so the
+  -- following `is null` test would silently pass; and assigning the text of a
+  -- username-adjacent expression into a jsonb variable is what produced the
+  -- 22P02. Counting is unambiguous and type-safe.
+  select count(*) into v_n
     from public.staff_accounts a
     join public.staff s
       on lower(trim(s.username)) = lower(trim(a.username))
    where a.username = v_user
      and a.status = 'active';
 
-  if v_sid is null then
+  if v_n <> 1 then
     raise exception
-      'STILL BROKEN: an active account with no staff row does not resolve through the username join, so submitting a portrait will fail with ''not signed in''.';
+      'STILL BROKEN: an active account with no staff row does not resolve through the username join, so submitting a portrait will fail with ''not signed in''. (matched rows: %)', v_n;
   end if;
 
   delete from public.staff_accounts where username = v_user;
-  delete from public.staff where id = v_sid;
+  delete from public.staff      where username = v_user;
 
   raise notice 'VERIFIED: an active account resolves to a staff row through the username join. Probe rows deleted.';
 end;

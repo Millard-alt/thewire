@@ -64,31 +64,33 @@ grant execute on function public.wire_credits_people_upsert(uuid, text, text, te
 grant execute on function public.wire_credits_people_delete(uuid) to anon;
 grant execute on function public.wire_credits_people_reorder(uuid[]) to anon;
 
--- 4. Prove it from the catalog, rather than trusting that the GRANT ran.
---    A GRANT that reports success but leaves a function unreachable is exactly
---    the failure that produced this bug, so the check reads the real ACL off
---    pg_proc and confirms `anon` is in it for every function above.
+-- 4. Prove it with the built-in privilege test, which is the correct tool.
+--
+--    The previous version of this check read pg_proc.proacl and tested
+--        'anon' = any (proacl::text[])
+--    That can NEVER be true. Each element of the array is a whole aclitem like
+--    'anon=X/postgres', not the bare grantee name, so the comparison was always
+--    false and it printed "BROKEN - anon is missing from the ACL" for all 13
+--    functions while the ACL it printed alongside plainly showed anon=X. The
+--    grants were fine; the verifier was broken. has_function_privilege is the
+--    supported way to ask this question and needs no ACL parsing.
 --
 --    This deliberately does NOT try to SET ROLE anon and call the functions.
 --    A logged-out call would be refused by the authorisation check inside each
 --    body anyway, so it could only ever prove that access is denied, not that
---    the grant is live. Reading the ACL proves the grant itself. The security
---    property that matters is unchanged either way: EXECUTE lets the request
---    reach the function, and the function's own is_staff() / is_owner() check
---    still decides the answer, so nothing is exposed to a logged-out visitor.
---
---    pg_proc.proacl is world-readable, so this SELECT runs as any role. NULL
---    means "no explicit ACL", i.e. default privileges only, which for these
---    functions would NOT include anon after the revokes above.
+--    the grant is live. has_function_privilege answers the grant question
+--    directly. The security property that matters is unchanged either way:
+--    EXECUTE lets the request reach the function, and the function's own
+--    is_staff() / is_owner() check still decides the answer, so nothing is
+--    exposed to a logged-out visitor.
 select
-  p.proname                                                as function_name,
-  p.proacl                                                 as acl,
-  ('anon' = any (coalesce(p.proacl, '{}'::aclitem[])::text[]))  as anon_may_execute,
+  p.proname                                     as function_name,
+  pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE') as anon_may_execute,
   case
-    when p.proacl is null                              then 'NO ACL - default privileges only'
-    when 'anon' = any (coalesce(p.proacl, '{}'::aclitem[])::text[]) then 'OK - anon can reach it'
-    else 'BROKEN - anon is missing from the ACL'
-  end                                                      as verdict
+    when pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
+      then 'OK - anon can reach it'
+    else 'BROKEN - anon lacks EXECUTE'
+  end                                           as verdict
 from pg_proc p
 join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public'
