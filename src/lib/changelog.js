@@ -24,6 +24,7 @@ const SECTION_ICONS = {
   Fixed: 'fa-screwdriver-wrench',
   Security: 'fa-shield-halved',
   'Known limitations': 'fa-circle-info',
+  Applied: 'fa-circle-check',
   'Pending — required before these features work': 'fa-hourglass-half'
 };
 
@@ -33,6 +34,7 @@ const SECTION_ICONS = {
  * rather than disappearing.
  */
 const SECTION_ORDER = [
+  'Applied',
   'Pending — required before these features work',
   'Added',
   'Changed',
@@ -42,6 +44,18 @@ const SECTION_ORDER = [
   'Removed',
   'Known limitations'
 ];
+
+/**
+ * The known-kind part of a section heading, e.g. "Applied" from
+ * "Applied - `017` is live and verified". Section headings are allowed to carry
+ * a trailing qualifier so a release can explain itself, but ordering and icons
+ * must still resolve against the bare kind.
+ */
+function baseTitle(title) {
+  const text = String(title || '').trim();
+  const cut = text.search(/\s+[-\u2013\u2014]\s+/);
+  return (cut === -1 ? text : text.slice(0, cut)).trim();
+}
 
 /**
  * Parse a Keep a Changelog document into releases.
@@ -54,10 +68,18 @@ function parse(markdown) {
 
   let current = null;
   let section = null;
+  // Paragraph tracking for prose lines. A bullet always opens a new entry; an
+  // unindented prose line continues the entry above it unless a blank line came
+  // between them. Local state only: items stay plain strings, because that is
+  // what the renderer and pendingCount() consume.
+  let lastWasBullet = false;
+  let sawBlank = false;
 
   const closeSection = () => {
     if (current && section && section.items.length) current.sections.push(section);
     section = null;
+    lastWasBullet = false;
+    sawBlank = false;
   };
 
   for (const line of lines) {
@@ -84,29 +106,51 @@ function parse(markdown) {
       continue;
     }
 
-    // "- something"  (two spaces = the wrapped continuation of the last item)
+    // "- something"
     const bullet = line.match(/^-\s+(.*)$/);
     if (bullet && section) {
       section.items.push(bullet[1].trim());
+      lastWasBullet = true;
+      sawBlank = false;
       continue;
     }
 
-    // A wrapped continuation line belongs to the bullet above it.
+    // A wrapped continuation line belongs to the item above it. Bullets are
+    // wrapped with two spaces of indent in this file, so this has to be tested
+    // before the prose case below.
     const wrapped = line.match(/^\s{2,}(\S.*)$/);
     if (wrapped && section && section.items.length) {
       section.items[section.items.length - 1] += ` ${wrapped[1].trim()}`;
+      lastWasBullet = false;
       continue;
     }
 
-    if (!line.trim()) closeSection();
+    // Unindented prose inside a section is content in its own right. It used to
+    // be dropped on the floor, which is what silently emptied this changelog.
+    // A blank line starts a new paragraph; consecutive prose lines are joined so
+    // a sentence is one entry rather than a column of ragged fragments.
+    if (section && line.trim()) {
+      const last = section.items.length - 1;
+      if (last >= 0 && !lastWasBullet && !sawBlank) {
+        section.items[last] += ` ${line.trim()}`;
+      } else {
+        section.items.push(line.trim());
+      }
+      lastWasBullet = false;
+      sawBlank = false;
+      continue;
+    }
+
+    // Blank line: remember it so the next prose line opens a fresh paragraph.
+    if (section) sawBlank = true;
   }
 
   closeSection();
 
   for (const release of releases) {
     release.sections.sort((a, b) => {
-      const ai = SECTION_ORDER.indexOf(a.title);
-      const bi = SECTION_ORDER.indexOf(b.title);
+      const ai = SECTION_ORDER.indexOf(baseTitle(a.title));
+      const bi = SECTION_ORDER.indexOf(baseTitle(b.title));
       if (ai === -1 && bi === -1) return a.title.localeCompare(b.title);
       if (ai === -1) return 1;
       if (bi === -1) return -1;
@@ -136,5 +180,5 @@ export function pendingCount() {
 
 /** The icon for a section heading, falling back to a neutral dot. */
 export function sectionIcon(title) {
-  return SECTION_ICONS[title] || 'fa-circle-dot';
+  return SECTION_ICONS[baseTitle(title)] || 'fa-circle-dot';
 }

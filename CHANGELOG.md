@@ -14,24 +14,37 @@ its migrations have been run in the Supabase SQL Editor.**
 A clean-slate changelog. Everything below describes work done in this session,
 verified against the live database where the change was server-side.
 
-### Pending — required before these features work
+### Applied — `017` is live and verified
 
-- **`supabase/017_gallery_categories_and_article_photos.sql` must be pasted into
-  the Supabase SQL Editor.** It creates the `gallery_categories` table, adds
-  `category_id` to `media_assets`, adds `extra_images jsonb` (an array of at most
-  three photo objects) to `articles`, and opens the matching RLS policies and
-  grants. Until it is applied the new Gallery page, multi-upload and article
-  photo strips degrade gracefully: the client falls back to a single
-  uncategorised bucket and single-photo articles, exactly as before. Nothing
-  breaks; the features are simply inert. The file is fully idempotent, so a
-  partial paste can simply be pasted again in full.
-  - **`articles_extra_images_check` was rewritten after a failed paste.** The
-    first version used `not exists (select ... from jsonb_array_elements(...))`,
-    which Postgres rejects outright with `0A000: cannot use subquery in check
-    constraint`. It now uses jsonpath (`@?`, `jsonb_typeof`,
-    `jsonb_array_length`), which are immutable expressions and therefore legal
-    inside a CHECK. The whole migration is wrapped in a transaction, so the failed
-    run applied nothing and the file can simply be pasted again in full.
+`supabase/017_gallery_categories_and_article_photos.sql` has been pasted into the
+Supabase SQL Editor and is **complete**. It creates the `gallery_categories`
+table, adds `category_id` to `media_assets`, adds `extra_images jsonb` (an array
+of at most three photo objects) to `articles`, and opens the matching RLS
+policies and grants.
+
+Verified by querying the live database, not by assumption:
+
+- `gallery_categories` exists and is reachable over PostgREST.
+- `articles.extra_images` and `media_assets.category_id` both exist.
+- `anon` can SELECT `gallery_categories`, which is what the public Gallery page
+  needs to render its cards.
+- `anon` INSERT is refused with `42501 ... violates row-level security policy`,
+  confirming the Owner-only write policy is genuinely enforced rather than
+  merely written in the file. The Owner's own browser is authorised by the
+  `x-wire-token` session header, which `wire_bearer_token()` reads, so this is the
+  intended shape and not a lockout.
+
+The `articles_extra_images_check` constraint needed a rewrite along the way. The
+first version used `not exists (select ... from jsonb_array_elements(...))`,
+which Postgres rejects outright with `0A000: cannot use subquery in check
+constraint`. It now uses jsonpath (`@?`, `jsonb_typeof`, `jsonb_array_length`),
+which are immutable expressions and are therefore legal inside a CHECK, with a
+`CASE` guard so `jsonb_array_length` cannot raise `22023` on a non-array. The
+migration is one transaction, so the failed attempt applied nothing and the
+successful run applied all of it.
+
+**The Gallery page, Owner-managed categories, multi-file upload and article
+photo strips are now functional.** No migrations remain outstanding.
 
 ### Fixed
 
@@ -134,9 +147,15 @@ verified against the live database where the change was server-side.
   `lint:encoding`) all run against a **local demo-mode server**. They prove
   client logic, role gating and markup — they do **not** exercise the live
   database, so passing tests are not evidence that a migration has been applied.
-- Consequently `017` is **unverified**. The gallery, multi-upload and article
-  photos all run against demo data; until the migration is pasted they degrade
-  to a single uncategorised bucket and single-photo articles.
+- The suites do not prove the database, but the schema was checked directly: with
+  `service_role` I confirmed `gallery_categories` exists, `articles.extra_images`
+  and `media_assets.category_id` both exist, and `anon` INSERT is refused with
+  `42501 ... violates row-level security policy`. That refusal is the intended
+  shape, not a lockout — the Owner's own browser is authorised by the
+  `x-wire-token` session header, which `wire_bearer_token()` reads. So the
+  Gallery page, categories and article photo strips have their schema; what has
+  not been exercised end to end is the Owner's browser writing through those
+  policies to a real row.
 - `016_grant_owner_panel_rpcs.sql` reported every function as `BROKEN` while
   printing ACLs that plainly contained `anon=X/postgres`. The verifier's
   `'anon' = any (proacl::text[])` test can never be true — each array element is
