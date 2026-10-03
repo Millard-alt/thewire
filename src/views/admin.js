@@ -59,6 +59,7 @@ import {
   byId,
   openDialog,
   closeDialog,
+  isOpen,
   releaseDialogLocks,
   showToast,
   formatEditionDate
@@ -68,6 +69,12 @@ import {
 let contentFilter = 'all';
 /** Which tab is showing. Not persisted — the workspace always opens on Overview. */
 let activeTab = 'overview';
+
+/**
+ * Which reader view was on screen when the Newsroom Panel was opened. The panel
+ * hides all of them; closeAdmin() brings this one back and leaves the rest hidden.
+ */
+let lastReaderView = 'publication-view';
 /** The article loaded into the editor, or null when creating a new one. */
 let editingArticleId = null;
 /** The staff record loaded into the editor, or null when creating. */
@@ -2898,7 +2905,6 @@ export function openAdmin() {
   }
 
   const host = byId('admin-view');
-  const publication = byId('publication-view');
   if (!host) return false;
 
   if (isMounted) {
@@ -2906,10 +2912,25 @@ export function openAdmin() {
     return true;
   }
 
+  /*
+  Close any viewer/dialog the Owner left open on the public site before the panel
+  mounts. The gallery lightbox is a body-level `.modal-backdrop` at z-index 60 and
+  the panel's own dialogs also live at 60, so a lightbox that survived the switch
+  would sit over the workspace with no way to reach the control that closes it.
+  Closing it here means the panel never has to out-z-index a stale overlay.
+  */
+  if (isOpen('lightbox')) closeDialog('lightbox');
+
   host.innerHTML = shellMarkup();
   host.classList.remove('hidden');
   host.classList.add('admin-mode');
-  publication?.classList.add('hidden');
+  rememberReaderView();
+  // Hide every reader view by class as well as by CSS. The CSS alone only sets
+  // `visibility`, which the smoke test (correctly) does not accept as "hidden",
+  // and an explicit class also stops the views from being measured or painted.
+  for (const id of ['publication-view', 'gallery-view', 'credits-view']) {
+    byId(id)?.classList.add('hidden');
+  }
   document.body.classList.add('admin-active');
   isMounted = true;
 
@@ -2934,6 +2955,25 @@ export function openAdmin() {
   return true;
 }
 
+/**
+ * Remember which reader view the Owner was looking at, so closeAdmin() restores
+ * that one instead of always snapping back to the publication view. Without this,
+ * closing the panel after opening it from the gallery dropped them on the front
+ * page — which read as "the gallery closed itself".
+ *
+ * The CSS hides every reader view with `visibility: hidden` while the panel is
+ * mounted, so nothing needs to be removed here; we only need to know which one to
+ * bring back afterwards.
+ */
+function rememberReaderView() {
+  const views = ['gallery-view', 'credits-view', 'publication-view'];
+  lastReaderView =
+    views.find((id) => {
+      const el = byId(id);
+      return el && !el.classList.contains('hidden');
+    }) || 'publication-view';
+}
+
 /** Tear the workspace down and restore the public site. */
 export function closeAdmin() {
   if (!isMounted) return;
@@ -2949,7 +2989,13 @@ export function closeAdmin() {
     host.classList.add('hidden');
     host.classList.remove('admin-mode');
   }
-  byId('publication-view')?.classList.remove('hidden');
+
+  // Restore exactly the view the Owner came from. Every other reader view stays
+  // hidden, so the panel can never leave two views stacked behind it.
+  for (const id of ['publication-view', 'gallery-view', 'credits-view']) {
+    byId(id)?.classList.toggle('hidden', id !== lastReaderView);
+  }
+  lastReaderView = 'publication-view';
   document.body.classList.remove('admin-active');
   window.scrollTo({ top: 0, behavior: 'auto' });
 

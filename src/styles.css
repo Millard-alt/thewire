@@ -906,13 +906,59 @@
    not be reached by any means — the reported "I can't scroll the owner panel".
    ========================================================================== */
 
+/* LAYER LADDER — declared in one place so the numbers cannot drift apart.
+
+     100  .skip-link
+      80  .toast-stack          — toasts stay readable over every dialog
+      60  .modal-backdrop       — EVERY dialog, including the gallery lightbox
+      50  #main-content while   — the Newsroom Panel
+          body.admin-active
+       1  .admin-topbar / .admin-nav (inside the 50 context)
+       0  reader views, page flow
+
+   The panel sits BELOW 60 on purpose. The dialogs the Owner opens from inside the
+   panel are body-level `.modal-backdrop`s, so they must still be able to rise
+   above it. What the panel has to beat is the gallery lightbox, and that is
+   handled two ways: it is raised into its own stacking context at 50 (above all
+   static page flow), AND openAdmin() closes it. Either alone would be enough;
+   together, a stale or late-opening lightbox cannot cover the panel. */
 body.admin-active #main-content {
+  /*
+    `position` + `z-index` are the fix for "the gallery stays on top of the
+    Owner panel". Without them #main-content is `position: static` with no
+    z-index, so it is painted in normal flow BELOW every positioned descendant
+    of <body> — and the lightbox is exactly that (`position: fixed;
+    z-index: 60`). Raising main into its own stacking context at 50 puts the
+    whole panel, including its sticky nav and topbar, above the reader views
+    while leaving body-level dialogs free to cover the panel.
+  */
+  position: relative;
+  z-index: 50;
   max-width: none;
   padding: 0;
   width: 100%;
   margin: 0;
   height: 100dvh;
   overflow: hidden;
+}
+
+/* Belt and braces: even if a lightbox were reopened by a stale handler while the
+   panel is mounted, it must not paint over it. Hiding it outright is safer than
+   relying on a higher z-index, because z-index alone cannot win once the two
+   elements end up in different stacking contexts. */
+body.admin-active #lightbox {
+  display: none !important;
+}
+
+/* The panel owns the whole viewport, so nothing underneath it is clickable.
+   `visibility: hidden` on the reader views additionally stops them being
+   reached by Tab if the panel is ever closed by a path that forgets to
+   re-show exactly one view. */
+body.admin-active #publication-view,
+body.admin-active #gallery-view,
+body.admin-active #credits-view {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 body.admin-active #admin-view {

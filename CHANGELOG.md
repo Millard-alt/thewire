@@ -9,6 +9,42 @@ Migrations are numbered and live in `supabase/`. They are additive and
 idempotent, so re-running one is safe. **A new release is not functional until
 its migrations have been run in the Supabase SQL Editor.**
 
+## [0.9.2] — 2026-10-10
+
+The Newsroom Panel now always paints above the gallery, and closing it puts you
+back on the page you came from.
+
+### Fixed
+
+- **The gallery no longer shows through or over the Owner's Panel.** Opening the
+  panel from the gallery left the gallery visible underneath it, and an open
+  gallery lightbox could paint on top of the panel. `#main-content` had no
+  `position`/`z-index`, so it was painted in normal flow below every positioned
+  descendant of `<body>` — which is exactly what the lightbox is
+  (`position: fixed; z-index: 60`). It is now raised into its own stacking
+  context at `z-index: 50` while the panel is mounted. The panel deliberately
+  sits *below* the dialog layer (60) so the modals the Owner opens from inside
+  the panel can still cover it.
+- **Opening the panel now closes the gallery lightbox and hides every reader
+  view.** `openAdmin()` previously hid only `#publication-view`, so the gallery
+  and credits views stayed visible and bled through. All three are hidden now,
+  and `closeAdmin()` restores the specific view the Owner came from rather than
+  always snapping back to the front page.
+- **The panel is no longer frozen after opening it from the gallery.** The
+  lightbox set `document.body.style.overflow = 'hidden'` as an inline style and
+  never cleared it. Inline styles outrank every stylesheet rule, so the phone
+  rule `body.admin-active { overflow: auto }` could not restore scrolling. The
+  lightbox now goes through `openDialog()`, which counts the lock and toggles a
+  `dialog-locked` *class* that participates in the normal cascade and is
+  released by `releaseDialogLocks()`.
+
+### Changed
+
+- Repaired mojibake in user-visible strings in `src/views/alerts.js` and
+  `src/views/auth.js`: em dashes, an apostrophe and two ellipses had been stored
+  as CP1252-mojibake byte sequences and were rendering as three visible garbage
+  characters each. They are now stored as real UTF-8.
+
 ## [0.9.1] — 2026-10-10
 
 Gallery and credits work for the phone: an image is filed before it is shown, a

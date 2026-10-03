@@ -27,7 +27,13 @@ import { config, describeBackend } from './lib/config.js';
 import { initAuth, onAuthChange, getSession } from './lib/auth.js';
 import * as store from './lib/store.js';
 import { initThemeControls, getActiveTheme } from './lib/theme.js';
-import { initDialogBehaviour, byId, showToast } from './lib/dom.js';
+import {
+  initDialogBehaviour,
+  byId,
+  isOpen,
+  closeDialog,
+  showToast
+} from './lib/dom.js';
 
 import {
   renderMasthead,
@@ -258,13 +264,17 @@ function handleSessionChange(session) {
   }
 }
 
-/** Close a dialog by id, ignoring "not open" cases. */
+/**
+ * Close a dialog by id, ignoring "not open" cases.
+ *
+ * Uses closeDialog() rather than hiding the element by hand: the manual version
+ * left the `dialog-locked` scroll-lock class on <body>, so a closed dialog could
+ * keep the page unscrollable. That inline overflow also outranked the
+ * `body.admin-active { overflow: auto }` phone rule, which is how the Newsroom
+ * Panel ended up mounted but frozen.
+ */
 function closeDialogSafely(id) {
-  const dialog = byId(id);
-  if (dialog && !dialog.classList.contains('hidden')) {
-    dialog.classList.add('hidden');
-    document.body.style.overflow = '';
-  }
+  if (isOpen(id)) closeDialog(id);
 }
 
 /**

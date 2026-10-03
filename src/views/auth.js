@@ -1,5 +1,5 @@
 /* =============================================================================
-   src/views/auth.js â€” LOGIN MODAL + HEADER AUTH SLOT
+   src/views/auth.js — LOGIN MODAL + HEADER AUTH SLOT
    -----------------------------------------------------------------------------
    Two responsibilities:
 
@@ -9,7 +9,7 @@
      2. `renderAuthSlot(session)` swaps the header control. Unauthenticated
         visitors get one clean "Login" button. Authenticated privileged users
         get "Admin Panel" + "Sign Out". This is the ONLY place the header's
-        auth markup is produced â€” there is no static admin link in the HTML.
+        auth markup is produced — there is no static admin link in the HTML.
    ========================================================================== */
 
 import { signIn, signUp, signOut } from '../lib/auth.js';
@@ -191,7 +191,7 @@ export function initAuthModal(callback) {
   });
 
   // The open-Login button is rendered dynamically by renderAuthSlot, so bind
-  // via delegation as well â€” this covers the very first paint.
+  // via delegation as well — this covers the very first paint.
   document.addEventListener('click', (event) => {
     if (event.target.closest('#open-auth')) openAuthModal();
   });
@@ -278,7 +278,7 @@ export function clearAuthMessages() {
 }
 
 /** Put a button into a loading state and disable the whole form. */
-function setFormBusy(form, busy, busyLabel = 'Please waitâ€¦') {
+function setFormBusy(form, busy, busyLabel = 'Please wait…') {
   if (!form) return;
   form.setAttribute('aria-busy', String(busy));
   form.querySelectorAll('input, button').forEach((node) => {
@@ -311,10 +311,10 @@ async function handleSignIn(form) {
     return;
   }
 
-  setFormBusy(form, true, 'Signing inâ€¦');
+  setFormBusy(form, true, 'Signing in…');
   try {
     // The welcome toast and the "open the workspace" decision belong to the
-    // app-level callback, so this handler only reports failures â€” never a
+    // app-level callback, so this handler only reports failures — never a
     // second success message.
     const session = await signIn({ login, password });
     closeDialog('auth-modal');
@@ -382,7 +382,7 @@ async function handleSignUp(form) {
 }
 
 /**
- * Passwords are never sent by e-mail here â€” there is no inbox behind a
+ * Passwords are never sent by e-mail here — there is no inbox behind a
  * username. The Owner resets them from the Staff roster, which also revokes
  * that person's existing sessions.
  */
@@ -390,7 +390,7 @@ function handleForgotPassword() {
   setAuthMessage(
     'info',
     'Passwords are reset by the Owner from the Staff roster in the Newsroom Panel. ' +
-      'Ask the Owner to reset it for you â€” it takes effect immediately.'
+      'Ask the Owner to reset it for you — it takes effect immediately.'
   );
 }
 

@@ -1,5 +1,5 @@
 /* =============================================================================
-   src/views/alerts.js â€” READER NOTIFICATION GATE
+   src/views/alerts.js — READER NOTIFICATION GATE
    -----------------------------------------------------------------------------
    The publication's alerts are opt-in and the browser will only ever ask once,
    from inside a real click. This module owns that conversation so it happens
@@ -130,7 +130,7 @@ function gateMarkup(permission) {
     <div class="space-y-5">
       <p class="text-sm leading-relaxed">
         The Wire only shows a dispatch once alerts are on. Here is how to turn
-        them on â€” this is the last step before your first notification.
+        them on — this is the last step before your first notification.
       </p>
       <ol class="space-y-3">${steps}</ol>
     </div>
@@ -165,7 +165,7 @@ export async function ensureAlertPermission() {
 
   const dialog = byId(GATE_ID);
   if (!dialog) {
-    // No dialog in the DOM â€” ask directly rather than trapping the reader.
+    // No dialog in the DOM — ask directly rather than trapping the reader.
     return (await push.requestPermission()) === 'granted';
   }
 
@@ -315,7 +315,7 @@ export async function initAlerts() {
   const blocker = push.adblockLike();
   if (blocker.stylesBlocked) {
     showToast(
-      'Some of this pageâ€™s styling was blocked by an ad blocker. Allow this ' +
+      'Some of this page’s styling was blocked by an ad blocker. Allow this ' +
         'site, or open The Wire in an Incognito window, to see the full design.',
       { type: 'error', duration: 9000 }
     );

@@ -522,9 +522,24 @@ function openLightbox(id) {
   frame.alt = shot.caption || '';
   caption.textContent = shot.caption || '';
 
-  dialog.classList.remove('hidden');
-  document.body.style.overflow = 'hidden';
-  byId('lightbox-close')?.focus();
+  /*
+  Route the lightbox through openDialog() rather than showing it by hand.
+
+  It used to do `dialog.classList.remove('hidden')` plus an inline
+  `document.body.style.overflow = 'hidden'`. Two problems followed:
+
+    1. Bypassing openDialog() meant the dialog was never counted, so the
+       delegated Escape/Tab-trap handlers could not see it and it never released
+       the scroll lock it had taken. Nothing ever removed that inline style.
+    2. An inline `overflow: hidden` outranks EVERY stylesheet rule. When the
+       Owner then opened the Newsroom Panel from the gallery, the phone rule
+       `body.admin-active { overflow: auto }` could not restore scrolling, so
+       the panel was mounted but frozen and unreachable below the tab strip.
+
+  openDialog() counts the lock and toggles a `dialog-locked` CLASS, which
+  participates in the normal cascade and is cleared by releaseDialogLocks().
+  */
+  openDialog(dialog, { initialFocus: '#lightbox-close' });
 }
 
 /** The lead story block. */
