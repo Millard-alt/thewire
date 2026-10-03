@@ -51,3 +51,4 @@ tmp-*.cjs
 # linter skips them, but they still must not reach the repo.
 tmp-*.png
 tmp-*.jpg
+vite-*.log
