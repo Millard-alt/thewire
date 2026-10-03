@@ -1339,73 +1339,35 @@ button.byline-sticker {
    ========================================================================== */
 
 /* -----------------------------------------------------------------------------
-   Front-page door into the gallery page
+   Category page (level 2 of the gallery)
+
+   A category card used to expand a grid underneath itself. It now navigates: the
+   card is a button that swaps the whole view for a page of that category's
+   photographs, with a Back button. The transition is a short slide-and-fade so
+   the reader reads it as going somewhere rather than as a disclosure opening,
+   and it is entirely under `prefers-reduced-motion: no-preference`.
    -------------------------------------------------------------------------- */
 
-.gallery-door {
-  display: flex;
-  width: 100%;
-  cursor: pointer;
-  align-items: center;
-  gap: 1rem;
-  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-  background: var(--paper-raised, Canvas);
-  padding: 0.75rem 1rem;
-  text-align: left;
-  transition: border-color 160ms ease, transform 160ms ease;
-}
-
-/* Three stacked thumbnails, bleeding off the right edge like a filmstrip. The
-   overflow is clipped on the parent so the strip reads as continuous rather
-   than as three separate squares. */
-.gallery-door__strip {
-  display: flex;
-  flex: 0 0 auto;
-  overflow: hidden;
-  border-radius: 2px;
-}
-
-.gallery-door__img {
-  width: 4.5rem;
-  height: 3.5rem;
-  flex: 0 0 auto;
-  object-fit: cover;
-  border-right: 2px solid var(--paper, Canvas);
-}
-
-.gallery-door__img:last-child {
-  border-right: 0;
-}
-
-.gallery-door__text {
-  /* min-width: 0 alone is not enough in a flex row: the item still lays out at
-     its content width and pushes the button past the viewport. It needs a
-     shrinkable basis AND permission to shrink, otherwise the fixed 4.5rem
-     preview strip plus a long headline overflows a phone by ~33px. */
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-/* Headlines here are tracked-out and uppercased, which leaves them with no
-   obvious break opportunity. Without this a long count line ("12 photographs in
-   4 categories") cannot wrap and re-introduces the same overflow. */
-.gallery-door__text > span:first-child {
-  overflow-wrap: anywhere;
-}
-
-@media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  .gallery-door:hover {
-    transform: translateY(-2px);
-    border-color: var(--accent, currentColor);
+@keyframes galleryPageIn {
+  from {
+    opacity: 0;
+    transform: translateX(2.5rem);
   }
 
-  .gallery-door:hover .gallery-door__img {
-    transform: scale(1.06);
+  to {
+    opacity: 1;
+    transform: translateX(0);
   }
+}
 
-  .gallery-door__img {
-    transition: transform 220ms ease;
+@media (prefers-reduced-motion: no-preference) {
+  .gallery-category-page {
+    animation: galleryPageIn 240ms cubic-bezier(0.2, 0, 0, 1) both;
   }
+}
+
+.gallery-category-page__back {
+  margin-bottom: 0.75rem;
 }
 
 /* -----------------------------------------------------------------------------
@@ -1426,12 +1388,6 @@ button.byline-sticker {
 .gallery-card {
   border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
   background: var(--paper-raised, Canvas);
-}
-
-/* The open card gets the accent rule on its left edge, which is the only cue
-   needed to tell the reader which of several cards is expanded. */
-.gallery-card.is-open {
-  border-left: 3px solid var(--accent, currentColor);
 }
 
 .gallery-card__head {
@@ -1456,20 +1412,24 @@ button.byline-sticker {
   flex: 1 1 auto;
 }
 
+/* The chevron points forward, and nudges on hover: the card navigates. */
 .gallery-card__chevron {
   flex: 0 0 auto;
-  transition: transform 220ms ease;
 }
 
-.gallery-card.is-open .gallery-card__chevron {
-  transform: rotate(180deg);
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .gallery-card__head:hover .gallery-card__chevron {
+    transform: translateX(0.25rem);
+  }
+
+  .gallery-card__chevron {
+    transition: transform 220ms ease;
+  }
 }
 
-.gallery-card__panel {
-  border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
-  padding: 0.75rem;
-}
-
+/* Photographs on a category page. Deliberately a single column on a phone: a
+   two-up grid of 4:3 crops on a 360px screen is ~160px of detail per shot, which
+   is smaller than the thumb you tap to open the lightbox. */
 .gallery-card__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1583,9 +1543,11 @@ button.byline-sticker {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .gallery-door,
+  .gallery-category-page {
+    animation: none;
+  }
+
   .gallery-card__chevron,
-  .gallery-door__img,
   .gallery-card__shot img {
     transition: none;
     transform: none;
@@ -1604,12 +1566,12 @@ button.byline-sticker {
    block and a band can never disagree with the members inside it.
    -------------------------------------------------------------------------- */
 
+/* The band itself is a plain section: no fill, no border, no radius. It used to
+   be a tinted rounded box wrapping every role, which on a phone became one very
+   long coloured column with the cards stacked inside it. */
 .credits-band {
   --band: #c8102e;
-  margin-bottom: 2.5rem;
-  border-radius: 0.875rem;
-  background: color-mix(in srgb, var(--band) 7%, transparent);
-  padding: 0.875rem;
+  margin-bottom: 2rem;
 }
 
 .credits-band:last-child {
@@ -1621,17 +1583,15 @@ button.byline-sticker {
   align-items: center;
   gap: 0.625rem;
   margin-bottom: 0.875rem;
-  padding: 0.25rem 0.25rem 0.625rem;
 }
 
-/* The rail is the band identity: a thick colour stripe in the role's colour,
-   echoing the Discord role chip. */
+/* The rail is the band identity: a short colour stripe on the LEFT of the role
+   name, echoing the Discord role chip. */
 .credits-band__rail {
   flex: 0 0 auto;
-  width: 0.375rem;
+  width: 0.25rem;
   align-self: stretch;
-  min-height: 1.5rem;
-  border-radius: 999px;
+  min-height: 1.125rem;
   background: var(--band);
 }
 
@@ -1644,34 +1604,114 @@ button.byline-sticker {
   color: color-mix(in srgb, var(--band) 72%, var(--color-ink, #111));
 }
 
+/* The count sits on the FAR RIGHT of the row, which is what `margin-left: auto`
+   buys inside a flex container. */
 .credits-band__count {
   margin-left: auto;
   flex: 0 0 auto;
   min-width: 1.5rem;
   padding: 0.0625rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--band) 40%, transparent);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--band) 16%, transparent);
   font-size: 0.6875rem;
   font-weight: 700;
   text-align: center;
   color: color-mix(in srgb, var(--band) 70%, var(--color-ink, #111));
 }
 
-.credits-band__grid {
+/* One / md:two / lg:three, with a 1rem gap. Named on the <ul> rather than reusing
+   the old credits-band__grid so the Owner panel's editor grid cannot inherit it. */
+.credits-grid {
   display: grid;
   gap: 1rem;
   grid-template-columns: 1fr;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-@media (width >= 40rem) {
-  .credits-band__grid {
+@media (width >= 48rem) {
+  .credits-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (width >= 64rem) {
-  .credits-band__grid {
+  .credits-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* --- member card ----------------------------------------------------------- */
+
+/* Sharp corners, thin border, plain background, everything left-aligned. The
+   hover/focus treatment is a hard offset shadow rather than a colour change, so
+   it reads as a pressed key and cannot be missed by a keyboard user. */
+.credits-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--color-neutral-700, #404040);
+  border-radius: 0;
+  background: transparent;
+  transition:
+    box-shadow 120ms ease,
+    border-color 120ms ease;
+}
+
+.credits-card:hover,
+.credits-card:focus-within {
+  border-color: var(--band, var(--color-newsred, #c8102e));
+  box-shadow: 4px 4px 0 0 var(--band, var(--color-newsred, #c8102e));
+}
+
+.credits-card__avatar {
+  flex: 0 0 auto;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 999px;
+  overflow: hidden;
+  object-fit: cover;
+  background: var(--color-neutral-800, #262626);
+}
+
+.credits-card__avatar--empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-neutral-400, #a3a3a3);
+}
+
+.credits-card__body {
+  min-width: 0;
+  text-align: left;
+}
+
+.credits-card__name {
+  font-family: var(--font-headline, inherit);
+  font-size: 1rem;
+  font-weight: 700;
+  text-align: left;
+  color: var(--color-ink, inherit);
+}
+
+.credits-card__blurb {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  text-align: left;
+  color: var(--color-neutral-400, #a3a3a3);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .credits-card {
+    transition: none;
   }
 }
 

@@ -1269,12 +1269,27 @@ export function listGallery() {
 
 /**
  * Show or hide one image on the public gallery.
+ *
+ * A category is REQUIRED to publish. `categoryId` may be null, but it may not
+ * be undefined: undefined means "the caller forgot", and publishing into no
+ * category produces a photo that is in the gallery yet appears nowhere on the
+ * public site. `listGalleryByCategory()` deliberately refuses to synthesise an
+ * "Uncategorised" group, so such a photo would simply vanish.
+ *
  * @param {string} id
  * @param {boolean} inGallery
+ * @param {string|null} categoryId required (may be null) when inGallery is true
  */
-export async function setGalleryItem(id, inGallery) {
+export async function setGalleryItem(id, inGallery, categoryId) {
+  if (inGallery && categoryId === undefined) {
+    throw new Error('Publishing an image needs a gallery category.');
+  }
+
   const order = inGallery ? getState().mediaLibrary.length + 1 : null;
-  const item = await updateMedia(id, { inGallery, galleryOrder: order });
+  const patch = { inGallery, galleryOrder: order };
+  if (inGallery) patch.categoryId = categoryId || null;
+
+  const item = await updateMedia(id, patch);
   if (item) {
     await addAuditLog(
       `${inGallery ? 'Published' : 'Removed'} "${item.caption}" ${
@@ -1394,10 +1409,13 @@ export async function deleteGalleryCategory(id) {
       await db().from(TABLES.galleryCategories).delete().eq('id', id),
       'delete gallery category'
     );
-    // Postgres cascades the FK, but only for rows it can see. Mirror it in the
-    // store so the client never shows a photo under a card it has just lost.
+    // `categoryId` is cleared in memory too, not just on the server: Postgres
+    // cascades the FK, but only for rows it can see, and in demo mode there is no
+    // server at all. Without this the client files photos under a card it has just
+    // lost, and listGalleryByCategory() would build a synthetic "Uncategorised"
+    // group for them -- which must never reach the public gallery page.
     current.mediaLibrary = current.mediaLibrary.map((entry) =>
-      entry.categoryId === id ? { ...entry, categoryId: null } : entry
+      entry.categoryId === id ? { ...entry, categoryId: null, inGallery: false } : entry
     );
   }
 
@@ -1416,26 +1434,22 @@ export async function deleteGalleryCategory(id) {
  *
  * Returns every category the Owner has defined, including empty ones -- a card
  * with no photos yet is still something they chose to publish, and hiding it
- * would silently drop their work. Photos with no category are collected under a
- * synthetic `null` key rather than being discarded, which is what keeps a
- * photo uploaded before the category existed from disappearing.
+ * would silently drop their work.
  *
- * @returns {Array<{category:object|null, shots:Array<object>}>}
+ * UNCATEGORISED PHOTOS ARE NEVER RETURNED. This used to collect them under a
+ * synthetic `null` key so an early upload could not disappear, but that is
+ * exactly the leak the newsroom asked to close: a photo that was never filed
+ * belongs on the Owner's shelf, not on the public gallery. Callers that want
+ * those photos list the media shelf instead.
+ *
+ * @returns {Array<{category:object, shots:Array<object>}>}
  */
 export function listGalleryByCategory() {
   const shots = listGallery();
-  const groups = listGalleryCategories().map((category) => ({
+  return listGalleryCategories().map((category) => ({
     category,
     shots: shots.filter((shot) => shot.categoryId === category.id)
   }));
-
-  const loose = shots.filter((shot) => {
-    const known = listGalleryCategories().some((c) => c.id === shot.categoryId);
-    return !known;
-  });
-
-  if (loose.length) groups.push({ category: null, shots: loose });
-  return groups;
 }
 
 /** DELETE — remove an image from the shelf. */

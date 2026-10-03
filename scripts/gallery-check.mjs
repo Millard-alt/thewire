@@ -97,27 +97,30 @@ try {
     await page.goto(BASE, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(1200);
 
+    // The gallery door was REMOVED from the front page. What remains is the
+    // nav button, which routes to the gallery page. Assert the door is really
+    // gone rather than merely hidden, because that was the point of the change.
     const doors = await page.$$("[data-gallery-open]");
-    check("gallery door is on the front page", doors.length > 0, `${doors.length} found`);
+    check("the front-page gallery door is gone", doors.length === 0, `${doors.length} found`);
 
-    if (doors.length) {
-      await doors[0].click();
+    const navButton = await page.$('[data-nav="gallery"]');
+    check("the nav still opens the gallery page", Boolean(navButton));
+
+    if (navButton) {
+      // At 390px the primary links sit behind the Menu disclosure, so a real
+      // user opens that first. Skipping it left the button unclickable and the
+      // test timed out on its visibility wait rather than on the navigation.
+      const menuToggle = await page.$("#mobile-nav-toggle");
+      if (menuToggle && (await menuToggle.isVisible())) {
+        await menuToggle.click();
+        await page.waitForTimeout(400);
+      }
+
+      await navButton.click();
       await page.waitForTimeout(900);
 
-      const cards = await page.$$("[data-gallery-card]");
-      check("door opens the gallery page", cards.length > 0, `${cards.length} card(s)`);
-
-      // A separate page, so the door must no longer be ON SCREEN. Assert on
-      // visibility, not on presence: the door legitimately stays in the DOM
-      // inside #publication-view, which is now `hidden`. Counting nodes here
-      // reported a false failure for a gallery that was working correctly.
-      const doorStillVisible = await page.$$eval("[data-gallery-open]", (els) =>
-        els.some((el) => {
-          const r = el.getBoundingClientRect();
-          return r.height > 0 && getComputedStyle(el).visibility !== "hidden";
-        })
-      );
-      check("front page is replaced by the gallery", doorStillVisible === false);
+      const cards = await page.$$("[data-gallery-category]");
+      check("the gallery page lists categories", cards.length > 0, `${cards.length} card(s)`);
 
       // The view swap itself: exactly one reader view on screen.
       const visibleViews = await page.evaluate(() =>
@@ -134,38 +137,59 @@ try {
       );
     }
 
-    /* --- 2. a category card expands, collapses, and reports its state --- */
+    /* --- 2. a category card opens as a PAGE, with a Back button --- */
     {
       const category = await page.$("[data-gallery-category]");
       if (!category) {
         check("gallery exposes category cards", false, "no [data-gallery-category]");
       } else {
         const id = await category.getAttribute("data-gallery-category");
-        const sel = `[data-gallery-panel="${id}"]`;
-        check("each category has a photo panel", Boolean(await page.$(sel)), `id=${id}`);
 
-        const hiddenBefore = await page.$eval(sel, (el) => el.hidden);
-        await category.click();
-        await page.waitForTimeout(600);
-        const hiddenAfter = await page.$eval(sel, (el) => el.hidden);
+        // A card must NOT carry an expandable panel any more. The old
+        // implementation rendered `[data-gallery-panel="<id>"]` inline and
+        // toggled its `hidden`; that nested grid is exactly what was replaced.
+        const panel = await page.$(`[data-gallery-panel="${id}"]`);
+        check("a category card has no inline dropdown panel", panel === null);
 
+        // A card is a navigation affordance, so it must not claim to expand.
+        const expanded = await category.getAttribute("aria-expanded");
         check(
-          "clicking a category card expands it",
-          hiddenBefore === true && hiddenAfter === false,
-          `hidden ${hiddenBefore} -> ${hiddenAfter}`
+          "a category card does not advertise aria-expanded",
+          expanded === null,
+          `aria-expanded=${expanded}`
         );
 
-        const photos = await page.$$eval(`${sel} img`, (els) => els.length);
-        check("the expanded category lists its photos", photos > 0, `${photos} photo(s)`);
-
         await category.click();
-        await page.waitForTimeout(500);
-        check("clicking again collapses it", (await page.$eval(sel, (el) => el.hidden)) === true);
+        await page.waitForTimeout(700);
 
-        // aria-expanded must track reality, or a screen reader is told the
-        // opposite of what is on screen.
-        const expanded = await category.getAttribute("aria-expanded");
-        check("aria-expanded tracks the panel", expanded === "false", `aria-expanded=${expanded}`);
+        const pageOpen = await page.$(".gallery-category-page");
+        check("clicking a category card opens its page", Boolean(pageOpen));
+
+        const photos = await page.$$(".gallery-category-page .gallery-card__shot");
+        check("the category page lists its photographs", photos.length > 0, `${photos.length} photo(s)`);
+
+        // The other categories must NOT be on screen with it -- a page, not a
+        // dropdown. Only the heading of the open category should be present.
+        const otherCards = await page.$$("[data-gallery-category]");
+        check(
+          "the category list is replaced, not expanded",
+          otherCards.length === 0,
+          `${otherCards.length} card(s) still listed`
+        );
+
+        const back = await page.$("[data-gallery-back]");
+        check("the category page offers a Back button", Boolean(back));
+
+        if (back) {
+          await back.click();
+          await page.waitForTimeout(600);
+          const backAgain = await page.$$("[data-gallery-category]");
+          check("Back returns to the category list", backAgain.length > 0, `${backAgain.length} card(s)`);
+          check(
+            "Back closes the category page",
+            (await page.$(".gallery-category-page")) === null
+          );
+        }
       }
     }
 
@@ -211,15 +235,24 @@ try {
       )
     );
 
-    // It must also get its own card on the public page, not just in the panel.
+    // It must also get its own card on the public gallery page, not just in the
+    // panel. The gallery is reached through the nav button now that the
+    // front-page door it used to live behind has been removed.
     await page.goto(BASE, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(1000);
-    const door = await page.$("[data-gallery-open]");
+    const door = await page.$("[data-nav=gallery]");
     if (door) {
+      // The nav links sit behind the mobile Menu disclosure at this width, so a
+      // real reader opens that first.
+      const menuToggle = await page.$("#mobile-nav-toggle");
+      if (menuToggle && (await menuToggle.isVisible())) {
+        await menuToggle.click();
+        await page.waitForTimeout(400);
+      }
       await door.click();
-      await page.waitForTimeout(700);
+      await page.waitForTimeout(900);
     }
-    const cardNames = await page.$$eval("[data-gallery-card]", (els) =>
+    const cardNames = await page.$$eval("[data-gallery-category]", (els) =>
       els.map((e) => e.innerText.trim())
     );
     // The card heading is uppercased by CSS, and `innerText` returns the

@@ -261,15 +261,6 @@ export function renderPublication() {
       </div>
     </section>
 
-    <!-- ================= PHOTO GALLERY (link only) ================= -->
-    <!-- The gallery itself moved to its own page (see #gallery-view below). This
-         section is now just a door into it, so the front page does not carry the
-         whole photo grid twice. -->
-    <section id="gallery" aria-labelledby="gallery-heading" class="mb-12">
-      ${sectionHeading('gallery-heading', 'Selected by the owner', 'Photo Gallery')}
-      ${renderGalleryDoor()}
-    </section>
-
     <!-- ================= ASSIGNMENT BOARD ================= -->
     <section id="assignments" aria-labelledby="assignments-heading" class="mb-12">
       ${sectionHeading('assignments-heading', 'Open calls', 'Assignment Board')}
@@ -296,82 +287,56 @@ export function renderPublication() {
 }
 
 /**
- * The front-page door into the gallery page.
+ * Which gallery category page is open, or null for the category list.
  *
- * A deliberate teaser rather than the full grid: the gallery is now a page of
- * its own, and rendering every published photo here as well would ship the same
- * images twice and leave the reader with two grids to choose between.
+ * Two levels of the same view, held in one place so the Back button and the
+ * store's repaint both agree on what is being shown.
  */
-function renderGalleryDoor() {
-  const groups = store.listGalleryByCategory();
-  const total = groups.reduce((sum, group) => sum + group.shots.length, 0);
+let openGalleryCategory = null;
 
-  if (!total) {
-    return `<p class="panel p-6 text-sm ink-muted">No photographs have been published to the gallery yet. The Owner can publish any image from the Media shelf in the Newsroom Panel.</p>`;
-  }
-
-  const previews = groups
-    .flatMap((group) => group.shots)
-    .slice(0, 3)
-    .map(
-      (shot) => `
-      <img
-        src="${escapeHtml(safeUrl(shot.url) || BLANK_IMAGE)}"
-        alt=""
-        aria-hidden="true"
-        loading="lazy"
-        decoding="async"
-        class="gallery-door__img"
-      />`
-    )
-    .join('');
-
-  return `
-    <button type="button" class="gallery-door" data-gallery-open>
-      <span class="gallery-door__strip" aria-hidden="true">${previews}</span>
-      <span class="gallery-door__text">
-        <span class="font-headline text-lg font-black tracking-[0.06em] uppercase">
-          ${total} photograph${total === 1 ? '' : 's'} in ${groups.length} categor${groups.length === 1 ? 'y' : 'ies'}
-        </span>
-        <span class="ink-muted mt-1 block text-sm">
-          Open the gallery
-          <i class="fa-solid fa-arrow-right ml-1" aria-hidden="true"></i>
-        </span>
-      </span>
-    </button>
-  `;
+/**
+ * Does this reader have asked for less motion?
+ *
+ * The category transition is decorative, so `prefers-reduced-motion` turns it
+ * off. Read live rather than cached at module load, because the setting can be
+ * changed while the page is open.
+ */
+function reducedMotion() {
+  return (
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
 }
 
 /**
- * One category card on the gallery page.
+ * One category card on the gallery index.
  *
- * A card is a <details>-shaped button, not a link: the photos expand underneath
- * it in place. That keeps the reader on the page, which matters on a phone where
- * a navigation would cost a full screen transition to see four thumbnails.
+ * A button rather than a link, but it navigates: it opens a whole PAGE for the
+ * category rather than revealing one underneath itself. The newsroom asked for
+ * that, because on a phone a nested grid pushes every other category off the
+ * screen. The chevron points forward, matching the direction it goes.
  *
- * @param {{category: object|null, shots: Array<object>}} group
+ * @param {{category: object, shots: Array<object>}} group
  */
 function renderGalleryCard(group) {
   const category = group.category;
   const name = category?.name || 'Uncategorised';
-  const id = category?.id || 'uncategorised';
+  const id = category?.id || '';
 
   // The cover is the Owner's chosen image, else a photo filed under the card.
   const cover =
-    safeUrl(category?.coverUrl) ||
-    safeUrl(group.shots[0]?.url) ||
-    BLANK_IMAGE;
-
+    safeUrl(category?.coverUrl) || safeUrl(group.shots[0]?.url) || BLANK_IMAGE;
   const count = group.shots.length;
 
   return `
-    <article class="gallery-card" data-gallery-card="${escapeHtml(id)}">
+    <article class="gallery-card">
       <button
         type="button"
         class="gallery-card__head"
         data-gallery-category="${escapeHtml(id)}"
-        aria-expanded="false"
-        aria-controls="gallery-panel-${escapeHtml(id)}"
+        aria-label="Open the ${escapeHtml(name)} category, ${count} photograph${
+          count === 1 ? '' : 's'
+        }"
       >
         <img
           src="${escapeHtml(cover)}"
@@ -389,104 +354,80 @@ function renderGalleryCard(group) {
             ${count} photograph${count === 1 ? '' : 's'}
           </span>
         </span>
-        <i
-          class="gallery-card__chevron fa-solid fa-chevron-down"
-          aria-hidden="true"
-        ></i>
+        <i class="gallery-card__chevron fa-solid fa-arrow-right" aria-hidden="true"></i>
       </button>
-
-      <div
-        id="gallery-panel-${escapeHtml(id)}"
-        class="gallery-card__panel"
-        data-gallery-panel="${escapeHtml(id)}"
-        hidden
-      >
-        ${
-          count
-            ? `<div class="gallery-card__grid">
-                ${group.shots
-                  .map(
-                    (shot) => `
-                    <button
-                      type="button"
-                      class="gallery-card__shot"
-                      data-lightbox="${escapeHtml(shot.id)}"
-                      aria-label="Open ${escapeHtml(shot.caption || name)} full size"
-                    >
-                      <img
-                        src="${escapeHtml(safeUrl(shot.url) || BLANK_IMAGE)}"
-                        alt="${escapeHtml(shot.caption || '')}"
-                        loading="lazy"
-                        decoding="async"
-                      />
-                      ${
-                        shot.caption
-                          ? `<span class="gallery-card__caption">${escapeHtml(shot.caption)}</span>`
-                          : ''
-                      }
-                    </button>`
-                  )
-                  .join('')}
-              </div>`
-            : `<p class="p-4 text-sm ink-muted">
-                 No photographs filed under this category yet.
-               </p>`
-        }
-      </div>
     </article>
   `;
 }
 
-/**
- * Expand or collapse one category card in place.
+      /**
+ * Level 2: one category, as a page of its own.
  *
- * Only one card is open at a time: on a phone two expanded grids push the rest
- * of the categories off the screen entirely, so the reader loses the sense of
- * how many there are.
- *
- * @param {HTMLElement} card the [data-gallery-category] button that was clicked
+ * @param {{category: object, shots: Array<object>}|undefined} group
  */
-function toggleGalleryCategory(button) {
-  const id = button.dataset.galleryCategory;
-  const panel = document.querySelector(`[data-gallery-panel="${CSS.escape(id)}"]`);
-  if (!panel) return;
+function renderGalleryCategoryPage(group) {
+  // The category was deleted while its page was open (the Owner works in the
+  // same tab). Fall back to the index rather than rendering an empty page.
+  if (!group) {
+    openGalleryCategory = null;
+    return renderGalleryIndex();
+  }
 
-  const isOpen = button.getAttribute('aria-expanded') === 'true';
+  const name = group.category?.name || 'Uncategorised';
+  const count = group.shots.length;
 
-  // Close whatever else is open first.
-  document
-    .querySelectorAll('[data-gallery-category][aria-expanded="true"]')
-    .forEach((other) => {
-      if (other === button) return;
-      other.setAttribute('aria-expanded', 'false');
-      other.closest('.gallery-card')?.classList.remove('is-open');
-      const sibling = document.querySelector(
-        `[data-gallery-panel="${CSS.escape(other.dataset.galleryCategory)}"]`
-      );
-      if (sibling) sibling.hidden = true;
-    });
+  return `
+    <div class="gallery-category-page">
+      <button type="button" class="btn btn-ghost gallery-category-page__back"
+        data-gallery-back>
+        <i class="fa-solid fa-arrow-left" aria-hidden="true"></i> All categories
+      </button>
 
-  button.setAttribute('aria-expanded', String(!isOpen));
-  panel.hidden = isOpen;
-  button.closest('.gallery-card')?.classList.toggle('is-open', !isOpen);
+      ${sectionHeading('gallery-category-heading', `${count} photograph${count === 1 ? '' : 's'}`, name)}
+
+      ${
+        count
+          ? `<div class="gallery-card__grid">
+              ${group.shots
+                .map(
+                  (shot) => `
+                  <button
+                    type="button"
+                    class="gallery-card__shot"
+                    data-lightbox="${escapeHtml(shot.id)}"
+                    aria-label="Open ${escapeHtml(shot.caption || name)} full size"
+                  >
+                    <img
+                      src="${escapeHtml(safeUrl(shot.url) || BLANK_IMAGE)}"
+                      alt="${escapeHtml(shot.caption || '')}"
+                      loading="lazy"
+                      decoding="async"
+                    />
+                    ${
+                      shot.caption
+                        ? `<span class="gallery-card__caption">${escapeHtml(shot.caption)}</span>`
+                        : ''
+                    }
+                  </button>`
+                )
+                .join('')}
+            </div>`
+          : `<p class="panel p-6 text-sm ink-muted">
+               No photographs filed under this category yet.
+             </p>`
+      }
+    </div>
+  `;
 }
 
 /**
- * The gallery page itself: one card per Owner-defined category.
- *
- * Rendered into #gallery-view by renderGalleryPage(). Clicking a card expands it
- * in place (see toggleGalleryCategory) rather than navigating, so the reader
- * keeps their place and the card they came from, which is what a phone-first
- * reader expects from a grid of thumbnails.
+ * Level 1: the list of categories.
  */
-export function renderGalleryPage() {
-  const view = byId('gallery-view');
-  if (!view) return;
-
+function renderGalleryIndex() {
   const groups = store.listGalleryByCategory();
   const total = groups.reduce((sum, group) => sum + group.shots.length, 0);
 
-  view.innerHTML = `
+  return `
     ${sectionHeading('gallery-page-heading', 'Selected by the owner', 'Gallery')}
     ${
       total
@@ -506,19 +447,63 @@ export function renderGalleryPage() {
            </p>`
     }
   `;
+}
 
-  // One delegated listener for the whole page: the cards are destroyed on every
+/**
+ * The gallery page: the category list, or the open category's photographs.
+ *
+ * Rendered into #gallery-view by src/app.js. Clicking a category card does NOT
+ * expand a dropdown -- it transitions into a full page for that category, with
+ * a Back button returning to the list, because a nested grid on a phone pushes
+ * every other category off the screen.
+ *
+ * The open level is deliberately NOT synced to the URL hash. The gallery is
+ * already hash-routed (`#gallery`); a second path-like segment would mean
+ * routing changes in src/app.js for no reader-visible gain, and Back is a
+ * visible button here.
+ */
+export function renderGalleryPage() {
+  const view = byId('gallery-view');
+  if (!view) return;
+
+  const group = openGalleryCategory
+    ? store
+        .listGalleryByCategory()
+        .find((entry) => entry.category?.id === openGalleryCategory)
+    : null;
+
+  view.innerHTML = openGalleryCategory
+    ? renderGalleryCategoryPage(group)
+    : renderGalleryIndex();
+
+  // One delegated listener for the whole page: the markup is destroyed on every
   // repaint, so per-card binding would be lost the moment the store changed.
   view.onclick = (event) => {
-    const card = event.target.closest('[data-gallery-category]');
-    if (card) {
-      toggleGalleryCategory(card);
+    // The Back button is destroyed along with the category page, so focus has to
+    // be moved deliberately -- otherwise it falls to <body> and the next Tab
+    // restarts from the nav on every return.
+    if (event.target.closest('[data-gallery-back]')) {
+      openGalleryCategory = null;
+      renderGalleryPage();
+      view.focus?.();
       return;
     }
+
+    const card = event.target.closest('[data-gallery-category]');
+    if (card) {
+      openGalleryCategory = card.dataset.galleryCategory;
+      renderGalleryPage();
+      view.focus?.();
+      window.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
+      return;
+    }
+
     const shot = event.target.closest('[data-lightbox]');
     if (shot) openLightbox(shot.dataset.lightbox);
   };
 }
+
+
 
 /**
  * Open the shared lightbox on one gallery image.

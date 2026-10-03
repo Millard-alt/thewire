@@ -161,14 +161,13 @@
             <li><a class="nav-link" href="#latest">Latest</a></li>
             <li><a class="nav-link" href="#today">Today's Pick</a></li>
             <li><a class="nav-link" href="#weekly">Weekly</a></li>
-            <li><a class="nav-link" href="#gallery">Gallery</a></li>
             <li><a class="nav-link" href="#assignments">Assignments</a></li>
             <li><a class="nav-link" href="#masthead-foot">Masthead</a></li>
             <li>
-              <button class="nav-link" type="button" data-nav="gallery">Photo Gallery</button>
+              <button class="nav-link" type="button" data-nav="gallery">PHOTO GALLERY</button>
             </li>
             <li>
-              <button class="nav-link" type="button" data-nav="credits">Credits</button>
+              <button class="nav-link" type="button" data-nav="credits">CREDITS</button>
             </li>
           </ul>
 
@@ -274,7 +273,17 @@
             <ul class="mt-3 space-y-2 text-sm ink-muted">
               <li><a class="nav-link" href="#latest">Latest Coverage</a></li>
               <li><a class="nav-link" href="#weekly">Weekly Features</a></li>
-              <li><a class="nav-link" href="#gallery">Photo Gallery</a></li>
+              <li>
+                <!--
+                A button, not `href="#gallery"`. The gallery door that anchor
+                scrolled to was removed from the front page, so the anchor now
+                points at nothing and does nothing at all. data-nav routes to the
+                gallery page properly.
+                -->
+                <button class="nav-link" type="button" data-nav="gallery">
+                  Photo Gallery
+                </button>
+              </li>
               <li>
                 <a class="nav-link" href="#assignments">Assignment Board</a>
               </li>

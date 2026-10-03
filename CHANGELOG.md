@@ -9,6 +9,40 @@ Migrations are numbered and live in `supabase/`. They are additive and
 idempotent, so re-running one is safe. **A new release is not functional until
 its migrations have been run in the Supabase SQL Editor.**
 
+## [0.9.1] — 2026-10-10
+
+Gallery and credits work for the phone: an image is filed before it is shown, a
+category opens as its own page, and the credits roster reads as a grid of people.
+
+### Added
+
+- **"Add to gallery" asks which category the image belongs in.** The toggle in the
+  Owner panel's Media tab now opens a category picker instead of filing the photo
+  into a default. An image with no category is kept but never shown publicly, and
+  `store.listGalleryByCategory()` no longer emits the uncategorised bucket, so an
+  unfiled photo cannot reach the public Gallery page by accident.
+- **Category pages.** Tapping a category card animates into a full page for that
+  category rather than expanding a dropdown of every image inline. The page has a
+  Back button that returns to the category list. The transition is disabled under
+  `prefers-reduced-motion`.
+
+### Changed
+
+- The gallery block is gone from the front page. The `PHOTO GALLERY` nav button
+  and the Gallery page are now the only route in, and the footer link was dropped
+  so the gallery is not listed twice in one column.
+- Credits cards follow the new spec: a coloured accent bar to the left of the role
+  name, the count badge on the far right of the row, no full-width outer wrapper,
+  and a responsive `1 / md:2 / lg:3` grid at `gap-4`. Member cards are sharp
+  cornered with a thin `border-neutral-700`, plain background, and a left-aligned
+  `w-12 h-12` circular avatar beside a bold serif name and a two-line bio. Hover
+  and focus draw a retro offset box-shadow.
+
+### Fixed
+
+- The gallery suite no longer asserts the front-page door it now proves is absent,
+  and it opens the mobile Menu disclosure before clicking a nav link, which it
+  could not previously reach at 390px.
 ## [0.9.0] — 2026-10-10
 
 A clean-slate changelog. Everything below describes work done in this session,

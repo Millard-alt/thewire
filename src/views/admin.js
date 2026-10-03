@@ -927,7 +927,7 @@ function renderMediaTab() {
         <div>
           <label class="field-label" for="media-category">Gallery category</label>
           <select id="media-category" class="field">
-            <option value="">Not in the gallery</option>
+            <option value="">Unfiled — stays on the shelf only</option>
             ${categories
               .map(
                 (cat) =>
@@ -935,6 +935,10 @@ function renderMediaTab() {
               )
               .join('')}
           </select>
+          <p class="ink-muted mt-1 text-xs">
+            A photograph is only published once you press Add to gallery and
+            choose a category. Unfiled images never appear on the site.
+          </p>
         </div>
         <div class="flex items-end sm:col-span-4">
           <button type="submit" class="btn btn-accent w-full sm:w-auto">
@@ -962,7 +966,12 @@ function renderMediaTab() {
                   ? `<span class="badge badge-gold block w-fit text-[0.625rem]">${escapeHtml(
                       item.categoryName
                     )}</span>`
-                  : '<span class="ink-muted block text-[0.625rem]">Not in the gallery</span>'
+                  : '<span class="ink-muted block text-[0.625rem]">Unfiled — not on the public gallery</span>'
+              }
+              ${
+                item.inGallery && !item.categoryId
+                  ? '<span class="badge badge-amber block w-fit text-[0.625rem]">Published but hidden — file it</span>'
+                  : ''
               }
               <div class="flex items-center gap-2">
                 <button class="btn ${item.inGallery ? 'btn-accent' : 'btn-ghost'} flex-1"
@@ -988,12 +997,107 @@ function renderMediaTab() {
       }
 
       <p class="ink-muted text-xs">
-        ${store.listGallery().length} of ${media.length} image${
-          media.length === 1 ? '' : 's'
-        } currently appear on the public Photo Gallery.
+        ${
+          store.listGalleryByCategory().reduce(
+            (sum, group) => sum + group.shots.length,
+            0
+          )
+        } of ${media.length} image${media.length === 1 ? '' : 's'} currently
+        appear on the public Photo Gallery.
       </p>
     </div>
   `;
+}
+
+/**
+ * The image waiting to be filed, set while the picker dialog is open.
+ * Module state rather than DOM state so a repaint of the Media tab (which
+ * happens on every store change) cannot silently retarget the publish.
+ */
+let pendingGalleryItemId = null;
+
+/**
+ * Dialog asking which gallery category an image belongs in.
+ *
+ * Publishing used to be a single toggle, so an image could go live in no
+ * category at all and then appear nowhere on the public gallery -- the button
+ * said it worked and the site showed nothing. The category is now chosen
+ * explicitly, here, before anything is written.
+ */
+function galleryCategoryPickerDialog() {
+  return `
+    <div
+      id="gallery-category-picker"
+      class="modal-backdrop hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="gallery-category-picker-title"
+    >
+      <div class="modal-card relative w-full max-w-md p-6">
+        <button
+          type="button"
+          class="btn-quiet absolute top-4 right-4"
+          data-close-dialog="gallery-category-picker"
+          aria-label="Close"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+        <h3
+          id="gallery-category-picker-title"
+          class="font-headline text-xl font-black tracking-wide uppercase"
+        >
+          Choose a category
+        </h3>
+        <p class="ink-muted mt-2 text-sm">
+          Every published photograph must be filed under a category, or it
+          cannot appear on the public gallery.
+        </p>
+        <p id="gallery-category-picker-empty" class="panel-sunken mt-4 p-4 text-sm" hidden>
+          There are no gallery categories yet. Close this, create one in the
+          list above, then file the image under it.
+        </p>
+        <ul id="gallery-category-picker-list" class="mt-4 space-y-2"></ul>
+        <button
+          type="button"
+          class="btn btn-ghost mt-4 w-full"
+          data-close-dialog="gallery-category-picker"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+/** Fill the picker with the Owner's categories and open it. */
+function openGalleryCategoryPicker(item) {
+  const categories = store.listGalleryCategories();
+  const list = byId('gallery-category-picker-list');
+  const empty = byId('gallery-category-picker-empty');
+  if (!list || !empty) return;
+
+  pendingGalleryItemId = item.id;
+
+  list.innerHTML = categories
+    .map(
+      (cat) => `
+      <li>
+        <button
+          type="button"
+          class="btn btn-ghost w-full justify-between"
+          data-action="gallery-publish-in"
+          data-id="${escapeHtml(item.id)}"
+          data-category="${escapeHtml(cat.id)}"
+        >
+          <span class="truncate text-left">${escapeHtml(cat.name)}</span>
+          <span class="ink-muted text-xs">${cat.photos.length} filed</span>
+        </button>
+      </li>`
+    )
+    .join('');
+
+  empty.hidden = categories.length > 0;
+  openDialog('gallery-category-picker');
 }
 
 /**
@@ -2771,6 +2875,7 @@ function shellMarkup() {
       ${staffEditorDialog()}
       ${assignmentEditorDialog()}
       ${passwordResetDialog()}
+      ${galleryCategoryPickerDialog()}
     </div>
   `;
 }
@@ -4016,19 +4121,56 @@ case 'gallery-category-delete': {
     }
     /* --- media --- */
     case 'media-gallery': {
-      // Read off `trigger`, not a destructured local — `next` is not one of the
+      // Read off `trigger`, not a destructured local -- `next` is not one of the
       // names pulled out of `trigger.dataset` above.
       const want = trigger.dataset.next === '1';
+
+      // Turning a photo ON now asks which category it belongs in. Doing it the
+      // other way round -- toggle first, choose later -- is what let a photo be
+      // published with no category and so appear nowhere.
+      if (want) {
+        const item = store.listMedia().find((entry) => entry.id === id);
+        if (!item) {
+          showToast('That image is no longer on the shelf.', { type: 'error' });
+          return;
+        }
+        openGalleryCategoryPicker(item);
+        return;
+      }
+
       guard(async () => {
-        const item = await store.setGalleryItem(id, want);
+        const item = await store.setGalleryItem(id, false, null);
         if (item) {
           showToast(
-            want
-              ? `"${item.caption}" is now on the Photo Gallery.`
-              : `"${item.caption}" was removed from the Photo Gallery.`,
+            `"${item.caption}" was removed from the Photo Gallery.`,
             { type: 'success' }
           );
         }
+      });
+      break;
+    }
+
+    case 'gallery-publish-in': {
+      // The category the Owner picked, straight off the button. `id` is the
+      // image; the picker only exists to capture the category.
+      const categoryId = trigger.dataset.category || '';
+      closeDialog('gallery-category-picker');
+      guard(async () => {
+        if (!categoryId) {
+          showToast('Pick a category first.', { type: 'error' });
+          return;
+        }
+        const category = store
+          .listGalleryCategories()
+          .find((cat) => cat.id === categoryId);
+        const item = await store.setGalleryItem(id, true, categoryId);
+        if (item) {
+          showToast(
+            `"${item.caption}" is now on the Photo Gallery in ${category?.name || 'that category'}.`,
+            { type: 'success' }
+          );
+        }
+        paintActiveTab();
       });
       break;
     }

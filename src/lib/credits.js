@@ -684,7 +684,7 @@ function template(people) {
             <span class="credits-band__name">${escapeHtml(group.role)}</span>
             <span class="credits-band__count">${group.members.length}</span>
           </h2>
-          <ul class="credits-band__grid">
+          <ul class="credits-band__grid credits-grid">
             ${group.members.map(card).join('')}
           </ul>
         </section>`
@@ -867,40 +867,37 @@ export function readableOn(hex) {
 
 function card(person) {
   const portrait = safeUrl(person.portrait_url);
-  const colour = normaliseColour(person.role_color);
-  const role = String(person.role_label || 'Contributor').trim();
 
+  /*
+    Sharp-cornered, left-aligned row card. The role chip is deliberately NOT
+    repeated here: the heading above the grid already names the role and carries
+    its colour, so a per-card chip said the same thing twice.
+  */
   return `
-    <li class="panel-raised flex flex-col items-center p-5 text-center">
+    <li class="credits-card">
       ${
         portrait
           ? `<img
-              class="byline-sticker byline-sticker-lg"
+              class="credits-card__avatar"
               src="${escapeHtml(portrait)}"
               alt=""
-              width="512"
-              height="512"
+              width="48"
+              height="48"
               loading="lazy"
               decoding="async"
             />`
-          : `<span class="byline-sticker byline-sticker-lg byline-sticker-empty" aria-hidden="true">
+          : `<span class="credits-card__avatar credits-card__avatar--empty" aria-hidden="true">
                <i class="fa-solid fa-user"></i>
              </span>`
       }
-      <h2 class="mt-3 font-headline text-lg font-bold">${escapeHtml(person.name || 'Staff member')}</h2>
-      <p
-        class="mt-1.5 inline-block rounded-full px-2.5 py-1 text-[0.6875rem] font-bold tracking-[0.12em] uppercase"
-        style="${
-          colour
-            ? `background:${colour};color:${readableOn(colour)}`
-            : 'background:var(--color-newsred);color:#ffffff'
-        }"
-      >${escapeHtml(role)}</p>
-      ${
-        person.blurb
-          ? `<p class="mt-2 text-sm ink-muted">${escapeHtml(person.blurb)}</p>`
-          : ''
-      }
+      <div class="credits-card__body">
+        <p class="credits-card__name">${escapeHtml(person.name || 'Staff member')}</p>
+        ${
+          person.blurb
+            ? `<p class="credits-card__blurb">${escapeHtml(person.blurb)}</p>`
+            : ''
+        }
+      </div>
     </li>
   `;
 }
