@@ -13,6 +13,47 @@ its migrations have been run in the Supabase SQL Editor.**
 
 Verified against `iguzwwqjufzzdblkqroj` on 10 Oct 2026.
 
+### 0e. Both migrations failed to paste — and one of them was never actually broken
+
+Re-pasting `015` and `016` produced two errors. Investigating them turned up two
+defects that were **in my verification code, not in the product**.
+
+**`016` was a false alarm. The grants were correct all along.** Its self-check
+asked:
+
+```sql
+'anon' = any (proacl::text[])   -- can never be true
+```
+
+Each element of `proacl::text[]` is a whole aclitem (`anon=X/postgres`), never the
+bare name `anon`, so the test was always false and it reported
+`BROKEN - anon is missing from the ACL` for all thirteen functions while printing
+ACLs that plainly contained `anon=X/postgres`. It now uses
+`has_function_privilege('anon', oid, 'EXECUTE')`, which asks the catalog the
+question actually meant. **No re-paste is needed** — and had it been taken at face
+value, it would have sent the Owner to fix permissions that were never wrong.
+
+**`015` genuinely aborted, and the cause was mine.** The SQL Editor runs a paste in
+one transaction, so the whole file rolled back — nothing applied. The failure was:
+
+```
+22P02: invalid input syntax for type json
+Token "cbc79358" is invalid.
+```
+
+That token is 8 hex characters: the md5 fragment of the probe's generated
+*username*, not a uuid. A text value was being assigned into a `jsonb` variable in
+the verification block. My first attempt at the fix patched the wrong variable and
+reproduced the error rather than fixing it.
+
+**A second latent bug surfaced in the same block.** The join check was written
+`select s.id into v_sid`, which leaves the variable *untouched* when no row
+matches — so the following `if v_sid is null` could never fire, and the probe
+would have reported success while proving nothing. It now counts joined rows with
+`count(*)` into an integer, so a missing row genuinely fails.
+
+`015_approve_creates_staff_row.sql` must be pasted again in full.
+
 ### 0. Signup and account approval FIXED (012 applied). Portrait approval UI added;014 pending paste.
 
 Signup works, and setting a role now works: both were confirmed by the user on
