@@ -60,112 +60,131 @@ body {
   background: var(--paper);
   color: var(--ink);
   font-family: var(--font-body);
-  line-height: 1.6;
+  line-height: 1.45;
   -webkit-text-size-adjust: 100%;
 }
 
 .wrap {
-  max-width: 56rem;
+  max-width: 60rem;
   margin-inline: auto;
-  padding: 1.5rem 1rem 4rem;
+  padding: 1.25rem 0.9rem 3rem;
 }
 
 /* ---------- page header ---------- */
 
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--rule);
+}
+
 .eyebrow {
   font-family: var(--font-sans);
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
   font-weight: 700;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--newsred);
-  margin: 0 0 0.35rem;
+  margin: 0;
 }
 
 h1 {
   font-family: var(--font-headline);
-  font-size: clamp(1.9rem, 8vw, 3rem);
+  font-size: clamp(1.5rem, 6.5vw, 2.25rem);
   font-weight: 900;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   margin: 0;
+  line-height: 1.1;
 }
 
 .count {
   font-family: var(--font-sans);
-  font-size: 0.8125rem;
+  font-size: 0.6875rem;
   color: var(--ink-muted);
-  border-top: 1px solid var(--rule-soft);
-  margin: 0.9rem 0 0;
-  padding-top: 0.9rem;
+  margin: 0 0 0 auto;
+  white-space: nowrap;
 }
 
 /* ---------- role bands ---------- */
 
-.band { margin-top: 2.25rem; }
+.band { margin-top: 1.1rem; }
 
 .band__head {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
-  margin: 0 0 0.9rem;
+  gap: 0.5rem;
+  margin: 0 0 0.5rem;
 }
 
 .band__rail {
-  width: 0.4rem;
-  align-self: stretch;
-  min-height: 1.4rem;
+  width: 0.2rem;
+  height: 0.8rem;
   background: var(--band, var(--newsred));
   flex: none;
 }
 
 .band__name {
   font-family: var(--font-sans);
-  font-size: 0.75rem;
+  font-size: 0.625rem;
   font-weight: 800;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* the rule is what separates one band from the next, so it needs no margin */
+.band__rule {
   flex: 1 1 auto;
+  height: 1px;
+  background: var(--rule-soft);
 }
 
 .band__count {
   font-family: var(--font-mono);
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
   color: var(--ink-muted);
+  flex: none;
 }
 
-/* ---------- person cards ---------- */
+/* ---------- people ----------
+   Deliberately NOT cards. No border, no white fill, no box: one card per
+   person turned a 9-person page into a 60rem scroll on a phone. A photo, a
+   name and one line of blurb, packed two-up, is the whole design. */
 
 .band__grid {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 0.75rem;
-  grid-template-columns: 1fr;
+  gap: 0.5rem 0.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .person {
-  background: #fff;
-  border: 1px solid var(--rule);
-  padding: 1.1rem;
   display: flex;
   align-items: center;
-  gap: 0.9rem;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
 .person__photo {
-  width: 4.25rem;
-  height: 4.25rem;
+  width: 2.25rem;
+  height: 2.25rem;
   border-radius: 50%;
   object-fit: cover;
   flex: none;
   background: var(--paper-dark);
-  border: 1px solid var(--rule-soft);
   display: grid;
   place-items: center;
   font-family: var(--font-sans);
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 700;
   color: var(--ink-muted);
 }
@@ -173,34 +192,47 @@ h1 {
 .person__body { min-width: 0; }
 
 .person__name {
-  font-family: var(--font-headline);
-  font-size: 1.1rem;
-  font-weight: 700;
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  font-weight: 600;
   margin: 0;
-  line-height: 1.2;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/* one line only, always. A wrapping blurb is what unbalances the grid. */
 .person__blurb {
-  font-size: 0.8125rem;
+  font-size: 0.6875rem;
   color: var(--ink-muted);
-  margin: 0.2rem 0 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------- mobile first; only ever wider below ---------- */
 
-@media (min-width: 640px) {
-  .wrap { padding: 2.5rem 1.5rem 5rem; }
-  .band__grid { grid-template-columns: repeat(2, 1fr); }
+@media (min-width: 480px) {
+  .band__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
-@media (min-width: 900px) {
-  .band__grid { grid-template-columns: repeat(3, 1fr); }
-  .band { margin-top: 2.75rem; }
+@media (min-width: 720px) {
+  .wrap { padding: 2rem 1.5rem 4rem; }
+  .band { margin-top: 1.4rem; }
+  .band__grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.6rem 1rem; }
+  .person__photo { width: 2.5rem; height: 2.5rem; }
+  .person__name { font-size: 0.875rem; }
+}
+
+@media (min-width: 960px) {
+  .band__grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .person { transition: transform 180ms ease, box-shadow 180ms ease; }
-  .person:hover { transform: translateY(-2px); box-shadow: var(--shadow-hard); }
+  .person { transition: opacity 140ms ease; }
+  .person:hover .person__name { text-decoration: underline; }
 }
 </style>
 </head>
@@ -285,10 +317,10 @@ h1 {
     }
 
     document.getElementById('root').innerHTML = `
-      <header>
+      <header class="head">
         <p class="eyebrow">About the newsroom</p>
         <h1>Credits</h1>
-        <p class="count">${PEOPLE.length} people make The Wire.</p>
+        <p class="count">${PEOPLE.length} people</p>
       </header>
 
       ${bands(PEOPLE)
@@ -298,6 +330,7 @@ h1 {
           <h2 class="band__head">
             <span class="band__rail" aria-hidden="true"></span>
             <span class="band__name">${esc(g.role)}</span>
+            <span class="band__rule" aria-hidden="true"></span>
             <span class="band__count">${g.members.length}</span>
           </h2>
           <ul class="band__grid">${g.members.map(personCard).join('')}</ul>
