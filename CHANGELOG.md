@@ -13,6 +13,43 @@ its migrations have been run in the Supabase SQL Editor.**
 
 Verified against `iguzwwqjufzzdblkqroj` on 10 Oct 2026.
 
+### 0f. 015 and 014 confirmed applied — the portrait chain is closed
+
+Measured, not assumed. Two probes, both read-only:
+
+```
+accounts 3   staff_rows 3   awaiting_review 0   active_without_staff_row 0
+```
+
+Every account has a matching `staff` row **by username**, and roles are canonical
+(`Owner` / `Board Manager` / `Writer`). The "not signed in" failure had exactly one
+cause — `wire_approve_account` created a `staff_accounts` row with no `staff`
+counterpart, so `current_staff_id()` resolved to NULL. `015` closed that for
+existing rows and for every future approval.
+
+`014` was confirmed live by **error-message identity**, not by reading DDL. A
+signed-out call to `wire_set_portrait_status` now raises:
+
+```
+P0001: only the Owner can approve or reject a portrait
+```
+
+`005`'s version raises `not on the staff roster` from an `is_staff()` check as its
+*first* statement, and `014`'s raises from `is_owner()`. Those two strings cannot
+come from the same deployed body, so the deployed body is `014`'s and the
+`is_owner()` gate is genuinely enforced by the database — not merely present in a
+file.
+
+All thirteen Owner-panel RPCs report `anon_may_execute: true` via
+`has_function_privilege`, the corrected test. The approved portrait renders from
+the public bucket (`200 image/jpeg`, 28 kB).
+
+**Still unverified:** no call to `wire_set_portrait_status` has been made *as* the
+Owner, because that writes to `staff.portrait_status` and the Owner's password is
+not on this machine. The refusal path is proven; the success path is not yet
+proven. Everything else above is confirmed against the live database.
+
+### 0e. Both migrations failed to paste — and one of them was never actually broken
 ### 0e. Both migrations failed to paste — and one of them was never actually broken
 
 Re-pasting `015` and `016` produced two errors. Investigating them turned up two
