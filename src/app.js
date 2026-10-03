@@ -39,7 +39,7 @@ import {
 
 import { initAuthModal, renderAuthSlot } from './views/auth.js';
 import { openAdmin, closeAdmin, isAdminOpen } from './views/admin.js';
-import { initAlerts, ensureAlertPermission } from './views/alerts.js';
+import { initAlerts } from './views/alerts.js';
 import { renderCredits, primePortraits } from './lib/credits.js';
 import {
   openPortraitEditor,

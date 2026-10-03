@@ -18,7 +18,6 @@ import {
   showToast,
   formatEditionDate
 } from '../lib/dom.js';
-import { ensureAlertPermission } from './alerts.js';
 import { bylineSticker } from '../lib/credits.js';
 
 /** A neutral placeholder for stories with no lead image. */
@@ -631,11 +630,10 @@ export async function openArticle(id) {
     return;
   }
 
-  // The publication is alert-first: a reader sees the notification
-  // instructions before they can be pushed to, so the first popup they ever
-  // receive is a real dispatch rather than a surprise prompt. Declining is
-  // always allowed and never blocks reading \u2014 it only leaves alerts off.
-  ensureAlertPermission();
+  // NOTE: permission is deliberately NOT requested here. Opening a story is a
+  // click, but it is not a deliberate opt-in, and Android Chrome suppresses a
+  // permission prompt that is not the result of an explicit "turn on alerts"
+  // action. The request lives behind the opt-in button in views/alerts.js only.
 
   // Split the body on blank lines so each becomes a <p>.
   const paragraphs = String(article.body || '')

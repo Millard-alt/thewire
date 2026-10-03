@@ -43,6 +43,14 @@ category opens as its own page, and the credits roster reads as a grid of people
 - The gallery suite no longer asserts the front-page door it now proves is absent,
   and it opens the mobile Menu disclosure before clicking a nav link, which it
   could not previously reach at 390px.
+- Android notifications no longer depend on an automatic permission prompt.
+  Opening a story used to call `ensureAlertPermission()` from `openArticle()`, so
+  the request fired on page load rather than from a deliberate opt-in. Android
+  Chrome suppresses a prompt that is not the result of an explicit user gesture,
+  which is why the native dialog never appeared and readers who then allowed it
+  from Site Settings still got nothing. The call is removed from `openArticle()`
+  and the only remaining request sites are the "Turn on alerts" button and the
+  Owner's send-a-test button, both real gestures.
 ## [0.9.0] — 2026-10-10
 
 A clean-slate changelog. Everything below describes work done in this session,
