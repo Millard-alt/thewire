@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>The Wire - Credits (design draft)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&family=Inter:wght@400;500;600;700;800&family=Special+Elite&display=swap" rel="stylesheet" />
+
+<style>
+/* =====================================================================
+   THE WIRE - CREDITS PAGE, STANDALONE DESIGN DRAFT
+   ---------------------------------------------------------------------
+   This file is NOT wired to the live site. Open it directly in a browser
+   (double-click it, or drag it into Chrome) and it renders on its own.
+
+   It is a mockup: the people are hardcoded in the PEOPLE array at the
+   bottom. When you are happy with it, send me this file back and I will
+   rebuild it on the real data source (the credits_people table) and wire
+   it into the live credits page.
+
+   WHY A SEPARATE FILE: so you can redesign freely without touching the
+   running site. Nothing here reads or writes the database.
+
+   HOW TO EDIT
+     Colours  -> the :root block below.
+     Layout   -> the .band and .person rules.
+     Content  -> the PEOPLE array at the very bottom. Save and it redraws.
+     Ordering -> PEOPLE is already top-to-bottom. To move a whole role
+                 band, move that block of people within the list. People
+                 sitting next to each other with the same role_label merge
+                 into one band automatically.
+
+   MOBILE-FIRST: the base CSS targets a 390px phone. The media queries at
+   the bottom only ever widen from there. Keep it that way.
+   ===================================================================== */
+
+:root {
+  --paper: #f7f4ec;
+  --paper-dark: #ece7da;
+  --ink: #18130f;
+  --ink-muted: #5a544b;
+  --newsred: #8c1d11;
+
+  --font-headline: 'Playfair Display', Georgia, serif;
+  --font-body: 'Source Serif 4', Georgia, serif;
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'Special Elite', 'Courier New', monospace;
+
+  --rule: color-mix(in srgb, var(--ink) 85%, transparent);
+  --rule-soft: color-mix(in srgb, var(--ink) 18%, transparent);
+  --shadow-hard: 4px 4px 0 0 rgb(24 19 15);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  line-height: 1.6;
+  -webkit-text-size-adjust: 100%;
+}
+
+.wrap {
+  max-width: 56rem;
+  margin-inline: auto;
+  padding: 1.5rem 1rem 4rem;
+}
+
+/* ---------- page header ---------- */
+
+.eyebrow {
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--newsred);
+  margin: 0 0 0.35rem;
+}
+
+h1 {
+  font-family: var(--font-headline);
+  font-size: clamp(1.9rem, 8vw, 3rem);
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.count {
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+  border-top: 1px solid var(--rule-soft);
+  margin: 0.9rem 0 0;
+  padding-top: 0.9rem;
+}
+
+/* ---------- role bands ---------- */
+
+.band { margin-top: 2.25rem; }
+
+.band__head {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 0 0 0.9rem;
+}
+
+.band__rail {
+  width: 0.4rem;
+  align-self: stretch;
+  min-height: 1.4rem;
+  background: var(--band, var(--newsred));
+  flex: none;
+}
+
+.band__name {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  flex: 1 1 auto;
+}
+
+.band__count {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--ink-muted);
+}
+
+/* ---------- person cards ---------- */
+
+.band__grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr;
+}
+
+.person {
+  background: #fff;
+  border: 1px solid var(--rule);
+  padding: 1.1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.person__photo {
+  width: 4.25rem;
+  height: 4.25rem;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+  background: var(--paper-dark);
+  border: 1px solid var(--rule-soft);
+  display: grid;
+  place-items: center;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--ink-muted);
+}
+
+.person__body { min-width: 0; }
+
+.person__name {
+  font-family: var(--font-headline);
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.person__blurb {
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+  margin: 0.2rem 0 0;
+}
+
+/* ---------- mobile first; only ever wider below ---------- */
+
+@media (min-width: 640px) {
+  .wrap { padding: 2.5rem 1.5rem 5rem; }
+  .band__grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (min-width: 900px) {
+  .band__grid { grid-template-columns: repeat(3, 1fr); }
+  .band { margin-top: 2.75rem; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .person { transition: transform 180ms ease, box-shadow 180ms ease; }
+  .person:hover { transform: translateY(-2px); box-shadow: var(--shadow-hard); }
+}
+</style>
+</head>
+
+<body>
+  <main class="wrap" id="root"></main>
+
+  <script type="module">
+    /* ------------------------------------------------------------------
+       SAMPLE DATA - this is the part you edit.
+
+       Keep the list in top-to-bottom order. People sitting next to each
+       other with the same role_label merge into one band, so to move a
+       whole band up or down, move that block of people within the list.
+       ------------------------------------------------------------------ */
+    const PEOPLE = [
+      { name: 'The Owner', role_label: 'Owner', role_color: '#8c1d11',
+        blurb: 'Sets the line, and answers for it.', portrait_url: null },
+      { name: 'Amara K.', role_label: 'Board Manager', role_color: '#1c3f60',
+        blurb: 'Runs the paper day to day and edits the front page.', portrait_url: null },
+      { name: 'Peter N.', role_label: 'Board Manager', role_color: '#1c3f60',
+        blurb: 'Oversees budget, legal and the annual retrospective.', portrait_url: null },
+      { name: 'Ines D.', role_label: 'Senior Reporter', role_color: '#1d4ed8',
+        blurb: 'Covers local government and civic affairs.', portrait_url: null },
+      { name: 'Marcus T.', role_label: 'Senior Reporter', role_color: '#1d4ed8',
+        blurb: 'Investigations. Slow to publish, worth the wait.', portrait_url: null },
+      { name: 'Ruth E.', role_label: 'Senior Reporter', role_color: '#1d4ed8',
+        blurb: 'Housing, planning, and the occasional spreadsheet.', portrait_url: null },
+      { name: 'Brian O.', role_label: 'Sports Correspondent', role_color: '#047857',
+        blurb: 'Football, athletics, and the people who fund them.', portrait_url: null },
+      { name: 'Sofia M.', role_label: 'Photographer', role_color: '#b45309',
+        blurb: 'Runs the picture desk and the gallery.', portrait_url: null },
+    ];
+
+    /* ------------------------------------------------------------------
+       RENDERER - ignore this part unless you want a different layout. If
+       you do, change the innerHTML template below rather than fighting
+       the CSS.
+       ------------------------------------------------------------------ */
+
+    const esc = (s) =>
+      String(s ?? '').replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+      );
+
+    // Bucket CONSECUTIVE people by role, so neighbours merge into one band.
+    function bands(people) {
+      const out = [];
+      for (const p of people) {
+        const role = String(p.role_label || '').trim() || 'Contributor';
+        const last = out[out.length - 1];
+        if (last && last.role === role) last.members.push(p);
+        else out.push({ role, members: [p] });
+      }
+      return out;
+    }
+
+    function personCard(p) {
+      const initials = String(p.name || '?')
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((w) => w[0])
+        .join('')
+        .toUpperCase();
+      const photo = p.portrait_url
+        ? `<img class="person__photo" src="${esc(p.portrait_url)}" alt="" loading="lazy" />`
+        : `<span class="person__photo" aria-hidden="true">${esc(initials)}</span>`;
+
+      return `
+        <li class="person">
+          ${photo}
+          <div class="person__body">
+            <p class="person__name">${esc(p.name || 'Staff member')}</p>
+            ${p.blurb ? `<p class="person__blurb">${esc(p.blurb)}</p>` : ''}
+          </div>
+        </li>`;
+    }
+
+    function bandColour(group) {
+      for (const m of group.members) if (m.role_color) return m.role_color;
+      return '#8c1d11';
+    }
+
+    document.getElementById('root').innerHTML = `
+      <header>
+        <p class="eyebrow">About the newsroom</p>
+        <h1>Credits</h1>
+        <p class="count">${PEOPLE.length} people make The Wire.</p>
+      </header>
+
+      ${bands(PEOPLE)
+        .map(
+          (g) => `
+        <section class="band" style="--band:${esc(bandColour(g))}">
+          <h2 class="band__head">
+            <span class="band__rail" aria-hidden="true"></span>
+            <span class="band__name">${esc(g.role)}</span>
+            <span class="band__count">${g.members.length}</span>
+          </h2>
+          <ul class="band__grid">${g.members.map(personCard).join('')}</ul>
+        </section>`
+        )
+        .join('')}
+    `;
+  </script>
+</body>
+</html>
