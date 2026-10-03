@@ -206,6 +206,89 @@ try {
       );
     });
     check("entry survives a reload", afterReload);
+
+    /* --- 4. EDIT an existing entry ---
+     *
+     * The regression test for the bug that shipped. The ADD path above was
+     * always fine; it was the EDIT path that silently did nothing. updatePerson()
+     * read patch.role while the panel sent role_label, so every argument
+     * arrived as null, the server's coalesce() kept the old values, and the
+     * client reported "Saved." over an edit that had not happened.
+     *
+     * It has to be asserted on the row after the panel has repainted, not on the
+     * toast, because the toast claimed success in exactly this situation.
+     */
+    await page.click('[data-admin-tab="credits"]');
+    await page.waitForTimeout(900);
+
+    const editedRole = "Editor-at-Large";
+    await page.evaluate((newRole) => {
+      const forms = [...document.querySelectorAll("[data-credits-form]")];
+      const ada = forms.find(
+        (f) => f.querySelector("[data-credits-name]")?.value === "Ada Testwright"
+      );
+      if (!ada) return;
+      const role = ada.querySelector("[data-credits-role]");
+      role.value = newRole;
+      role.dispatchEvent(new Event("input", { bubbles: true }));
+      role.dispatchEvent(new Event("change", { bubbles: true }));
+      ada.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    }, editedRole);
+    await page.waitForTimeout(1800);
+
+    const afterEdit = await page.evaluate(() => {
+      const forms = [...document.querySelectorAll("[data-credits-form]")];
+      const ada = forms.find(
+        (f) => f.querySelector("[data-credits-name]")?.value === "Ada Testwright"
+      );
+      return ada ? ada.querySelector("[data-credits-role]")?.value : null;
+    });
+    check(
+      "editing an existing role actually saves",
+      afterEdit === editedRole,
+      `role="${afterEdit}" expected="${editedRole}"`
+    );
+
+    // And it must survive a reload, which separates "the store holds it" from
+    // "the input still has the old text in it".
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(1600);
+    await page.evaluate(() => {
+      document.querySelector('[data-action="open-admin"], #open-admin')?.click();
+    });
+    await page.waitForTimeout(900);
+    await page.click('[data-admin-tab="credits"]');
+    await page.waitForTimeout(1100);
+    const editAfterReload = await page.evaluate(() => {
+      const forms = [...document.querySelectorAll("[data-credits-form]")];
+      const ada = forms.find(
+        (f) => f.querySelector("[data-credits-name]")?.value === "Ada Testwright"
+      );
+      return ada ? ada.querySelector("[data-credits-role]")?.value : null;
+    });
+    check(
+      "edited role survives a reload",
+      editAfterReload === editedRole,
+      `role="${editAfterReload}" expected="${editedRole}"`
+    );
+
+    /* --- 5. roles group into bands, in the Owner's chosen order ---
+     *
+     * The page is meant to read like a Discord role list: same roles grouped
+     * together, and the order of the bands controlled from the panel.
+     */
+    const bands = await page.evaluate(() =>
+      [...document.querySelectorAll("[data-credits-band]")].map((el) => ({
+        role: el.dataset.creditsBand,
+        members: el.querySelectorAll("[data-credits-form]").length
+      }))
+    );
+    check("credits group into role bands", bands.length > 0, `${bands.length} band(s)`);
+    check(
+      "every band has at least one member",
+      bands.every((b) => b.members > 0),
+      JSON.stringify(bands)
+    );
   }
   await page.close();
 } finally {

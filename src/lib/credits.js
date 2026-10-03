@@ -191,11 +191,38 @@ export async function addPerson(person) {
  * fields that changed cannot blank the rest. Passing an empty string to
  * `p_portrait` or `p_blurb` clears them on purpose.
  *
+ * TWO SPELLINGS ARE ACCEPTED FOR EVERY FIELD, and this is deliberate. The
+ * panel sends the database column names (`role_label`, `role_color`,
+ * `sort_order`, `portrait_url`) because that is what the form fields are named
+ * after, while the parameter list below historically used short names
+ * (`role`, `color`, `order`, `portraitUrl`).
+ *
+ * Reading only one set is not a theoretical risk: it shipped, and it made the
+ * entire Credits editor silently do nothing. updatePerson() saw `patch.role` as
+ * undefined on every save, reported "Saved." with a success toast, and
+ * discarded the new role, colour and order. Only `blurb` worked, purely because
+ * that one name happens to be identical in both sets. Normalising here means a
+ * caller cannot get this wrong again.
+ *
  * @param {string} id
- * @param {{name?: string, role?: string, color?: string, blurb?: string,
- *          portraitUrl?: string, order?: number}} patch
+ * @param {{name?: string, role?: string, role_label?: string,
+ *          color?: string, role_color?: string, blurb?: string,
+ *          portraitUrl?: string, portrait_url?: string,
+ *          order?: number, sort_order?: number}} patch
  */
 export async function updatePerson(id, patch) {
+  // Accept either spelling, short or column-name, for every field.
+  const field = (...names) => {
+    for (const name of names) {
+      if (patch[name] !== undefined) return patch[name];
+    }
+    return undefined;
+  };
+  const roleValue = field('role', 'role_label');
+  const colorValue = field('color', 'role_color');
+  const portraitValue = field('portraitUrl', 'portrait_url');
+  const orderValue = field('order', 'sort_order');
+
   if (config.demoMode) {
     const rows = demoRoster();
     const index = rows.findIndex((row) => row.id === id);
@@ -203,19 +230,17 @@ export async function updatePerson(id, patch) {
 
     // Mirror the SQL's coalesce semantics: an absent key means "leave alone",
     // an explicit empty string means "clear it".
-    const pick = (key, field, fallback = '') =>
-      patch[key] === undefined ? rows[index][field] : String(patch[key]).trim() || fallback;
-
     const next = rows[index];
-    next.name = pick('name', 'name', next.name);
-    next.role_label = pick('role', 'role_label', next.role_label);
-    next.role_color = pick('color', 'role_color', next.role_color);
-    next.blurb = patch.blurb === undefined ? next.blurb : String(patch.blurb).trim();
-    next.portrait_url =
-      patch.portraitUrl === undefined
-        ? next.portrait_url
-        : String(patch.portraitUrl).trim() || null;
-    if (patch.order !== undefined) next.sort_order = Number(patch.order);
+    if (patch.name !== undefined) next.name = String(patch.name).trim() || next.name;
+    if (roleValue !== undefined) {
+      next.role_label = String(roleValue).trim() || next.role_label;
+    }
+    if (colorValue !== undefined) next.role_color = String(colorValue).trim() || next.role_color;
+    if (patch.blurb !== undefined) next.blurb = String(patch.blurb).trim();
+    if (portraitValue !== undefined) {
+      next.portrait_url = String(portraitValue).trim() || null;
+    }
+    if (orderValue !== undefined) next.sort_order = Number(orderValue);
 
     rows[index] = next;
     writeDemoRoster(rows);
@@ -229,17 +254,39 @@ export async function updatePerson(id, patch) {
   // wire_update_credits_person on the server and there never was; calling it
   // returned PGRST202 on every save, so edits silently did nothing. The
   // portrait argument is p_portrait, not p_portrait_url.
+  //
+  // Note the normalised values, not `patch.role` / `patch.color`. Reading only
+  // the short names is exactly what made this a silent no-op: the panel sends
+  // column names, so every argument arrived as null and the server's coalesce()
+  // kept the old values while the client reported "Saved."
   const { error } = await client.rpc('wire_credits_people_upsert', {
     p_id: id,
     p_name: patch.name === undefined ? null : String(patch.name).trim(),
-    p_role_label: patch.role === undefined ? null : String(patch.role).trim(),
-    p_role_color: patch.color === undefined ? null : String(patch.color).trim(),
+    p_role_label: roleValue === undefined ? null : String(roleValue).trim(),
+    p_role_color: colorValue === undefined ? null : String(colorValue).trim(),
     p_blurb: patch.blurb === undefined ? null : String(patch.blurb).trim(),
-    p_portrait: patch.portraitUrl === undefined ? null : String(patch.portraitUrl).trim(),
-    p_sort_order: patch.order === undefined ? null : Number(patch.order)
+    p_portrait: portraitValue === undefined ? null : String(portraitValue).trim(),
+    p_sort_order: orderValue === undefined ? null : Number(orderValue)
   });
 
   if (error) return { ok: false, message: describe(error, 'credits entry') };
+
+  // A save that matched no row is a failure, not a success. Confirm the row the
+  // caller asked about actually carries the new role, rather than reporting
+  // "Saved." over an edit that went nowhere.
+  const { data: after } = await client
+    .from('credits_people')
+    .select('id, role_label')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (!after) {
+    return { ok: false, message: 'That entry no longer exists, so nothing was saved.' };
+  }
+  if (roleValue !== undefined && String(after.role_label || '') !== String(roleValue).trim()) {
+    return { ok: false, message: 'The server did not save that role. Reload the page and try again.' };
+  }
+
   return { ok: true, message: 'Saved.' };
 }
 
@@ -607,7 +654,7 @@ export function renderCredits(mount) {
 function emptyState() {
   return `
     <div class="mx-auto max-w-2xl text-center">
-      <h1 class="font-headline text-3xl font-bold">Credits</h1>
+      <h1 class="font-headline text-3xl font-bold tracking-[0.06em] uppercase">Credits</h1>
       <p class="rule-soft mt-3 text-sm ink-muted">
         The people behind The Wire are being assembled. Please check back shortly.
       </p>
@@ -616,21 +663,157 @@ function emptyState() {
 }
 
 function template(people) {
+  const groups = groupByRole(people);
+
   return `
     <div class="mx-auto max-w-4xl">
       <header class="mb-8 text-center">
         <p class="eyebrow">About the newsroom</p>
-        <h1 class="font-headline text-3xl font-bold sm:text-4xl">Credits</h1>
+        <h1 class="font-headline text-3xl font-bold tracking-[0.06em] uppercase sm:text-4xl">Credits</h1>
         <p class="rule-soft mx-auto mt-3 max-w-2xl text-sm ink-muted">
           ${people.length} ${people.length === 1 ? 'person makes' : 'people make'} The Wire.
         </p>
       </header>
 
-      <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        ${people.map(card).join('')}
-      </ul>
+      ${groups
+        .map(
+          (group) => `
+        <section class="credits-band" style="--band:${bandColour(group)}">
+          <h2 class="credits-band__head">
+            <span class="credits-band__rail" aria-hidden="true"></span>
+            <span class="credits-band__name">${escapeHtml(group.role)}</span>
+            <span class="credits-band__count">${group.members.length}</span>
+          </h2>
+          <ul class="credits-band__grid">
+            ${group.members.map(card).join('')}
+          </ul>
+        </section>`
+        )
+        .join('')}
     </div>
   `;
+}
+
+/**
+ * The colour a role band is drawn in: the first member's own role colour, so the
+ * band and its members can never disagree.
+ *
+ * Falls back to the site red only when nobody in the band set one, which is why
+ * this is looked up rather than read off the group object.
+ */
+function bandColour(group) {
+  for (const member of group.members) {
+    const colour = normaliseColour(member.role_color);
+    if (colour) return colour;
+  }
+  return '#c8102e';
+}
+
+/**
+ * Bucket people by their role label so two or more people who share a role sit
+ * under one heading rather than repeating the same chip on every card.
+ *
+ * Order follows first appearance, which keeps the Owner first (the roster is
+ * ordered by role already) instead of sorting alphabetically and burying the
+ * most senior person under "Board Manager".
+ *
+ * @param {Array<object>} people
+ * @returns {Array<{role: string, members: Array<object>}>}
+ */
+export function groupByRole(people) {
+  const order = [];
+  const buckets = new Map();
+
+  for (const person of people) {
+    // An unlabelled person is a real state, not an error: the Owner's role is
+    // stored on the account, not the credits row. Give it a stable name so those
+    // people still group together instead of each getting their own heading.
+    const role = String(person.role_label || '').trim() || 'Contributor';
+
+    if (!buckets.has(role)) {
+      buckets.set(role, []);
+      order.push(role);
+    }
+    buckets.get(role).push(person);
+  }
+
+  return order.map((role) => ({ role, members: buckets.get(role) }));
+}
+
+/**
+ * Persist a whole new display order by handing the server the complete id list
+ * in reading order.
+ *
+ * There is no "move this one up" RPC and there never was. The server owns
+ * `sort_order` and rewrites it from the array position, so a single-step move
+ * would still need every row sent. Sending the full list is idempotent and
+ * cannot half-apply, which is why reordering a ROLE band (which is several
+ * people at once) needs nothing new on the database.
+ *
+ * @param {string[]} ids  every credits id, in the order they should display
+ * @returns {Promise<{ok: boolean, message: string, count?: number}>}
+ */
+export async function reorderPeople(ids) {
+  const list = Array.isArray(ids) ? ids.filter(Boolean) : [];
+  if (list.length < 2) return { ok: false, message: 'Nothing to reorder.' };
+
+  if (config.demoMode) {
+    const rows = demoRoster();
+    const byId_ = new Map(rows.map((row) => [row.id, row]));
+    let touched = 0;
+    const next = list.map((id, index) => {
+      const row = byId_.get(id);
+      if (!row) return null;
+      touched += 1;
+      return { ...row, sort_order: (index + 1) * 10 };
+    }).filter(Boolean);
+
+    // Anything the caller did not mention keeps its relative order at the end,
+    // so a stale list can never silently drop a person off the page.
+    for (const row of rows) {
+      if (!list.includes(row.id)) next.push({ ...row, sort_order: (next.length + 1) * 10 });
+    }
+
+    writeDemoRoster(next);
+    return { ok: true, message: 'Order saved.', count: touched };
+  }
+
+  const client = getSupabase();
+  if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
+
+  const { data, error } = await client.rpc('wire_credits_people_reorder', { p_ids: list });
+  if (error) return { ok: false, message: describe(error, 'credits order') };
+  return { ok: true, message: 'Order saved.', count: Number(data) || list.length };
+}
+
+/**
+ * Move a whole role band one place up or down the Credits page.
+ *
+ * This is what makes the page behave like a Discord role list: the Owner is not
+ * ordering 40 people, they are ordering departments. Everyone holding the role
+ * moves together, and nobody inside the band changes place relative to the
+ * others.
+ *
+ * @param {Array<object>} people  the full roster, as the page sees it
+ * @param {string} role           the role label to move
+ * @param {-1|1} direction        -1 up, +1 down
+ * @returns {Promise<{ok: boolean, message: string}>}
+ */
+export async function moveRoleBand(people, role, direction) {
+  const bands = groupByRole(people);
+  const from = bands.findIndex((band) => band.role === role);
+  const to = from + (direction < 0 ? -1 : 1);
+
+  if (from === -1) return { ok: false, message: 'That role is no longer on the page.' };
+  if (to < 0 || to >= bands.length) {
+    return { ok: false, message: `"${role}" is already ${direction < 0 ? 'at the top' : 'at the bottom'}.` };
+  }
+
+  // Swap the two adjacent bands, then flatten back to one ordered id list.
+  [bands[from], bands[to]] = [bands[to], bands[from]];
+
+  const result = await reorderPeople(bands.flatMap((band) => band.members.map((m) => m.id)));
+  return result.ok ? { ok: true, message: `"${role}" moved ${direction < 0 ? 'up' : 'down'}.` } : result;
 }
 
 /**

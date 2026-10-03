@@ -1326,4 +1326,406 @@ button.byline-sticker {
     transform: none;
   }
 }
+/* =============================================================================
+   GALLERY PAGE + ARTICLE PHOTO STRIP
+   -----------------------------------------------------------------------------
+   Added for the dedicated gallery page (Owner-defined category cards) and for
+   the supporting photos that sit under a dispatch's body copy.
 
+   Motion policy: the card expansion is animated, but only under
+   `prefers-reduced-motion: no-preference`, and it animates max-height and
+   opacity rather than a transform, because an expanding grid has to push the
+   rest of the page down and a slide would desynchronise from that reflow.
+   ========================================================================== */
+
+/* -----------------------------------------------------------------------------
+   Front-page door into the gallery page
+   -------------------------------------------------------------------------- */
+
+.gallery-door {
+  display: flex;
+  width: 100%;
+  cursor: pointer;
+  align-items: center;
+  gap: 1rem;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  background: var(--paper-raised, Canvas);
+  padding: 0.75rem 1rem;
+  text-align: left;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+
+/* Three stacked thumbnails, bleeding off the right edge like a filmstrip. The
+   overflow is clipped on the parent so the strip reads as continuous rather
+   than as three separate squares. */
+.gallery-door__strip {
+  display: flex;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 2px;
+}
+
+.gallery-door__img {
+  width: 4.5rem;
+  height: 3.5rem;
+  flex: 0 0 auto;
+  object-fit: cover;
+  border-right: 2px solid var(--paper, Canvas);
+}
+
+.gallery-door__img:last-child {
+  border-right: 0;
+}
+
+.gallery-door__text {
+  /* min-width: 0 alone is not enough in a flex row: the item still lays out at
+     its content width and pushes the button past the viewport. It needs a
+     shrinkable basis AND permission to shrink, otherwise the fixed 4.5rem
+     preview strip plus a long headline overflows a phone by ~33px. */
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Headlines here are tracked-out and uppercased, which leaves them with no
+   obvious break opportunity. Without this a long count line ("12 photographs in
+   4 categories") cannot wrap and re-introduces the same overflow. */
+.gallery-door__text > span:first-child {
+  overflow-wrap: anywhere;
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .gallery-door:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent, currentColor);
+  }
+
+  .gallery-door:hover .gallery-door__img {
+    transform: scale(1.06);
+  }
+
+  .gallery-door__img {
+    transition: transform 220ms ease;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   Category cards
+   -------------------------------------------------------------------------- */
+
+.gallery-cards {
+  display: grid;
+  gap: 1rem;
+}
+
+@media (min-width: 48rem) {
+  .gallery-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.gallery-card {
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  background: var(--paper-raised, Canvas);
+}
+
+/* The open card gets the accent rule on its left edge, which is the only cue
+   needed to tell the reader which of several cards is expanded. */
+.gallery-card.is-open {
+  border-left: 3px solid var(--accent, currentColor);
+}
+
+.gallery-card__head {
+  display: flex;
+  width: 100%;
+  cursor: pointer;
+  align-items: center;
+  gap: 0.875rem;
+  padding: 0.75rem;
+  text-align: left;
+}
+
+.gallery-card__cover {
+  width: 4.5rem;
+  height: 3.5rem;
+  flex: 0 0 auto;
+  object-fit: cover;
+}
+
+.gallery-card__body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.gallery-card__chevron {
+  flex: 0 0 auto;
+  transition: transform 220ms ease;
+}
+
+.gallery-card.is-open .gallery-card__chevron {
+  transform: rotate(180deg);
+}
+
+.gallery-card__panel {
+  border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  padding: 0.75rem;
+}
+
+.gallery-card__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.625rem;
+}
+
+@media (min-width: 40rem) {
+  .gallery-card__grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.gallery-card__shot {
+  display: block;
+  width: 100%;
+  cursor: pointer;
+  overflow: hidden;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  text-align: left;
+}
+
+.gallery-card__shot img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.gallery-card__caption {
+  display: block;
+  padding: 0.375rem 0.5rem;
+  font-size: 0.6875rem;
+  line-height: 1.3;
+  color: var(--ink-muted, currentColor);
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .gallery-card__shot:hover img {
+    transform: scale(1.05);
+  }
+
+  .gallery-card__shot img {
+    transition: transform 260ms ease;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   Article photo strip
+   -------------------------------------------------------------------------- */
+
+.article-photos__toggle {
+  display: flex;
+  width: 100%;
+  cursor: pointer;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  padding: 0.5rem;
+  text-align: left;
+}
+
+.article-photos__thumbs {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.article-photos__thumbs img {
+  width: 3.75rem;
+  height: 3rem;
+  flex: 0 0 auto;
+  object-fit: cover;
+}
+
+.article-photos__label {
+  flex: 0 0 auto;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-muted, currentColor);
+}
+
+/* One photo per row on a phone. Two side by side at 4:3 is the widest that
+   still leaves each thumbnail legible at arm's length. */
+.article-photos__grid {
+  display: grid;
+  gap: 0.625rem;
+  margin-top: 0.625rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 48rem) {
+  .article-photos__grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.article-photos__item {
+  margin: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.article-photos__item img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gallery-door,
+  .gallery-card__chevron,
+  .gallery-door__img,
+  .gallery-card__shot img {
+    transition: none;
+    transform: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Credits role bands
+   --------------------------------------------------------------------------
+   Discord's member list has one coloured block per role and the blocks stack.
+   That is the model here: the Owner orders ROLES, not 40 individual people, and
+   everyone holding a role moves as one unit.
+
+   `--band` is set inline per band by renderCredits() from the role's own colour.
+   color-mix() derives the soft fill from it, so one colour drives the whole
+   block and a band can never disagree with the members inside it.
+   -------------------------------------------------------------------------- */
+
+.credits-band {
+  --band: #c8102e;
+  margin-bottom: 2.5rem;
+  border-radius: 0.875rem;
+  background: color-mix(in srgb, var(--band) 7%, transparent);
+  padding: 0.875rem;
+}
+
+.credits-band:last-child {
+  margin-bottom: 0;
+}
+
+.credits-band__head {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-bottom: 0.875rem;
+  padding: 0.25rem 0.25rem 0.625rem;
+}
+
+/* The rail is the band identity: a thick colour stripe in the role's colour,
+   echoing the Discord role chip. */
+.credits-band__rail {
+  flex: 0 0 auto;
+  width: 0.375rem;
+  align-self: stretch;
+  min-height: 1.5rem;
+  border-radius: 999px;
+  background: var(--band);
+}
+
+.credits-band__name {
+  font-family: var(--font-headline, inherit);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--band) 72%, var(--color-ink, #111));
+}
+
+.credits-band__count {
+  margin-left: auto;
+  flex: 0 0 auto;
+  min-width: 1.5rem;
+  padding: 0.0625rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--band) 16%, transparent);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-align: center;
+  color: color-mix(in srgb, var(--band) 70%, var(--color-ink, #111));
+}
+
+.credits-band__grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr;
+}
+
+@media (width >= 40rem) {
+  .credits-band__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (width >= 64rem) {
+  .credits-band__grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* --- Owner panel: the reorderable role bands ------------------------------ */
+
+/* One draggable-looking block per role in the Credits tab. The border picks up
+   the role colour so the Owner recognises the same band they see on the page. */
+.credits-band-editor {
+  --band: #c8102e;
+  margin-bottom: 1.5rem;
+  border-radius: 0.875rem;
+  border: 1px solid color-mix(in srgb, var(--band) 30%, transparent);
+  background: color-mix(in srgb, var(--band) 5%, transparent);
+  padding: 0.75rem;
+}
+
+.credits-band-editor__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  padding: 0.25rem;
+}
+
+.credits-band-editor__name {
+  font-family: var(--font-headline, inherit);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--band) 70%, var(--color-ink, #111));
+}
+
+.credits-band-editor__count {
+  font-size: 0.6875rem;
+  color: var(--color-ink-muted, #666);
+}
+
+/* Move buttons sit on the right on desktop, and wrap to a full-width pair on a
+   phone, where a 32px target is too small to hit reliably. */
+.credits-band-editor__moves {
+  margin-left: auto;
+  display: flex;
+  gap: 0.25rem;
+}
+
+@media (width < 30rem) {
+  .credits-band-editor__moves {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .credits-band-editor__moves > button {
+    flex: 1 1 0;
+    justify-content: center;
+  }
+}

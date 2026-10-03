@@ -261,10 +261,13 @@ export function renderPublication() {
       </div>
     </section>
 
-    <!-- ================= PHOTO GALLERY ================= -->
+    <!-- ================= PHOTO GALLERY (link only) ================= -->
+    <!-- The gallery itself moved to its own page (see #gallery-view below). This
+         section is now just a door into it, so the front page does not carry the
+         whole photo grid twice. -->
     <section id="gallery" aria-labelledby="gallery-heading" class="mb-12">
       ${sectionHeading('gallery-heading', 'Selected by the owner', 'Photo Gallery')}
-      ${renderGallery()}
+      ${renderGalleryDoor()}
     </section>
 
     <!-- ================= ASSIGNMENT BOARD ================= -->
@@ -283,54 +286,238 @@ export function renderPublication() {
 
     const shot = event.target.closest('[data-lightbox]');
     if (shot) openLightbox(shot.dataset.lightbox);
+
+    // The gallery door. Dispatched on the document because app.js owns the
+    // reader-view router: this view does not know how to switch pages.
+    if (event.target.closest('[data-gallery-open]')) {
+      document.dispatchEvent(new CustomEvent('wire:navigate', { detail: 'gallery' }));
+    }
   };
 }
 
 /**
- * The public photo gallery. Only images the Owner has explicitly published
- * appear here; the rest of the media shelf is an internal production resource
- * and is deliberately not exposed to readers.
+ * The front-page door into the gallery page.
+ *
+ * A deliberate teaser rather than the full grid: the gallery is now a page of
+ * its own, and rendering every published photo here as well would ship the same
+ * images twice and leave the reader with two grids to choose between.
  */
-function renderGallery() {
-  const shots = store.listGallery();
+function renderGalleryDoor() {
+  const groups = store.listGalleryByCategory();
+  const total = groups.reduce((sum, group) => sum + group.shots.length, 0);
 
-  if (!shots.length) {
+  if (!total) {
     return `<p class="panel p-6 text-sm ink-muted">No photographs have been published to the gallery yet. The Owner can publish any image from the Media shelf in the Newsroom Panel.</p>`;
   }
 
+  const previews = groups
+    .flatMap((group) => group.shots)
+    .slice(0, 3)
+    .map(
+      (shot) => `
+      <img
+        src="${escapeHtml(safeUrl(shot.url) || BLANK_IMAGE)}"
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        decoding="async"
+        class="gallery-door__img"
+      />`
+    )
+    .join('');
+
   return `
-    <p class="ink-muted mb-4 text-sm">
-      ${shots.length} photograph${shots.length === 1 ? '' : 's'} from the newsroom.
-    </p>
-    <div class="gallery-grid">
-      ${shots
-        .map(
-          (shot, index) => `
-        <figure class="gallery-item">
-          <button
-            type="button"
-            class="gallery-btn"
-            data-lightbox="${escapeHtml(shot.id)}"
-            aria-label="View larger: ${escapeHtml(shot.caption)}"
-          >
-            <img
-              src="${escapeHtml(safeUrl(shot.url) || BLANK_IMAGE)}"
-              alt="${escapeHtml(shot.caption)}"
-              loading="lazy"
-              decoding="async"
-              width="640"
-              height="480"
-            />
-            <span class="gallery-zoom" aria-hidden="true">
-              <i class="fa-solid fa-magnifying-glass-plus"></i>
-            </span>
-          </button>
-          <figcaption>${escapeHtml(shot.caption)}</figcaption>
-        </figure>`
-        )
-        .join('')}
-    </div>
+    <button type="button" class="gallery-door" data-gallery-open>
+      <span class="gallery-door__strip" aria-hidden="true">${previews}</span>
+      <span class="gallery-door__text">
+        <span class="font-headline text-lg font-black tracking-[0.06em] uppercase">
+          ${total} photograph${total === 1 ? '' : 's'} in ${groups.length} categor${groups.length === 1 ? 'y' : 'ies'}
+        </span>
+        <span class="ink-muted mt-1 block text-sm">
+          Open the gallery
+          <i class="fa-solid fa-arrow-right ml-1" aria-hidden="true"></i>
+        </span>
+      </span>
+    </button>
   `;
+}
+
+/**
+ * One category card on the gallery page.
+ *
+ * A card is a <details>-shaped button, not a link: the photos expand underneath
+ * it in place. That keeps the reader on the page, which matters on a phone where
+ * a navigation would cost a full screen transition to see four thumbnails.
+ *
+ * @param {{category: object|null, shots: Array<object>}} group
+ */
+function renderGalleryCard(group) {
+  const category = group.category;
+  const name = category?.name || 'Uncategorised';
+  const id = category?.id || 'uncategorised';
+
+  // The cover is the Owner's chosen image, else a photo filed under the card.
+  const cover =
+    safeUrl(category?.coverUrl) ||
+    safeUrl(group.shots[0]?.url) ||
+    BLANK_IMAGE;
+
+  const count = group.shots.length;
+
+  return `
+    <article class="gallery-card" data-gallery-card="${escapeHtml(id)}">
+      <button
+        type="button"
+        class="gallery-card__head"
+        data-gallery-category="${escapeHtml(id)}"
+        aria-expanded="false"
+        aria-controls="gallery-panel-${escapeHtml(id)}"
+      >
+        <img
+          src="${escapeHtml(cover)}"
+          alt=""
+          aria-hidden="true"
+          loading="lazy"
+          decoding="async"
+          class="gallery-card__cover"
+        />
+        <span class="gallery-card__body">
+          <span class="font-headline text-lg font-black tracking-[0.06em] uppercase">
+            ${escapeHtml(name)}
+          </span>
+          <span class="ink-muted mt-0.5 block text-sm">
+            ${count} photograph${count === 1 ? '' : 's'}
+          </span>
+        </span>
+        <i
+          class="gallery-card__chevron fa-solid fa-chevron-down"
+          aria-hidden="true"
+        ></i>
+      </button>
+
+      <div
+        id="gallery-panel-${escapeHtml(id)}"
+        class="gallery-card__panel"
+        data-gallery-panel="${escapeHtml(id)}"
+        hidden
+      >
+        ${
+          count
+            ? `<div class="gallery-card__grid">
+                ${group.shots
+                  .map(
+                    (shot) => `
+                    <button
+                      type="button"
+                      class="gallery-card__shot"
+                      data-lightbox="${escapeHtml(shot.id)}"
+                      aria-label="Open ${escapeHtml(shot.caption || name)} full size"
+                    >
+                      <img
+                        src="${escapeHtml(safeUrl(shot.url) || BLANK_IMAGE)}"
+                        alt="${escapeHtml(shot.caption || '')}"
+                        loading="lazy"
+                        decoding="async"
+                      />
+                      ${
+                        shot.caption
+                          ? `<span class="gallery-card__caption">${escapeHtml(shot.caption)}</span>`
+                          : ''
+                      }
+                    </button>`
+                  )
+                  .join('')}
+              </div>`
+            : `<p class="p-4 text-sm ink-muted">
+                 No photographs filed under this category yet.
+               </p>`
+        }
+      </div>
+    </article>
+  `;
+}
+
+/**
+ * Expand or collapse one category card in place.
+ *
+ * Only one card is open at a time: on a phone two expanded grids push the rest
+ * of the categories off the screen entirely, so the reader loses the sense of
+ * how many there are.
+ *
+ * @param {HTMLElement} card the [data-gallery-category] button that was clicked
+ */
+function toggleGalleryCategory(button) {
+  const id = button.dataset.galleryCategory;
+  const panel = document.querySelector(`[data-gallery-panel="${CSS.escape(id)}"]`);
+  if (!panel) return;
+
+  const isOpen = button.getAttribute('aria-expanded') === 'true';
+
+  // Close whatever else is open first.
+  document
+    .querySelectorAll('[data-gallery-category][aria-expanded="true"]')
+    .forEach((other) => {
+      if (other === button) return;
+      other.setAttribute('aria-expanded', 'false');
+      other.closest('.gallery-card')?.classList.remove('is-open');
+      const sibling = document.querySelector(
+        `[data-gallery-panel="${CSS.escape(other.dataset.galleryCategory)}"]`
+      );
+      if (sibling) sibling.hidden = true;
+    });
+
+  button.setAttribute('aria-expanded', String(!isOpen));
+  panel.hidden = isOpen;
+  button.closest('.gallery-card')?.classList.toggle('is-open', !isOpen);
+}
+
+/**
+ * The gallery page itself: one card per Owner-defined category.
+ *
+ * Rendered into #gallery-view by renderGalleryPage(). Clicking a card expands it
+ * in place (see toggleGalleryCategory) rather than navigating, so the reader
+ * keeps their place and the card they came from, which is what a phone-first
+ * reader expects from a grid of thumbnails.
+ */
+export function renderGalleryPage() {
+  const view = byId('gallery-view');
+  if (!view) return;
+
+  const groups = store.listGalleryByCategory();
+  const total = groups.reduce((sum, group) => sum + group.shots.length, 0);
+
+  view.innerHTML = `
+    ${sectionHeading('gallery-page-heading', 'Selected by the owner', 'Gallery')}
+    ${
+      total
+        ? `<p class="ink-muted mb-6 text-sm">
+            ${total} photograph${total === 1 ? '' : 's'},
+            ${groups.length} categor${groups.length === 1 ? 'y' : 'ies'}.
+            Tap a category to open it.
+          </p>`
+        : ''
+    }
+    ${
+      groups.length
+        ? `<div class="gallery-cards">${groups.map(renderGalleryCard).join('')}</div>`
+        : `<p class="panel p-6 text-sm ink-muted">
+             The gallery is empty. The Owner can add categories and publish
+             photographs from the Media shelf in the Newsroom Panel.
+           </p>`
+    }
+  `;
+
+  // One delegated listener for the whole page: the cards are destroyed on every
+  // repaint, so per-card binding would be lost the moment the store changed.
+  view.onclick = (event) => {
+    const card = event.target.closest('[data-gallery-category]');
+    if (card) {
+      toggleGalleryCategory(card);
+      return;
+    }
+    const shot = event.target.closest('[data-lightbox]');
+    if (shot) openLightbox(shot.dataset.lightbox);
+  };
 }
 
 /**
@@ -474,6 +661,9 @@ export async function openArticle(id) {
     .join('');
 
   const image = safeUrl(article.image);
+  const extraPhotos = Array.isArray(article.extraImages)
+    ? article.extraImages.filter(Boolean)
+    : [];
 
   body.innerHTML = `
     <article>
@@ -501,11 +691,88 @@ export async function openArticle(id) {
           cls: 'mt-2 text-xs font-semibold tracking-wide uppercase ink-muted'
         })}
         <div class="first-letter-cap mt-2">${paragraphs || '<p class="mt-4">This dispatch has no body copy yet.</p>'}</div>
+        ${renderArticlePhotoStrip(extraPhotos)}
       </div>
     </article>
   `;
 
+  // The strip expands in place. Bound on the dialog body, which was just
+  // replaced wholesale, so the listener dies with the old nodes.
+  body.querySelectorAll('[data-photo-toggle]').forEach((trigger) => {
+    trigger.addEventListener('click', () => {
+      const panel = body.querySelector(
+        `[data-photo-panel="${trigger.dataset.photoToggle}"]`
+      );
+      const open = trigger.getAttribute('aria-expanded') === 'true';
+      if (!panel) return;
+      trigger.setAttribute('aria-expanded', String(!open));
+      panel.hidden = open;
+    });
+  });
+
   openDialog('article-modal');
+}
+
+/**
+ * The supporting photographs under a dispatch's body copy.
+ *
+ * Collapsed by default: a phone reader who opens a story to read it should not
+ * be scrolled past three full-bleed images first. One row of small thumbnails
+ * sits after the copy, and tapping it expands the photos in place rather than
+ * paging to a separate screen -- the reader stays in the article they opened.
+ *
+ * The count is capped at MAX_ARTICLE_PHOTOS in the store, so nothing has to be
+ * trimmed here; this function only renders what it is given.
+ *
+ * @param {string[]} urls
+ */
+function renderArticlePhotoStrip(urls) {
+  if (!urls.length) return '';
+
+  return `
+    <section class="article-photos" aria-label="More photographs from this story">
+      <h3 class="rule-soft mb-3 mt-8 border-t pt-4 font-headline text-xs font-bold tracking-[0.18em] uppercase ink-muted">
+        ${urls.length} more photograph${urls.length === 1 ? '' : 's'}
+      </h3>
+
+      <button
+        type="button"
+        class="article-photos__toggle"
+        data-photo-toggle="strip"
+        aria-expanded="false"
+        aria-controls="article-photo-panel"
+      >
+        <span class="article-photos__thumbs" aria-hidden="true">
+          ${urls
+            .map(
+              (url) =>
+                `<img src="${escapeHtml(safeUrl(url) || BLANK_IMAGE)}" alt="" loading="lazy" decoding="async" />`
+            )
+            .join('')}
+        </span>
+        <span class="article-photos__label">
+          <i class="fa-solid fa-images" aria-hidden="true"></i>
+          View the photo set
+        </span>
+      </button>
+
+      <div class="article-photos__grid" id="article-photo-panel" data-photo-panel="strip" hidden>
+        ${urls
+          .map(
+            (url, index) => `
+            <figure class="article-photos__item">
+              <img
+                src="${escapeHtml(safeUrl(url) || BLANK_IMAGE)}"
+                alt="Supporting photograph ${index + 1} for this story"
+                loading="lazy"
+                decoding="async"
+              />
+            </figure>`
+          )
+          .join('')}
+      </div>
+    </section>
+  `;
 }
 
 /* -------------------------------------------------------------------------- */

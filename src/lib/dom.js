@@ -91,7 +91,35 @@ export function showToast(message, { type = 'info', duration = 4200 } = {}) {
   toast.append(icon, text, close);
   stack.appendChild(toast);
 
-  window.setTimeout(() => toast.remove(), duration);
+  // Duration 0 means "stay until dismissed", not "go away immediately".
+  // `setTimeout(fn, 0)` fires on the next tick, so every long-running toast
+  // built with duration: 0 -- the in-flight upload notices -- was vanishing
+  // the moment it was shown.
+  let timer = null;
+  if (duration > 0) {
+    timer = window.setTimeout(() => toast.remove(), duration);
+  }
+
+  /**
+   * Rewrite the message of a toast already on screen, for progress reporting.
+   * Clears any pending auto-dismiss so an update cannot be yanked away
+   * mid-flight, and cancels the timer when the toast is removed by hand.
+   */
+  toast.setMessage = (next) => {
+    text.textContent = next;
+    if (timer !== null) {
+      window.clearTimeout(timer);
+      timer = null;
+    }
+    return toast;
+  };
+
+  const originalRemove = toast.remove.bind(toast);
+  toast.remove = () => {
+    if (timer !== null) window.clearTimeout(timer);
+    originalRemove();
+  };
+
   return toast;
 }
 

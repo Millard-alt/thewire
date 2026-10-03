@@ -33,6 +33,7 @@ import {
   renderMasthead,
   renderBreakingBanner,
   renderPublication,
+  renderGalleryPage,
   initPublicInteractions
 } from './views/public.js';
 
@@ -67,26 +68,37 @@ function renderChrome() {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Reader view switching (Publication <-> Credits)                              */
+/* Reader view switching (Publication <-> Credits <-> Gallery)                 */
 /* -------------------------------------------------------------------------- */
 
 /** The reader-facing section currently on screen. */
 let readerView = 'publication';
 
+/** The three reader pages, in the order the router recognises them. */
+const READER_VIEWS = ['publication', 'credits', 'gallery'];
+
 /**
  * Show exactly one reader view. The Owner workspace is untouched by this, so a
- * reader deep-link never has to reload to reach the credits.
- * @param {'publication'|'credits'} name
+ * reader deep-link never has to reload to reach the credits or the gallery.
+ *
+ * `gallery` is a third view, not a section anchor: it has its own #gallery-view
+ * mount, so it must be toggled the same way as the other two. It was previously
+ * dispatched as a `wire:navigate` event with nothing listening for it, which
+ * left the gallery door as a dead button.
+ *
+ * @param {'publication'|'credits'|'gallery'} name
  */
 function showReaderView(name) {
-  const target = name === 'credits' ? 'credits' : 'publication';
+  const target = READER_VIEWS.includes(name) ? name : 'publication';
   readerView = target;
 
   const publication = byId('publication-view');
   const credits = byId('credits-view');
+  const gallery = byId('gallery-view');
 
   if (publication) publication.classList.toggle('hidden', target !== 'publication');
   if (credits) credits.classList.toggle('hidden', target !== 'credits');
+  if (gallery) gallery.classList.toggle('hidden', target !== 'gallery');
 
   // Paint the credits roster on first reveal only: it costs a round-trip, and
   // the publication is what most visitors want first.
@@ -94,6 +106,10 @@ function showReaderView(name) {
     renderCredits(credits);
     if (credits && !credits.dataset.painted) credits.dataset.painted = '1';
   }
+
+  // The gallery is built from the Owner's categories, which the Owner can change
+  // at any time, so it is repainted on every reveal rather than once.
+  if (target === 'gallery') renderGalleryPage();
 
   // Keep the header nav's pressed state honest.
   document
@@ -127,10 +143,10 @@ function initReaderNavigation() {
     const link = event.target.closest('[data-nav]');
     if (!link) return;
 
-    // Only the two reader views are handled here. data-nav is also used by the
+    // Only the reader views are handled here. data-nav is also used by the
     // workspace for in-panel jumps, so guard on the known set.
     const target = link.dataset.nav;
-    if (target !== 'credits' && target !== 'publication') return;
+    if (!READER_VIEWS.includes(target)) return;
 
     event.preventDefault();
 
@@ -194,8 +210,27 @@ function initReaderNavigation() {
     }
   });
 
-  // Land on the credits page when a reader arrives with #credits in the URL.
+  // Land on the right page when a reader arrives with #credits or #gallery.
+  // Both are reader pages, not in-page anchors, so they need the full view swap.
   if (window.location.hash === '#credits') showReaderView('credits');
+  if (window.location.hash === '#gallery') showReaderView('gallery');
+
+  // Public views ask the shell to change page without knowing how the router
+  // works (src/views/public.js owns the gallery door, not the routing).
+  document.addEventListener('wire:navigate', (event) => {
+    const target = event.detail;
+    if (!READER_VIEWS.includes(target)) return;
+
+    if (isAdminOpen()) closeAdmin();
+
+    showReaderView(target);
+    byId('main-content')?.focus({ preventScroll: true });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    if (window.location.hash !== `#${target}`) {
+      history.replaceState(null, '', `#${target}`);
+    }
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -366,6 +401,12 @@ export async function boot() {
     if (readerView === 'credits') {
       const credits = byId('credits-view');
       if (credits) renderCredits(credits);
+      renderChrome();
+    } else if (readerView === 'gallery') {
+      // Repaint the gallery, not the publication: the publication is hidden, so
+      // rendering it would do invisible work and leave this page showing stale
+      // categories after the Owner adds or removes one.
+      renderGalleryPage();
       renderChrome();
     } else {
       renderPublic();

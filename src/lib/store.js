@@ -35,9 +35,58 @@ const TABLES = {
   staff: 'staff',
   topPerformers: 'top_performers',
   mediaLibrary: 'media_assets',
+  galleryCategories: 'gallery_categories',
   auditLogs: 'audit_logs',
   broadcasts: 'broadcasts'
 };
+
+/**
+ * How many extra photographs one article may carry, on top of its lead image.
+ *
+ * Three is a hard ceiling, not a preference. It is what keeps the reader view
+ * readable on a phone: the layout below renders 1 as a wide frame, 2 as a pair
+ * and 3 as a full-bleed lead above a two-up, which are the only arrangements
+ * that do not leave a stranded half-width row. A fourth has no good layout
+ * without the strip turning into a grid that stops reading as one story.
+ */
+export const MAX_ARTICLE_PHOTOS = 3;
+
+/**
+ * Normalise whatever Postgres gave us for `articles.extra_images` into the
+ * shape the renderer expects: an array of `{ url, caption }`, at most
+ * MAX_ARTICLE_PHOTOS long, with no empty URLs.
+ *
+ * This runs on every hydration, so it has to tolerate all of:
+ *   - the key missing entirely  -> 017 not pasted yet
+ *   - null                      -> a row written before 017 normalised it
+ *   - a bare string or object   -> should be impossible (017 has a CHECK) but a
+ *                                  bad hand-written row must not break the page
+ * Returns [] for all of them, which renders as "no extra photos".
+ */
+export function readExtraImages(raw) {
+  if (!Array.isArray(raw)) return [];
+
+  // Accept a bare URL string as well as `{ url, caption }`. Both shapes reach
+  // this function: Postgres returns jsonb objects, but the article editor hands
+  // over a plain list of strings it built from pasted URLs and the file picker.
+  // Requiring an object here silently threw away every typed or pasted photo,
+  // so the article saved fine and simply had no strip.
+  const asEntry = (entry) =>
+    typeof entry === 'string'
+      ? { url: entry, caption: '' }
+      : entry && typeof entry === 'object'
+        ? { url: entry.url, caption: entry.caption }
+        : null;
+
+  return raw
+    .map(asEntry)
+    .filter((entry) => entry && typeof entry.url === 'string' && entry.url.trim())
+    .slice(0, MAX_ARTICLE_PHOTOS)
+    .map((entry) => ({
+      url: entry.url.trim(),
+      caption: entry.caption ? String(entry.caption) : ''
+    }));
+}
 
 export const ARTICLE_STATUSES = [
   'Published',
@@ -70,6 +119,45 @@ function writeLocalState() {
   } catch (error) {
     console.warn('[store] could not persist to localStorage', error);
   }
+}
+
+/**
+ * Make one media entry safe to read, whatever shape it was written in.
+ *
+ * WHY THIS EXISTS
+ * The first version of the gallery feature keyed a photo's category under
+ * `galleryCategoryId`. Everything in the app -- listGalleryByCategory(),
+ * updateMedia(), the media tab and the 017 column mapping -- keys off
+ * `categoryId`. The seed therefore wrote a field nothing read, and the gallery
+ * page showed every photo as unfiled.
+ *
+ * The seed is fixed, but a browser that loaded that build still holds the old
+ * key in localStorage, and localStorage is only cleared by hand. Without a
+ * tolerant read those users would keep seeing a broken gallery with no way to
+ * recover short of a private-mode visit. So the read is made tolerant as well
+ * as the write: accept either spelling, drop the dead one, and leave a
+ * well-formed entry behind for the next save.
+ *
+ * @param {object} item
+ * @returns {object} a new entry carrying a canonical `categoryId`
+ */
+function normaliseMediaEntry(item) {
+  if (!item || typeof item !== 'object') return item;
+
+  const legacy = item.galleryCategoryId;
+  const canonical = item.categoryId;
+
+  // The canonical value wins when both are present; the legacy key only ever
+  // fills a gap.
+  const categoryId = canonical ?? legacy ?? null;
+
+  if (!('categoryId' in item) && legacy === undefined) return item;
+
+  const next = { ...item, categoryId: categoryId || null };
+  // Never carry the dead key forward, or the next save would write it back and
+  // it would reappear in the cached copy.
+  delete next.galleryCategoryId;
+  return next;
 }
 
 /**
@@ -117,7 +205,12 @@ function mergeState(next = {}, { remote = false } = {}) {
     assignments: pick(next.assignments, seed.assignments),
     staff: pick(next.staff, seed.staff),
     topPerformers: pick(next.topPerformers, seed.topPerformers),
-    mediaLibrary: pick(next.mediaLibrary, seed.mediaLibrary),
+    mediaLibrary: pick(next.mediaLibrary, seed.mediaLibrary).map(normaliseMediaEntry),
+    // Categories and per-article photos are the two newest slices. They fall back
+    // to the seed ONLY in the local demo store; on a live database an empty
+    // table means the Owner has not created any yet, which is the honest answer
+    // and must not be papered over with demo rows.
+    galleryCategories: pick(next.galleryCategories, seed.galleryCategories),
     auditLogs: pick(next.auditLogs, seed.auditLogs),
     branding: pickObject(next.branding, seed.branding),
     breakingNews: pickObject(next.breakingNews, seed.breakingNews),
@@ -262,6 +355,7 @@ export async function hydrate() {
       staff,
       performers,
       media,
+      categories,
       audit,
       broadcasts,
       settings
@@ -271,6 +365,10 @@ export async function hydrate() {
       client.from(TABLES.staff).select('*').order('created_at', { ascending: false }),
       client.from(TABLES.topPerformers).select('*').order('articles_count', { ascending: false }),
       client.from(TABLES.mediaLibrary).select('*').order('created_at', { ascending: false }),
+      client.from(TABLES.galleryCategories).select('*').order('sort_order', {
+        ascending: true,
+        nullsFirst: false
+      }),
       client
         .from(TABLES.auditLogs)
         .select('*')
@@ -325,7 +423,13 @@ export async function hydrate() {
         // Read defensively: migration 007 may not have run yet, in which case
         // PostgREST omits the key entirely rather than returning null.
         authorAccountId: row.author_account_id ?? null,
-        featured: Boolean(row.featured)
+        featured: Boolean(row.featured),
+        // The extra photos a writer attached. Migration 017 stores them as a
+        // jsonb array on the article itself, not in a side table, so this is the
+        // only place that shape needs defending: `extra_images` is absent
+        // entirely when 017 has not been pasted, and can be NULL or a non-array
+        // on a row written before the migration normalised it.
+        extraImages: readExtraImages(row.extra_images)
       })),
       assignments: (assignments.data || []).map((row) => ({
         id: row.id,
@@ -363,7 +467,18 @@ export async function hydrate() {
         // treat anything missing as "not published" rather than showing every
         // uploaded image on the public page.
         inGallery: Boolean(row.in_gallery),
-        galleryOrder: row.gallery_order ?? null
+        galleryOrder: row.gallery_order ?? null,
+        // Null when the photo is not filed under a category. 017 may not be
+        // applied yet, in which case PostgREST omits the key entirely.
+        categoryId: row.category_id ?? null
+      })),
+      // Owner-defined cards for the gallery page. A null sortOrder sorts last,
+      // which is what the public view wants for a freshly created category.
+      galleryCategories: (categories.data || []).map((row) => ({
+        id: row.id,
+        name: row.name,
+        coverUrl: row.cover_url || '',
+        sortOrder: row.sort_order ?? null
       })),
       auditLogs: (audit.data || []).map((row) => ({
         id: row.id,
@@ -529,6 +644,71 @@ export async function hasOwnershipColumn() {
 }
 
 /**
+ * Does `articles.extra_images` exist yet?
+ *
+ * Same reasoning as hasOwnershipColumn() above, for the same reason: a deploy
+ * that lands before migration 017 must not break article creation. PostgREST
+ * rejects the whole request (PGRST204) when an unknown column appears in the
+ * payload, so the probe gates whether the key is sent at all rather than
+ * letting a missing migration surface as "could not save story".
+ */
+let extraImagesColumnReady = null;
+
+export async function hasExtraImagesColumn() {
+  if (extraImagesColumnReady !== null) return extraImagesColumnReady;
+  if (config.demoMode || !db()) {
+    extraImagesColumnReady = false;
+    return false;
+  }
+  try {
+    const { error } = await db().from(TABLES.articles).select('extra_images').limit(1);
+    extraImagesColumnReady = !error;
+    if (error) {
+      console.warn(
+        '[store] articles.extra_images is missing — run supabase/017_gallery_categories_and_article_photos.sql',
+        error.message
+      );
+    }
+  } catch {
+    extraImagesColumnReady = false;
+  }
+  return extraImagesColumnReady;
+}
+
+/**
+ * Does `media_assets.category_id` exist yet?
+ *
+ * Same rationale as hasExtraImagesColumn() above, for the same migration (017).
+ * This matters more than usual here: without it, one uncategorised upload
+ * alongside a categorised one would fail with a 400 for the whole batch.
+ */
+let categoryColumnReady = null;
+
+export async function hasCategoryColumn() {
+  if (categoryColumnReady !== null) return categoryColumnReady;
+  if (config.demoMode || !db()) {
+    categoryColumnReady = false;
+    return false;
+  }
+  try {
+    const { error } = await db()
+      .from(TABLES.mediaLibrary)
+      .select('category_id')
+      .limit(1);
+    categoryColumnReady = !error;
+    if (error) {
+      console.warn(
+        '[store] media_assets.category_id is missing — run supabase/017_gallery_categories_and_article_photos.sql',
+        error.message
+      );
+    }
+  } catch {
+    categoryColumnReady = false;
+  }
+  return categoryColumnReady;
+}
+
+/**
  * May the signed-in account delete this article?
  *
  * This is a UI affordance only. The real enforcement is the RLS policy in
@@ -600,7 +780,11 @@ export async function createArticle(input) {
     caption: input.caption || '',
     body: input.body || '',
     status: ARTICLE_STATUSES.includes(input.status) ? input.status : 'Pending Review',
-    featured: Boolean(input.featured)
+    featured: Boolean(input.featured),
+    // Up to MAX_ARTICLE_PHOTOS, on top of the lead image above. Normalised here
+    // so an over-long or malformed list from any caller is trimmed before it can
+    // reach either the database CHECK or the renderer.
+    extraImages: readExtraImages(input.extraImages)
   };
 
   if (!config.demoMode && db()) {
@@ -622,6 +806,14 @@ export async function createArticle(input) {
 
     if (await hasOwnershipColumn()) {
       row.author_account_id = currentAccountId();
+    }
+
+    // Only send extra_images once the column is known to exist. Sending an
+    // unknown key makes PostgREST reject the entire insert with PGRST204, so
+    // before 017 is pasted the photos would cost the writer their story, not
+    // just their photos.
+    if (article.extraImages.length && (await hasExtraImagesColumn())) {
+      row.extra_images = article.extraImages;
     }
 
     const inserted = assertOk(
@@ -669,6 +861,11 @@ export async function updateArticle(id, patch) {
     if (patch.body !== undefined) row.body = patch.body;
     if (patch.status !== undefined) row.status = patch.status;
     if (patch.featured !== undefined) row.featured = patch.featured;
+    // Same gate as create: an unknown column in the payload fails the whole
+    // update, which would lose the writer's text edits along with the photos.
+    if (patch.extraImages !== undefined && (await hasExtraImagesColumn())) {
+      row.extra_images = readExtraImages(patch.extraImages);
+    }
 
     if (Object.keys(row).length) {
       assertOk(
@@ -684,6 +881,10 @@ export async function updateArticle(id, patch) {
   }
 
   Object.assign(article, patch);
+  // Re-normalise rather than trusting the caller. Object.assign above copies
+  // whatever shape the caller passed, and every other consumer of this object
+  // (the reader view, the panel, the audit line) assumes the trimmed form.
+  article.extraImages = readExtraImages(article.extraImages);
   await addAuditLog(`Updated article "${article.title}"`);
   commit();
   return article;
@@ -965,8 +1166,21 @@ export async function deleteStaff(id) {
 /* MEDIA LIBRARY — full CRUD                                                   */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Every image on the shared shelf, each carrying the NAME of its category.
+ *
+ * `categoryName` is resolved here for the same reason as the category `count`:
+ * the media tab and the gallery page both print it, and neither has the category
+ * table to hand. Resolving it once keeps the two in step.
+ */
 export function listMedia() {
-  return [...getState().mediaLibrary];
+  const state = getState();
+  const names = new Map(state.galleryCategories.map((cat) => [cat.id, cat.name]));
+
+  return state.mediaLibrary.map((item) => ({
+    ...item,
+    categoryName: item.categoryId ? names.get(item.categoryId) || '' : ''
+  }));
 }
 
 /** CREATE — add an image URL to the shared media shelf. */
@@ -978,7 +1192,9 @@ export async function createMedia(input) {
     caption: input.caption?.trim() || 'Untitled frame',
     // Opt-in: the Owner decides which uploads reach the public gallery.
     inGallery: Boolean(input.inGallery),
-    galleryOrder: input.galleryOrder ?? null
+    galleryOrder: input.galleryOrder ?? null,
+    // null = filed under the built-in "Other" group on the gallery page.
+    categoryId: input.categoryId ?? null
   };
   if (!item.url) throw new Error('A media item needs an image URL.');
 
@@ -990,7 +1206,11 @@ export async function createMedia(input) {
           url: item.url,
           caption: item.caption,
           in_gallery: item.inGallery,
-          gallery_order: item.galleryOrder
+          gallery_order: item.galleryOrder,
+          // Only send the column when 017 exists. PostgREST rejects the whole
+          // request with 400 on an unknown column, which would make a multi-file
+          // upload fail wholesale because of one optional field.
+          ...(await hasCategoryColumn() ? { category_id: item.categoryId } : {})
         })
         .select()
         .single(),
@@ -1019,6 +1239,9 @@ export async function updateMedia(id, patch) {
     if (patch.caption !== undefined) row.caption = patch.caption;
     if (patch.inGallery !== undefined) row.in_gallery = Boolean(patch.inGallery);
     if (patch.galleryOrder !== undefined) row.gallery_order = patch.galleryOrder;
+    if (patch.categoryId !== undefined && (await hasCategoryColumn())) {
+      row.category_id = patch.categoryId || null;
+    }
     if (Object.keys(row).length) {
       assertOk(
         await db()
@@ -1061,6 +1284,158 @@ export async function setGalleryItem(id, inGallery) {
     commit();
   }
   return item;
+}
+
+/**
+ * The Owner-defined category cards, in the order the Owner chose.
+ *
+ * `count` and `photos` are derived here rather than in the admin panel. Every
+ * caller needs them -- the media tab prints the count, the public gallery page
+ * shows the shots -- and computing them per caller meant one of the two read a
+ * field that was never set and rendered the literal word "undefined".
+ *
+ * @returns {Array<{id:string,name:string,coverUrl:string,sortOrder:number|null,
+ *                  count:number, photos:Array<object>}>}
+ */
+export function listGalleryCategories() {
+  const state = getState();
+  const published = state.mediaLibrary.filter((item) => item.inGallery);
+
+  return [...state.galleryCategories]
+    .sort((a, b) => (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999))
+    .map((cat) => {
+      const photos = published.filter(
+        (item) => item.categoryId && item.categoryId === cat.id
+      );
+      // Prefer a live shot over the stored cover so a category the Owner has
+      // just filled does not still show its empty placeholder.
+      const coverUrl = photos[0]?.url || cat.coverUrl || '';
+      return { ...cat, count: photos.length, photos, coverUrl };
+    });
+}
+
+/** CREATE — a new card on the gallery page. */
+export async function createGalleryCategory(input) {
+  const current = getState();
+  const name = String(input.name || '').trim();
+  if (!name) throw new Error('A gallery category needs a name.');
+
+  const item = {
+    id: newId('gcat'),
+    name,
+    coverUrl: input.coverUrl?.trim() || '',
+    // Default to the end of the list so a new card does not jump the queue.
+    sortOrder: input.sortOrder ?? current.galleryCategories.length + 1
+  };
+
+  if (!config.demoMode && db()) {
+    const inserted = assertOk(
+      await db()
+        .from(TABLES.galleryCategories)
+        .insert({
+          name: item.name,
+          cover_url: item.coverUrl || null,
+          sort_order: item.sortOrder
+        })
+        .select()
+        .single(),
+      'create gallery category'
+    );
+    item.id = inserted.id;
+  }
+
+  current.galleryCategories = [...current.galleryCategories, item];
+  await addAuditLog(`Created gallery category "${item.name}"`);
+  commit();
+  return item;
+}
+
+/** UPDATE — rename a card or swap its cover image. */
+export async function updateGalleryCategory(id, patch) {
+  const current = getState();
+  const item = current.galleryCategories.find((entry) => entry.id === id);
+  if (!item) return null;
+
+  if (!config.demoMode && db() && isPersistedId(id)) {
+    const row = {};
+    if (patch.name !== undefined) row.name = String(patch.name).trim();
+    if (patch.coverUrl !== undefined) row.cover_url = patch.coverUrl || null;
+    if (patch.sortOrder !== undefined) row.sort_order = patch.sortOrder;
+    if (Object.keys(row).length) {
+      assertOk(
+        await db()
+          .from(TABLES.galleryCategories)
+          .update(row)
+          .eq('id', id)
+          .select()
+          .single(),
+        'update gallery category'
+      );
+    }
+  }
+
+  Object.assign(item, patch);
+  commit();
+  return item;
+}
+
+/**
+ * DELETE — remove a card. Photos filed under it are NOT deleted: the column is
+ * nullable with `on delete set null`, so they fall back to the uncategorised
+ * group on the public page rather than vanishing.
+ */
+export async function deleteGalleryCategory(id) {
+  const current = getState();
+  const item = current.galleryCategories.find((entry) => entry.id === id);
+  if (!item) return false;
+
+  if (!config.demoMode && db() && isPersistedId(id)) {
+    assertOk(
+      await db().from(TABLES.galleryCategories).delete().eq('id', id),
+      'delete gallery category'
+    );
+    // Postgres cascades the FK, but only for rows it can see. Mirror it in the
+    // store so the client never shows a photo under a card it has just lost.
+    current.mediaLibrary = current.mediaLibrary.map((entry) =>
+      entry.categoryId === id ? { ...entry, categoryId: null } : entry
+    );
+  }
+
+  current.galleryCategories = current.galleryCategories.filter(
+    (entry) => entry.id !== id
+  );
+  await addAuditLog(
+    `Removed gallery category "${item.name}" (its photos were kept)`
+  );
+  commit();
+  return true;
+}
+
+/**
+ * Published photos grouped by category, for the gallery page.
+ *
+ * Returns every category the Owner has defined, including empty ones -- a card
+ * with no photos yet is still something they chose to publish, and hiding it
+ * would silently drop their work. Photos with no category are collected under a
+ * synthetic `null` key rather than being discarded, which is what keeps a
+ * photo uploaded before the category existed from disappearing.
+ *
+ * @returns {Array<{category:object|null, shots:Array<object>}>}
+ */
+export function listGalleryByCategory() {
+  const shots = listGallery();
+  const groups = listGalleryCategories().map((category) => ({
+    category,
+    shots: shots.filter((shot) => shot.categoryId === category.id)
+  }));
+
+  const loose = shots.filter((shot) => {
+    const known = listGalleryCategories().some((c) => c.id === shot.categoryId);
+    return !known;
+  });
+
+  if (loose.length) groups.push({ category: null, shots: loose });
+  return groups;
 }
 
 /** DELETE — remove an image from the shelf. */

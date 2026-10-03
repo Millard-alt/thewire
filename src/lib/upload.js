@@ -91,6 +91,45 @@ export async function uploadImage(file) {
   return { url, isLocal: true };
 }
 
+/**
+ * Upload several images in one go.
+ *
+ * Sequential rather than parallel, on purpose. A phone uploading six 4 MB
+ * photos will hit the browser's per-origin connection limit anyway, and firing
+ * them all at once makes the progress bar jump and the failures arrive in an
+ * unpredictable order. One at a time is slower but never rejects a whole batch
+ * because two files raced each other.
+ *
+ * Each file is attempted independently: one bad file (wrong type, too large) is
+ * reported and skipped, and the rest still upload. A batch is a convenience, so
+ * losing the whole selection to one bad file would be the wrong trade.
+ *
+ * @param {FileList|Array<File>} fileList
+ * @param {{onProgress?: (done: number, total: number, file: File) => void}} [opts]
+ * @returns {Promise<{uploaded: Array<{file: File, url: string, isLocal: boolean}>,
+ *                    failed: Array<{file: File, reason: string}>}>}
+ */
+export async function uploadImages(fileList, opts = {}) {
+  const files = [...(fileList || [])].filter(Boolean);
+  const uploaded = [];
+  const failed = [];
+
+  for (let i = 0; i < files.length; i += 1) {
+    const file = files[i];
+    opts.onProgress?.(i, files.length, file);
+
+    try {
+      const { url, isLocal } = await uploadImage(file);
+      uploaded.push({ file, url, isLocal });
+    } catch (error) {
+      failed.push({ file, reason: error?.message || 'Upload failed.' });
+    }
+  }
+
+  opts.onProgress?.(files.length, files.length, null);
+  return { uploaded, failed };
+}
+
 /** Read a File into a base64 data URL. */
 function readAsDataUrl(file) {
   return new Promise((resolve, reject) => {

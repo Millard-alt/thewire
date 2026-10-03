@@ -176,21 +176,58 @@ export function createSeedState() {
       }
     ],
 
+    // Illustrative categories only. These exist so the Gallery page is not an
+    // empty shell in demo mode; the Owner renames or deletes them freely. The
+    // real ones live in the gallery_categories table.
+    galleryCategories: [
+      {
+        id: 'seed-cat-1',
+        name: 'CROSS COUNTRY',
+        blurb: 'Long-distance athletics from around the region',
+        cover:
+          'https://images.unsplash.com/photo-1552674605-db6ffd4facb5?auto=format&fit=crop&w=1200&q=80',
+        position: 1
+      },
+      {
+        id: 'seed-cat-2',
+        name: 'SWIMMING GALA',
+        blurb: 'Pool meets, championships and club nights',
+        cover:
+          'https://images.unsplash.com/photo-1530137073520-4ea6e2f10a48?auto=format&fit=crop&w=1200&q=80',
+        position: 2
+      }
+    ],
+
+    // `categoryId`, NOT `galleryCategoryId`. The whole app keys off
+    // `categoryId` -- listGalleryByCategory(), updateMedia() and the media_assets
+    // `category_id` column all read that name -- and the seed is merged straight
+    // into state without passing through the row mapper, so a seed using the
+    // longer name silently files every demo photo under "Uncategorised".
+    // galleryOrder keeps the demo grid in a deliberate reading order.
     mediaLibrary: [
       {
         id: 'seed-media-1',
         url: 'https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=1200&q=80',
-        caption: 'Press archives'
+        caption: 'Press archives',
+        inGallery: true,
+        galleryOrder: 1,
+        categoryId: 'seed-cat-1'
       },
       {
         id: 'seed-media-2',
         url: 'https://images.unsplash.com/photo-1541872703-74c5e44368f9?auto=format&fit=crop&w=1200&q=80',
-        caption: 'Lake basin council'
+        caption: 'Lake basin council',
+        inGallery: true,
+        galleryOrder: 2,
+        categoryId: 'seed-cat-1'
       },
       {
         id: 'seed-media-3',
         url: 'https://images.unsplash.com/photo-1495020689067-958852a7765e?auto=format&fit=crop&w=1200&q=80',
-        caption: 'Railway quarter'
+        caption: 'Railway quarter',
+        inGallery: true,
+        galleryOrder: 3,
+        categoryId: 'seed-cat-2'
       }
     ],
 

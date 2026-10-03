@@ -165,6 +165,9 @@
             <li><a class="nav-link" href="#assignments">Assignments</a></li>
             <li><a class="nav-link" href="#masthead-foot">Masthead</a></li>
             <li>
+              <button class="nav-link" type="button" data-nav="gallery">Photo Gallery</button>
+            </li>
+            <li>
               <button class="nav-link" type="button" data-nav="credits">Credits</button>
             </li>
           </ul>
@@ -225,6 +228,14 @@
     <main id="main-content" class="mx-auto max-w-7xl px-4 py-8" tabindex="-1">
       <!-- Public publication view -->
       <section id="publication-view" aria-label="Publication"></section>
+
+      <!-- Gallery page: one Owner-defined card per category -->
+      <section
+        id="gallery-view"
+        class="hidden"
+        aria-label="Gallery"
+        tabindex="-1"
+      ></section>
 
       <!-- Credits roster (rendered by src/lib/credits.js) -->
       <section

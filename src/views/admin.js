@@ -36,7 +36,8 @@ import {
   ensureAlertPermission
 } from './alerts.js';
 import * as push from '../lib/push.js';
-import { uploadImage, bindImagePicker } from '../lib/upload.js';
+import { uploadImage, uploadImages, bindImagePicker } from '../lib/upload.js';
+import { MAX_ARTICLE_PHOTOS } from '../lib/store.js';
 import {
   listCredits,
   listCreditsForOwner,
@@ -48,7 +49,9 @@ import {
   primePortraits,
   isCreditsMigrationMissing,
   normaliseColour,
-  readableOn
+  readableOn,
+  groupByRole,
+  moveRoleBand
 } from '../lib/credits.js';
 import {
   escapeHtml,
@@ -887,6 +890,7 @@ function renderPortraitReview(member) {
 
 function renderMediaTab() {
   const media = store.listMedia();
+  const categories = store.listGalleryCategories();
 
   return `
     <div class="space-y-5">
@@ -897,13 +901,17 @@ function renderMediaTab() {
 
       <form id="media-form" class="panel-raised grid gap-4 p-5 sm:grid-cols-[2fr_2fr_auto]" novalidate>
         <div>
-          <label class="field-label" for="media-file">Image from your device</label>
+          <label class="field-label" for="media-file">Images from your device</label>
           <input
             id="media-file"
             class="field"
             type="file"
+            multiple
             accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
           />
+          <p class="ink-muted mt-1 text-xs">
+            Select as many as you like. They are uploaded one at a time.
+          </p>
         </div>
         <div>
           <label class="field-label" for="media-url">...or an image URL</label>
@@ -912,13 +920,30 @@ function renderMediaTab() {
         <div>
           <label class="field-label" for="media-caption">Caption</label>
           <input id="media-caption" class="field" type="text" placeholder="Council session, Tuesday" />
+          <p class="ink-muted mt-1 text-xs">
+            With several images, the caption is used only for the first.
+          </p>
         </div>
-        <div class="flex items-end sm:col-span-3">
+        <div>
+          <label class="field-label" for="media-category">Gallery category</label>
+          <select id="media-category" class="field">
+            <option value="">Not in the gallery</option>
+            ${categories
+              .map(
+                (cat) =>
+                  `<option value="${escapeHtml(cat.id)}">${escapeHtml(cat.name)}</option>`
+              )
+              .join('')}
+          </select>
+        </div>
+        <div class="flex items-end sm:col-span-4">
           <button type="submit" class="btn btn-accent w-full sm:w-auto">
             <i class="fa-solid fa-upload" aria-hidden="true"></i> Add
           </button>
         </div>
       </form>
+
+      ${renderCategoryManager(categories)}
 
       ${
         media.length
@@ -932,6 +957,13 @@ function renderMediaTab() {
             )}" alt="${escapeHtml(item.caption)}" loading="lazy" />
             <figcaption class="space-y-2 p-3">
               <span class="block min-w-0 truncate text-xs">${escapeHtml(item.caption)}</span>
+              ${
+                item.categoryName
+                  ? `<span class="badge badge-gold block w-fit text-[0.625rem]">${escapeHtml(
+                      item.categoryName
+                    )}</span>`
+                  : '<span class="ink-muted block text-[0.625rem]">Not in the gallery</span>'
+              }
               <div class="flex items-center gap-2">
                 <button class="btn ${item.inGallery ? 'btn-accent' : 'btn-ghost'} flex-1"
                   data-action="media-gallery"
@@ -961,6 +993,64 @@ function renderMediaTab() {
         } currently appear on the public Photo Gallery.
       </p>
     </div>
+  `;
+}
+
+/**
+ * The Owner-managed list of gallery categories.
+ *
+ * Only rendered for the Owner. A Writer may upload images and pick a category
+ * from the form above, but creating and deleting categories is an Owner power,
+ * matching how the rest of the panel gates structural changes.
+ */
+function renderCategoryManager(categories) {
+  if (!isOwner()) return '';
+
+  return `
+    <section class="panel-raised space-y-3 p-5" aria-labelledby="gallery-categories-heading">
+      <div>
+        <h3 id="gallery-categories-heading" class="font-headline text-sm font-black tracking-wide uppercase">
+          Gallery categories
+        </h3>
+        <p class="ink-muted mt-1 text-xs">
+          Each category gets its own card on the public Gallery page. The first
+          one is the door readers land on.
+        </p>
+      </div>
+
+      <form id="gallery-category-form" class="flex flex-wrap items-end gap-2" novalidate>
+        <div class="min-w-40 flex-1">
+          <label class="field-label" for="gallery-category-name">New category</label>
+          <input id="gallery-category-name" class="field" type="text" placeholder="Cross Country" />
+        </div>
+        <button type="submit" class="btn btn-accent">
+          <i class="fa-solid fa-plus" aria-hidden="true"></i> Add
+        </button>
+      </form>
+
+      ${
+        categories.length
+          ? `<ul class="flex flex-wrap gap-2">
+        ${categories
+          .map(
+            (cat) => `
+          <li class="panel-sunken flex items-center gap-2 px-3 py-1.5 text-xs">
+            <span class="font-semibold">${escapeHtml(cat.name)}</span>
+            <span class="ink-muted font-mono">${cat.count}</span>
+            <button class="btn btn-quiet px-1.5 py-1 text-xs"
+              data-action="gallery-category-delete"
+              data-id="${escapeHtml(cat.id)}"
+              data-name="${escapeHtml(cat.name)}"
+              aria-label="Delete category ${escapeHtml(cat.name)}">
+              <i class="fa-solid fa-trash" aria-hidden="true"></i>
+            </button>
+          </li>`
+          )
+          .join('')}
+      </ul>`
+          : '<p class="ink-muted text-xs">No categories yet. Add one above.</p>'
+      }
+    </section>
   `;
 }
 
@@ -1268,6 +1358,29 @@ function articleEditorDialog() {
               type="text"
               placeholder="...or paste an image URL"
             />
+          </div>
+          <div>
+            <label class="field-label" for="article-extra-file">
+              Supporting photos
+            </label>
+            <input
+              id="article-extra-file"
+              class="field"
+              type="file"
+              multiple
+              accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+            />
+            <input
+              id="article-extra-url"
+              class="field mt-2"
+              type="text"
+              placeholder="...or paste image URLs, comma separated"
+            />
+            <p class="ink-muted mt-1 text-xs">
+              Up to ${MAX_ARTICLE_PHOTOS} photos besides the lead image. They sit
+              collapsed under the story and expand when tapped.
+            </p>
+            <div id="article-extra-preview" class="mt-2 flex flex-wrap gap-2"></div>
           </div>
           <div>
             <label class="field-label" for="article-caption">Caption</label>
@@ -2062,7 +2175,7 @@ function creditsPanel(people) {
 
       ${
         people.length
-          ? `<ul class="space-y-4">${people.map(creditsPersonCard).join('')}</ul>`
+          ? groupByRole(people).map(creditsRoleBand).join('')
           : isCreditsMigrationMissing()
             ? `<div class="panel-raised p-6 text-sm">
                  <p class="flex items-center gap-2 font-bold">
@@ -2082,6 +2195,55 @@ function creditsPanel(people) {
               )
       }
     </div>
+  `;
+}
+
+/**
+ * One role band in the Credits editor: the role heading with its two move
+ * buttons, and the editable cards for everyone holding that role.
+ *
+ * This is deliberately the SAME grouping the public page uses, imported rather
+ * than reimplemented. A second copy would drift, and the failure mode would be
+ * invisible: the Owner arranges the page one way, and it renders another.
+ *
+ * @param {{role: string, members: Array<object>}} band
+ * @param {number} index
+ * @param {number} total
+ */
+function creditsRoleBand(band, index, total) {
+  const role = escapeHtml(band.role);
+  const colour =
+    normaliseColour(band.members.find((m) => m.role_color)?.role_color) || DEFAULT_ROLE_COLOR;
+
+  return `
+    <section class="credits-band-editor" style="--band:${colour}" data-credits-band="${role}">
+      <div class="credits-band-editor__head">
+        <span class="credits-band__rail" aria-hidden="true"></span>
+        <span class="credits-band-editor__name">${role}</span>
+        <span class="credits-band-editor__count">
+          ${band.members.length} ${band.members.length === 1 ? 'person' : 'people'}
+        </span>
+
+        <span class="credits-band-editor__moves">
+          <button type="button" class="btn btn-ghost"
+            data-action="credits-role-up" data-role="${role}"
+            ${index === 0 ? 'disabled' : ''}
+            aria-label="Move the ${band.role} role up">
+            <i class="fa-solid fa-arrow-up" aria-hidden="true"></i>
+            <span class="sr-only">Move up</span>
+          </button>
+          <button type="button" class="btn btn-ghost"
+            data-action="credits-role-down" data-role="${role}"
+            ${index === total - 1 ? 'disabled' : ''}
+            aria-label="Move the ${band.role} role down">
+            <i class="fa-solid fa-arrow-down" aria-hidden="true"></i>
+            <span class="sr-only">Move down</span>
+          </button>
+        </span>
+      </div>
+
+      <ul class="space-y-4">${band.members.map(creditsPersonCard).join('')}</ul>
+    </section>
   `;
 }
 
@@ -2505,6 +2667,46 @@ function bindFilePickers() {
     fileInput.dataset.bound = 'true';
     bindImagePicker(fileInput, urlInput);
   });
+// The supporting-photo picker is bound separately because it is a multi-file
+  // input feeding the thumbnail strip, not a file+URL pair: bindImagePicker
+  // writes one uploaded URL into a text input, which is the wrong shape here.
+  const extraInput = byId('article-extra-file');
+  if (extraInput && extraInput.dataset.bound !== 'true') {
+    extraInput.dataset.bound = 'true';
+    extraInput.addEventListener('change', async () => {
+      const files = [...extraInput.files].slice(
+        0,
+        Math.max(0, MAX_ARTICLE_PHOTOS - articleExtras.length)
+      );
+      extraInput.value = '';
+      if (!files.length) {
+        showToast(
+          articleExtras.length >= MAX_ARTICLE_PHOTOS
+            ? `That is the ${MAX_ARTICLE_PHOTOS}-photo limit. Remove one first.`
+            : 'Choose at least one photo.',
+          { type: 'error' }
+        );
+        return;
+      }
+
+      const busy = showToast(`Uploading ${files.length} photo(s)...`, {
+        type: 'info',
+        duration: 0
+      });
+      const { uploaded, failed } = await uploadImages(files, {
+        onProgress: (done, total) =>
+          busy.setMessage(`Uploading photo ${done} of ${total}...`)
+      });
+      busy.remove();
+
+      addArticleExtras(uploaded.map((item) => item.url));
+      if (failed.length) {
+        showToast(`${failed.length} photo(s) failed: ${failed[0].reason}`, {
+          type: 'error'
+        });
+      }
+    });
+  }
 }
 
 /** Switch tabs, guarding against an unknown id. */
@@ -2713,6 +2915,12 @@ function attachAdminListeners() {
     } else if (form.id === 'credits-add-form') {
       event.preventDefault();
       guard(() => addCreditsPersonFromForm(form));
+    } else if (form.id === 'gallery-category-form') {
+      // Without this branch the form did a native GET submit and reloaded the
+      // page, so adding a category looked like it worked and then silently
+      // discarded the input. The handler existed; nothing routed to it.
+      event.preventDefault();
+      guard(() => saveGalleryCategoryFromForm(form));
     }
   });
 
@@ -2729,6 +2937,78 @@ function attachAdminListeners() {
 /* -------------------------------------------------------------------------- */
 
 /** CREATE or UPDATE an article from the editor dialog. */
+/* --------------------------------------------------------------------------
+   Supporting photos: up to MAX_ARTICLE_PHOTOS besides the lead image.
+   -------------------------------------------------------------------------- */
+
+/**
+ * The authoritative list for the open editor. Module state rather than DOM
+ * state, because the two inputs contribute differently: the file picker
+ * uploads to URLs, the text field is typed URLs, and the thumbnails can be
+ * reordered or deleted. Reading the truth back out of the DOM meant the
+ * indices shown on the remove buttons could drift from the array being saved.
+ */
+let articleExtras = [];
+
+/** Thumbnails of the extras already attached, drawn under the two inputs. */
+function renderArticleExtraPreview() {
+  const box = byId('article-extra-preview');
+  if (!box) return;
+  box.innerHTML = articleExtras
+    .map(
+      (url, i) => `
+      <span class="relative inline-block">
+        <img
+          src="${escapeHtml(url)}"
+          alt="Supporting photo ${i + 1}"
+          class="h-16 w-16 rounded border border-ink object-cover"
+          loading="lazy"
+        />
+        <button
+          type="button"
+          class="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-ink text-[10px] text-paper"
+          aria-label="Remove supporting photo ${i + 1}"
+          data-action="article-extra-remove"
+          data-index="${i}"
+        >&times;</button>
+      </span>`
+    )
+    .join('');
+}
+
+/**
+ * Merge freshly uploaded and freshly pasted URLs into the list, de-duplicated
+ * and capped. Returns false (with a toast) if the cap would be exceeded, so
+ * the writer is told rather than silently losing photos.
+ */
+function addArticleExtras(urls) {
+  const fresh = urls.filter(Boolean);
+  const merged = [...new Set([...articleExtras, ...fresh])];
+  if (merged.length > MAX_ARTICLE_PHOTOS) {
+    showToast(
+      `Up to ${MAX_ARTICLE_PHOTOS} supporting photos per article. ${merged.length - MAX_ARTICLE_PHOTOS} were left out.`,
+      { type: 'error' }
+    );
+  }
+  articleExtras = merged.slice(0, MAX_ARTICLE_PHOTOS);
+  renderArticleExtraPreview();
+  return articleExtras.length;
+}
+
+/** Reset when the editor opens, so one article's photos never leak into the next. */
+function setArticleExtras(urls) {
+  articleExtras = [...new Set(urls.filter(Boolean))].slice(0, MAX_ARTICLE_PHOTOS);
+  renderArticleExtraPreview();
+}
+
+/** URLs pasted into the text field, split on commas. */
+function typedArticleExtraUrls() {
+  return (byId('article-extra-url')?.value ?? '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
 async function saveArticleFromForm(form) {
   // If the editor chose a file but had not finished the upload, finish it here
   // so an article is never saved with a blank image after they hit Save.
@@ -2749,6 +3029,35 @@ async function saveArticleFromForm(form) {
     busy.remove();
   }
 
+  // Supporting photos. The picker uploads here rather than at pick time so an
+  // article is never saved with a half-finished multi-file upload, and so the
+  // MAX_ARTICLE_PHOTOS cap is applied against what actually landed.
+  const extraFiles = [...(byId('article-extra-file')?.files ?? [])];
+  if (extraFiles.length) {
+    const busy = showToast(
+      `Uploading ${extraFiles.length} supporting photo(s)...`,
+      { type: 'info', duration: 0 }
+    );
+    const { uploaded, failed } = await uploadImages(extraFiles, {
+      onProgress: (done, total) =>
+        busy.setMessage?.(`Uploading supporting photos ${done} of ${total}...`)
+    });
+    busy.remove();
+
+    addArticleExtras(uploaded.map((item) => item.url));
+    if (failed.length) {
+      showToast(
+        `${failed.length} photo(s) failed to upload: ${failed[0].reason}`,
+        { type: 'error' }
+      );
+    }
+    byId('article-extra-file').value = '';
+  }
+
+  // Pasted URLs count too, and dedupe against what is already attached.
+  addArticleExtras(typedArticleExtraUrls());
+  if (byId('article-extra-url')) byId('article-extra-url').value = '';
+
   const payload = {
     title: byId('article-title').value,
     author: byId('article-author').value,
@@ -2756,6 +3065,7 @@ async function saveArticleFromForm(form) {
     status: byId('article-status').value,
     date: byId('article-date').value,
     image: byId('article-image').value.trim(),
+    extraImages: articleExtras,
     caption: byId('article-caption').value,
     body: byId('article-body').value,
     featured: byId('article-featured').checked
@@ -2868,21 +3178,72 @@ async function saveStaffFromForm(form) {
 }
 
 /**
- * Add an image to the shared shelf. The editor can either upload a file from
- * their device or paste a URL; the picker writes the uploaded URL into
- * `#media-url`, and this handler reads whichever one is present.
+ * Add one or more images to the shared shelf.
+ *
+ * The file input is `multiple`, so a writer can select a whole shoot at once.
+ * `uploadImages` returns a result per file rather than throwing on the first
+ * bad one: one unsupported file in a selection of twenty must not discard the
+ * other nineteen. Failures are counted and reported, and the successes are
+ * still saved.
  */
 async function saveMediaFromForm(form) {
   const urlField = byId('media-url');
-  const pending = byId('media-file')?.files?.[0];
+  const files = Array.from(byId('media-file')?.files || []);
+  const caption = byId('media-caption')?.value.trim() || 'Untitled image';
+  const categoryId = byId('media-category')?.value.trim() || '';
+
+  // ---- Batch path: several files chosen at once ----
+  if (files.length > 1) {
+    const busy = showToast(`Uploading ${files.length} images...`, {
+      type: 'info',
+      duration: 0
+    });
+    const results = await uploadImages(files);
+    busy.remove();
+
+    let added = 0;
+    let failed = 0;
+    for (let i = 0; i < results.length; i += 1) {
+      const result = results[i];
+      if (!result?.url) {
+        failed += 1;
+        continue;
+      }
+      // Only the first image takes the typed caption; the rest get a numbered
+      // one so a batch is not a wall of identical text in the gallery.
+      const suffix = added > 0 ? ` (${added + 1})` : '';
+      await store.createMedia({
+        url: result.url,
+        caption: `${caption}${suffix}`,
+        categoryId
+      });
+      added += 1;
+    }
+
+    form.reset();
+    if (added) {
+      showToast(
+        `Added ${added} image${added === 1 ? '' : 's'} to the media shelf.` +
+          (failed ? ` ${failed} could not be uploaded.` : ''),
+        { type: failed ? 'info' : 'success' }
+      );
+    } else {
+      showToast('None of those images could be uploaded.', { type: 'error' });
+    }
+    return;
+  }
+
+  // ---- Single path: one file, or a pasted URL ----
+  const pending = files[0];
+  let url = urlField?.value.trim() || '';
 
   if (pending) {
     const busy = showToast('Uploading your image...', { type: 'info', duration: 0 });
     try {
-      const { url, isLocal } = await uploadImage(pending);
-      urlField.value = url;
+      const result = await uploadImage(pending);
+      url = result.url;
       busy.remove();
-      if (isLocal) {
+      if (result.isLocal) {
         showToast('Storage is offline, so the image stayed in this browser.', {
           type: 'info'
         });
@@ -2894,7 +3255,6 @@ async function saveMediaFromForm(form) {
     }
   }
 
-  const url = urlField?.value.trim();
   if (!url) {
     showToast('Choose a file from your device, or paste an image URL.', {
       type: 'error'
@@ -2902,13 +3262,32 @@ async function saveMediaFromForm(form) {
     return;
   }
 
-  await store.createMedia({
-    url,
-    caption: byId('media-caption')?.value.trim() || 'Untitled image'
-  });
+  await store.createMedia({ url, caption, categoryId });
 
   form.reset();
   showToast('Image added to the media shelf.', { type: 'success' });
+}
+
+/**
+ * Create a gallery category. Owner-only: the server function refuses anyone
+ * else, and the form is not rendered for them.
+ */
+async function saveGalleryCategoryFromForm(form) {
+  const field = byId('gallery-category-name');
+  const name = field?.value.trim() || '';
+
+  if (!name) {
+    showToast('Give the category a name first.', { type: 'error' });
+    field?.focus();
+    return;
+  }
+
+  await store.createGalleryCategory({ name });
+  form.reset();
+  showToast(`"${name}" added to the gallery.`, { type: 'success' });
+  // Repaint so the new chip appears in the list AND in the media form's
+  // category dropdown. Without this the save succeeded invisibly.
+  paintActiveTab();
 }
 
 /** CREATE or UPDATE an assignment from the editor dialog. */
@@ -3293,6 +3672,11 @@ function openArticleEditor(articleId) {
   byId('article-status').value = article?.status ?? 'Pending Review';
   byId('article-date').value = article?.date ?? '';
   byId('article-image').value = article?.image ?? '';
+  // Repopulate the supporting photos on edit, or a round-trip through this
+  // dialog would silently drop them: the field is the only place they live,
+  // and an untouched text input reads as empty.
+  setArticleExtras(article?.extraImages ?? []);
+  if (byId('article-extra-url')) byId('article-extra-url').value = '';
   byId('article-caption').value = article?.caption ?? '';
   byId('article-body').value = article?.body ?? '';
   byId('article-featured').checked = Boolean(article?.featured);
@@ -3384,6 +3768,16 @@ function handleClick(event) {
     case 'article-edit':
       openArticleEditor(id);
       break;
+    case 'article-extra-remove': {
+      // Indices come from the rendered thumbnails, which are drawn straight
+      // from articleExtras, so they cannot drift out of step with it.
+      const index = Number(trigger.dataset.index);
+      if (Number.isInteger(index) && index >= 0 && index < articleExtras.length) {
+        articleExtras.splice(index, 1);
+        renderArticleExtraPreview();
+      }
+      break;
+    }
     case 'article-publish':
       guard(async () => {
         await store.publishArticle(id);
@@ -3509,6 +3903,37 @@ function handleClick(event) {
     // Every one of these writes to public.credits_people through an RPC that
     // re-checks is_owner() in Postgres, so this client-side gate is a
     // convenience, not the enforcement.
+    case 'credits-role-up':
+    case 'credits-role-down': {
+      // Moves a whole ROLE band, not one person. The role a band sits at on the
+      // Credits page is just the sort_order of its first member, so the swap is
+      // done by rebuilding one flat id list with the two bands exchanged and
+      // rewriting every order in a single RPC call. A partial write would leave
+      // the band split across two positions on the public page.
+      const role = trigger.dataset.role;
+      const direction = action === 'credits-role-up' ? -1 : 1;
+      // The rows must already be in memory. If they are not, the buttons were
+      // rendered against a stale panel and reordering from nothing would silently
+      // rewrite the whole page's order to an empty list.
+      if (!creditsPeople || creditsPeople.length < 2) {
+        showToast('The Credits list is still loading. Try again in a moment.', {
+          type: 'error'
+        });
+        return;
+      }
+      guard(async () => {
+        const result = await moveRoleBand(creditsPeople, role, direction);
+        if (!result.ok) {
+          showToast(result.message, { type: 'error' });
+          return;
+        }
+        await refreshCreditsPeople();
+        paintActiveTab();
+        showToast(result.message, { type: 'success' });
+      });
+      break;
+    }
+
     case 'credits-remove':
       if (askToDelete('person', title)) {
         guard(async () => {
@@ -3574,6 +3999,21 @@ function handleClick(event) {
       });
       break;
 
+case 'gallery-category-delete': {
+      const name = trigger.dataset.name || 'this category';
+      // The store keeps the photos and only clears their category, so the
+      // wording has to promise that or the Owner will think the images are gone.
+      guard(async () => {
+        const removed = await store.deleteGalleryCategory(id);
+        if (!removed) {
+          showToast('That category no longer exists.', { type: 'error' });
+          return;
+        }
+        showToast(`Removed "${name}". Its photos were kept.`, { type: 'success' });
+        paintActiveTab();
+      });
+      break;
+    }
     /* --- media --- */
     case 'media-gallery': {
       // Read off `trigger`, not a destructured local — `next` is not one of the
