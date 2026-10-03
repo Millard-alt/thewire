@@ -69,23 +69,53 @@ update public.articles
 alter table public.articles
   alter column extra_images set default '[]'::jsonb;
 
--- An array of at most three objects, each carrying a url. Anything else -- a
--- bare string, a nested array, a fourth element -- is rejected outright rather
--- than silently stored, so a malformed row cannot reach the article renderer.
+-- An array of at most three objects, each carrying a non-empty url. Anything else
+-- -- a bare string, a nested array, a fourth element -- is rejected outright
+-- rather than silently stored, so a malformed row cannot reach the article
+-- renderer.
+--
+-- WHY JSONPATH AND NOT NOT EXISTS
+--   The first draft of this constraint used
+--       and not exists (select 1 from jsonb_array_elements(extra_images) e ...)
+--   which is the readable way to write it and is also the obvious way to write
+--   it wrong. Postgres rejects it with
+--       ERROR: 0A000: cannot use subquery in check constraint
+--   A CHECK may only contain expressions that are immutable AND reference no
+--   other rows. `exists (select ...)` is a query, not an expression, so it is
+--   rejected at CREATE time regardless of which table it reads.
+--
+--   The jsonpath operators below do the same job as pure expressions, which is
+--   why they are legal here:
+--       jsonb_typeof(x)      -> is it an array at all
+--       jsonb_array_length() -> is it three or fewer
+--       x @? '$[*] ? (...)'  -> jsonb_path_exists(): does ANY element match
+--   The `@?` operator is immutable, so the constraint can be created and used.
+--   Each of the three `@?` tests is negated: if ANY element is a non-object,
+--   has no string url, or has an empty url, the whole CHECK fails.
+--
+-- WHY A CASE GUARD AND NOT A PLAIN AND
+--   jsonb_array_length('{}'::jsonb) does not return NULL or 0, it RAISES
+--       ERROR: 22023: malformed array literal
+--   So a CHECK written as `jsonb_typeof(x) = 'array' and jsonb_array_length(x) <= 3`
+--   is only safe if the evaluator stops at the first false term. Postgres does
+--   not promise that ordering, and a constraint that can raise 22023 on INSERT
+--   turns a bad row into a failed statement with a misleading error. The CASE
+--   makes the short-circuit explicit: the length and element tests are only ever
+--   reached when the value really is an array, and anything else fails the
+--   constraint cleanly instead of exploding.
 alter table public.articles
   drop constraint if exists articles_extra_images_check;
 
 alter table public.articles
   add constraint articles_extra_images_check
   check (
-    jsonb_typeof(extra_images) = 'array'
-    and jsonb_array_length(extra_images) <= 3
-    and not exists (
-      select 1
-        from jsonb_array_elements(extra_images) as element
-       where jsonb_typeof(element) <> 'object'
-          or coalesce(element ->> 'url', '') = ''
-    )
+    case
+      when jsonb_typeof(extra_images) is distinct from 'array' then false
+      else jsonb_array_length(extra_images) <= 3
+       and not (extra_images @? '$[*] ? (@.type() != "object")')
+       and not (extra_images @? '$[*] ? (@.url.type() != "string")')
+       and not (extra_images @? '$[*] ? (@.url == "")')
+    end
   );
 
 -- 3. RLS ----------------------------------------------------------------------

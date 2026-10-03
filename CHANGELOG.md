@@ -25,6 +25,13 @@ verified against the live database where the change was server-side.
   uncategorised bucket and single-photo articles, exactly as before. Nothing
   breaks; the features are simply inert. The file is fully idempotent, so a
   partial paste can simply be pasted again in full.
+  - **`articles_extra_images_check` was rewritten after a failed paste.** The
+    first version used `not exists (select ... from jsonb_array_elements(...))`,
+    which Postgres rejects outright with `0A000: cannot use subquery in check
+    constraint`. It now uses jsonpath (`@?`, `jsonb_typeof`,
+    `jsonb_array_length`), which are immutable expressions and therefore legal
+    inside a CHECK. The whole migration is wrapped in a transaction, so the failed
+    run applied nothing and the file can simply be pasted again in full.
 
 ### Fixed
 
