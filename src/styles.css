@@ -1641,13 +1641,18 @@ button.byline-sticker {
   background: var(--band);
 }
 
+/* A band tint mixed against the INK. On a dark band the header text sank with
+   it, so on a dark surface the role name and its count badge were effectively
+   invisible. `--text` is the theme-aware token (near-black in light, cream in
+   dark), so mixing against it keeps the band identity in both themes and light
+   mode is byte-for-byte what it was before. */
 .credits-band__name {
   font-family: var(--font-headline, inherit);
   font-size: 0.8125rem;
   font-weight: 700;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: color-mix(in srgb, var(--band) 72%, var(--color-ink, #111));
+  color: color-mix(in srgb, var(--band) 72%, var(--text, #111));
 }
 
 /* The count sits on the FAR RIGHT of the row, which is what `margin-left: auto`
@@ -1662,7 +1667,7 @@ button.byline-sticker {
   font-size: 0.6875rem;
   font-weight: 700;
   text-align: center;
-  color: color-mix(in srgb, var(--band) 70%, var(--color-ink, #111));
+  color: color-mix(in srgb, var(--band) 70%, var(--text, #111));
 }
 
 /* One / md:two / lg:three, with a 1rem gap. Named on the <ul> rather than reusing
@@ -1698,7 +1703,10 @@ button.byline-sticker {
   align-items: center;
   gap: 1rem;
   padding: 1rem;
-  border: 1px solid var(--color-neutral-700, #404040);
+  /* A fixed neutral-700 border on a near-black surface was almost invisible too,
+     so the card lost its edge and the name floated on nothing. Derived from
+     --text-muted so it is a visible hairline in dark and unchanged in light. */
+  border: 1px solid color-mix(in srgb, var(--text-muted, #666) 55%, transparent);
   border-radius: 0;
   background: transparent;
   transition:
@@ -1719,14 +1727,15 @@ button.byline-sticker {
   border-radius: 999px;
   overflow: hidden;
   object-fit: cover;
-  background: var(--color-neutral-800, #262626);
+  background: color-mix(in srgb, var(--text-muted, #666) 18%, transparent);
 }
 
 .credits-card__avatar--empty {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-neutral-400, #a3a3a3);
+  background: color-mix(in srgb, var(--text-muted, #666) 18%, transparent);
+  color: var(--text-muted);
 }
 
 .credits-card__body {
@@ -1739,7 +1748,13 @@ button.byline-sticker {
   font-size: 1rem;
   font-weight: 700;
   text-align: left;
-  color: var(--color-ink, inherit);
+  /* THE BUG. This was var(--color-ink, inherit). --color-ink is a fixed
+     LIGHT-mode literal (#18130f, near-black) declared once in @theme and never
+     redefined under .dark, so in dark mode every name was drawn near-black on
+     the near-black --surface (#12100e): invisible. --text is the theme-aware
+     token (near-black in light, #f2ede2 in dark), so light mode is unchanged
+     and dark mode finally has contrast. */
+  color: var(--text);
 }
 
 .credits-card__blurb {
@@ -1747,7 +1762,9 @@ button.byline-sticker {
   font-size: 0.75rem;
   line-height: 1.4;
   text-align: left;
-  color: var(--color-neutral-400, #a3a3a3);
+  /* Same class of bug: neutral-400 is a fixed Tailwind grey with no dark-mode
+     value. --text-muted is the semantic token (#5a544b light, #a9a196 dark). */
+  color: var(--text-muted);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;
@@ -1788,12 +1805,12 @@ button.byline-sticker {
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: color-mix(in srgb, var(--band) 70%, var(--color-ink, #111));
+  color: color-mix(in srgb, var(--band) 70%, var(--text, #111));
 }
 
 .credits-band-editor__count {
   font-size: 0.6875rem;
-  color: var(--color-ink-muted, #666);
+  color: var(--text-muted, #666);
 }
 
 /* Move buttons sit on the right on desktop, and wrap to a full-width pair on a

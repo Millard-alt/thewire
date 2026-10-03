@@ -9,6 +9,21 @@ Migrations are numbered and live in `supabase/`. They are additive and
 idempotent, so re-running one is safe. **A new release is not functional until
 its migrations have been run in the Supabase SQL Editor.**
 
+## [Unreleased]
+
+### Fixed
+
+- **Credits member names are now legible in dark mode.** They were invisible:
+  black text on a near-black background. `.credits-card__name` used
+  `var(--color-ink)`, but `--color-ink` is a fixed light-mode literal
+  (`#18130f`) declared once in `@theme` and never redefined under `.dark`, so
+  every name rendered near-black on the `--surface: #12100e` dark background.
+  Credits now uses the theme-aware semantic tokens `--text` and `--text-muted`,
+  which resolve to near-black on newsprint and cream in dark mode. The role
+  band headers, count badges, card border and empty-avatar placeholder had the
+  same defect and are fixed too, so nothing else on the page is left stranded.
+  Light mode is unchanged: names measured `rgb(24, 19, 15)` before and after.
+
 ## [0.9.2] — 2026-10-10
 
 The Newsroom Panel now always paints above the gallery, and closing it puts you
