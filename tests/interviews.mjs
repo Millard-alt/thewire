@@ -740,6 +740,59 @@ report(
 );
 
 /* ======================================================================== *
+ * Editor wiring: the YouTube Add/Remove buttons
+ * ======================================================================== */
+
+section('interview editor — video buttons are actually wired');
+
+report(
+  'the Add button is rendered in the editor dialog',
+  /data-action="interview-video-add"/.test(adminSrc)
+);
+report(
+  'the Add button has a case in handleClick',
+  /case 'interview-video-add':/.test(adminSrc)
+);
+report(
+  'the Add button routes through stageInterviewVideo',
+  /case 'interview-video-add':[\s\S]{0,400}?stageInterviewVideo\(/.test(adminSrc)
+);
+report(
+  'the Remove button has a case in handleClick',
+  /case 'interview-video-remove':/.test(adminSrc)
+);
+report(
+  'Enter in the YouTube box stages rather than submits, as the help text says',
+  /keydown[\s\S]{0,700}?interview-video-url[\s\S]{0,300}?preventDefault/.test(adminSrc)
+);
+
+/*
+ * The general invariant that would have caught this bug on day one.
+ *
+ * A `data-action` value only does anything if the same string appears as a
+ * `case` in handleClick's switch. Adding a button therefore needs two edits in
+ * two distant places, and forgetting the second produces a control that renders
+ * perfectly, sits on screen, and silently does nothing -- which is exactly how
+ * the Add button shipped. A grep for the button's markup passes in that state,
+ * so assert the ROUTING instead.
+ *
+ * Restricted to data-action values that appear in an `interview` context, so
+ * this stays focused on the feature under test rather than auditing the whole
+ * workspace.
+ */
+const interviewActionValues = new Set(
+  [...adminSrc.matchAll(/data-action="(interview-[a-z-]+)"/g)].map((m) => m[1])
+);
+const unrouted = [...interviewActionValues].filter(
+  (action) => !new RegExp(`case '${action}':`).test(adminSrc)
+);
+report(
+  `every interview data-action is routed in handleClick (${interviewActionValues.size} found)`,
+  interviewActionValues.size >= 6 && unrouted.length === 0,
+  unrouted.length ? `unrouted: ${unrouted.join(', ')}` : undefined
+);
+
+/* ======================================================================== *
  * Result
  * ======================================================================== */
 console.log(

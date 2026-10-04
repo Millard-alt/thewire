@@ -3474,6 +3474,25 @@ function attachAdminListeners() {
   // "Keep me signed in"-style switches and inline selects.
   document.addEventListener('change', (event) => handleChange(event));
 
+  /*
+   * Enter in the YouTube box stages the video instead of saving the interview.
+   *
+   * The dialog's own help text promises "Press Enter to add", so the key has to
+   * behave that way rather than quietly submitting the form and saving a
+   * half-written interview. preventDefault() is what stops the submit; without
+   * it the delegated submit listener above would save on every keystroke-batch.
+   *
+   * `!isComposing` guards the IME case: Enter is the confirmation key while
+   * choosing candidates, and consuming it there would strand the writer.
+   */
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    const field = event.target;
+    if (!(field instanceof HTMLElement) || field.id !== 'interview-video-url') return;
+    event.preventDefault();
+    if (stageInterviewVideo(field.value)) field.focus();
+  });
+
   // The "Specific User" picker: filter the roster as the Owner types. `input`
   // rather than `change`, because `change` only fires on blur and the list
   // would never narrow while typing.
@@ -5011,6 +5030,41 @@ function handleClick(event) {
           await store.deleteInterview(id);
           showToast('Interview deleted.', { type: 'success' });
         });
+      }
+      break;
+    }
+
+    case 'interview-filter':
+      // Same dead-control class of bug as the video buttons below: the filter row
+      // rendered these, but no case ever routed them, so every status button in
+      // the Interviews Desk silently did nothing and the tab looked like it had
+      // no filtering at all.
+      interviewFilter = filter;
+      paintActiveTab();
+      break;
+
+    case 'interview-video-add': {
+      // The Add button in the YouTube section. Without this case the button was
+      // rendered but never routed: `data-action` only dispatches inside this
+      // switch, so the click fell through to the end of the handler and nothing
+      // happened. stageInterviewVideo() existed, was correct, and had no caller.
+      //
+      // Reads the text box rather than an event value because the button is a
+      // sibling of the input, not a form submit carrying the field.
+      const staged = stageInterviewVideo(byId('interview-video-url')?.value);
+      // Only refocus when the paste was accepted. On a rejection the text stays
+      // put so the writer can see and correct what they pasted -- stealing focus
+      // here would make the editor look like it had swallowed the link.
+      if (staged) byId('interview-video-url')?.focus();
+      break;
+    }
+    case 'interview-video-remove': {
+      // Indices come from the rendered rows, which are drawn straight from
+      // interviewVideoDraft, so they cannot drift out of step with it.
+      const index = Number(trigger.dataset.index);
+      if (Number.isInteger(index) && index >= 0 && index < interviewVideoDraft.length) {
+        interviewVideoDraft.splice(index, 1);
+        renderInterviewVideoPreview();
       }
       break;
     }
