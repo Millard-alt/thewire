@@ -969,9 +969,11 @@ body.admin-active #lightbox {
    `visibility: hidden` on the reader views additionally stops them being
    reached by Tab if the panel is ever closed by a path that forgets to
    re-show exactly one view. */
-body.admin-active #publication-view,
-body.admin-active #gallery-view,
-body.admin-active #credits-view {
+/* Selected by attribute, not by a list of ids. This rule missed #interviews-view
+   when the Interviews feed shipped, which is why the feed stayed visible above
+   the panel headers; every consumer now shares the [data-reader-view] contract
+   declared in index.html. */
+body.admin-active [data-reader-view] {
   visibility: hidden;
   pointer-events: none;
 }

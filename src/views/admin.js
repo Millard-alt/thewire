@@ -3306,9 +3306,18 @@ export function openAdmin() {
   // Hide every reader view by class as well as by CSS. The CSS alone only sets
   // `visibility`, which the smoke test (correctly) does not accept as "hidden",
   // and an explicit class also stops the views from being measured or painted.
-  for (const id of ['publication-view', 'gallery-view', 'credits-view']) {
-    byId(id)?.classList.add('hidden');
-  }
+  //
+  // Selected by `[data-reader-view]`, NOT by a list of ids. This list used to be
+  // written out by hand and #interviews-view was missing from it, so opening the
+  // panel from the Interviews feed left the feed on screen and stacked under the
+  // panel headers. The attribute is the single source of truth, shared with
+  // showReaderView() in app.js and the body.admin-active rule in styles.css.
+  document.querySelectorAll('[data-reader-view]').forEach((view) => {
+    view.classList.add('hidden');
+    // An inline `display` outranks every stylesheet rule, so a view left with
+    // one by any earlier code path would stay visible through the class alone.
+    view.style.removeProperty('display');
+  });
   document.body.classList.add('admin-active');
   isMounted = true;
 
@@ -3344,12 +3353,9 @@ export function openAdmin() {
  * bring back afterwards.
  */
 function rememberReaderView() {
-  const views = ['gallery-view', 'credits-view', 'publication-view'];
+  const views = [...document.querySelectorAll('[data-reader-view]')];
   lastReaderView =
-    views.find((id) => {
-      const el = byId(id);
-      return el && !el.classList.contains('hidden');
-    }) || 'publication-view';
+    views.find((el) => !el.classList.contains('hidden'))?.id || 'publication-view';
 }
 
 /** Tear the workspace down and restore the public site. */
@@ -3369,10 +3375,12 @@ export function closeAdmin() {
   }
 
   // Restore exactly the view the Owner came from. Every other reader view stays
-  // hidden, so the panel can never leave two views stacked behind it.
-  for (const id of ['publication-view', 'gallery-view', 'credits-view']) {
-    byId(id)?.classList.toggle('hidden', id !== lastReaderView);
-  }
+  // hidden, so the panel can never leave two views stacked behind it. Selecting
+  // by attribute keeps a newly added reader view covered here automatically.
+  document.querySelectorAll('[data-reader-view]').forEach((view) => {
+    view.classList.toggle('hidden', view.id !== lastReaderView);
+    view.style.removeProperty('display');
+  });
   lastReaderView = 'publication-view';
   document.body.classList.remove('admin-active');
   window.scrollTo({ top: 0, behavior: 'auto' });

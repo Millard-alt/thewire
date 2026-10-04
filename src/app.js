@@ -100,18 +100,22 @@ function showReaderView(name) {
   const target = READER_VIEWS.includes(name) ? name : 'publication';
   readerView = target;
 
+  // Selected by attribute, not by a list of ids. See the note in index.html: the
+  // id list drifted once already and cost a reader-view/admin overlap bug, so
+  // adding a fifth reader view must not require remembering this function.
+  const views = document.querySelectorAll('[data-reader-view]');
+  views.forEach((view) => {
+    const isTarget = view.id === `${target}-view`;
+    // `.hidden` alone is not enough on its own. The admin-mode stylesheet can
+    // leave `visibility` behind on a view, and a stale inline `display` from a
+    // previous mount outranks the class, so clear the inline value explicitly.
+    view.classList.toggle('hidden', !isTarget);
+    if (isTarget) view.style.removeProperty('display');
+  });
+
   const publication = byId('publication-view');
   const credits = byId('credits-view');
   const gallery = byId('gallery-view');
-  const interviews = byId('interviews-view');
-
-  if (publication) publication.classList.toggle('hidden', target !== 'publication');
-  if (credits) credits.classList.toggle('hidden', target !== 'credits');
-  if (gallery) gallery.classList.toggle('hidden', target !== 'gallery');
-  // Interviews is a full reader view for the same reason the gallery is: it owns
-  // a #interviews-view mount and paginates three at a time, so a section anchor
-  // on the publication page cannot host it.
-  if (interviews) interviews.classList.toggle('hidden', target !== 'interviews');
 
   // Paint the credits roster on first reveal only: it costs a round-trip, and
   // the publication is what most visitors want first.

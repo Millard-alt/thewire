@@ -235,12 +235,21 @@
 
     <!-- ======================= MAIN ======================= -->
     <main id="main-content" class="mx-auto max-w-7xl px-4 py-8" tabindex="-1">
-      <!-- Public publication view -->
-      <section id="publication-view" aria-label="Publication"></section>
+      <!--
+      Every reader view carries `data-reader-view`. The view switcher in app.js,
+      the Newsroom Panel in views/admin.js and the `body.admin-active` rule in
+      styles.css all select on THAT attribute rather than on a hardcoded list of
+      ids. Those three lists used to be maintained by hand and drifted: the
+      Interviews feed was added here and to READER_VIEWS in app.js but to none
+      of the others, so opening the panel left #interviews-view on screen and
+      stacked under the panel headers. One attribute, no list to forget.
+      -->
+      <section id="publication-view" data-reader-view aria-label="Publication"></section>
 
       <!-- Gallery page: one Owner-defined card per category -->
       <section
         id="gallery-view"
+        data-reader-view
         class="hidden"
         aria-label="Gallery"
         tabindex="-1"
@@ -249,6 +258,7 @@
       <!-- Interviews feed: three published interviews per page (src/views/public.js) -->
       <section
         id="interviews-view"
+        data-reader-view
         class="hidden"
         aria-label="Interviews"
         tabindex="-1"
@@ -257,6 +267,7 @@
       <!-- Credits roster (rendered by src/lib/credits.js) -->
       <section
         id="credits-view"
+        data-reader-view
         class="hidden"
         aria-label="Credits"
         tabindex="-1"

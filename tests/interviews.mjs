@@ -611,6 +611,7 @@ const html = read('index.html');
 const appSrc = read('src/app.js');
 const publicSrc = read('src/views/public.js');
 const adminSrc = read('src/views/admin.js');
+const cssSrc = read('src/styles.css');
 
 report('safeUrl accepts a narrowing allowlist', /allowedHosts/.test(domSrc));
 report('safeUrl narrows by hostname, not by whole-URL match', /hostname/.test(domSrc));
@@ -629,7 +630,65 @@ report(
 section('view wiring');
 
 report('the feed mount element exists in index.html', /id="interviews-view"/.test(html));
-report('app.js routes the interviews view', /interviews-view/.test(appSrc) && /interviews/.test(appSrc));
+
+/*
+ * Regression guard for the reader-view/admin overlap.
+ *
+ * The feed shipped carrying its own `#interviews-view` section while app.js,
+ * views/admin.js and styles.css each hid reader views from a list of ids
+ * maintained by hand. Three of the four lists were updated for Interviews and
+ * one was not, so opening the Newsroom Panel left the feed rendered above the
+ * panel headers. A grep-based assertion like /interviews-view/ in app.js passed
+ * throughout that bug, because the id genuinely was still present in app.js --
+ * it was just no longer what any code acted on.
+ *
+ * The invariant that actually holds the feature together is that every reader
+ * view is marked up ONCE, with `data-reader-view`, and all three hiding paths
+ * select on that attribute. Assert the contract rather than the wording, so
+ * renaming a helper or reformatting a loop cannot make this pass vacuously.
+ */
+// Match the WHOLE opening tag first, then filter on the id. A single regex that
+// spans `[^>]*id="...-view"` backtracks to end immediately after the id, so it
+// can never see an attribute written after it -- which is exactly what happened
+// on the first run of this assertion, marking all five views as unmarked while
+// every one of them carried the attribute.
+//
+// `#admin-view` is excluded deliberately: it is the Newsroom Panel itself, not a
+// reader view, and hiding it under the body.admin-active rule would blank the
+// panel the Owner is looking at.
+const readerViewSections = (html.match(/<section\b[^>]*>/g) || []).filter(
+  (tag) => /id="(?!admin-)[a-z-]+-view"/.test(tag)
+);
+report(
+  `every reader view section is marked data-reader-view (${readerViewSections.length} found)`,
+  readerViewSections.length >= 4 &&
+    readerViewSections.every((tag) => /data-reader-view/.test(tag))
+);
+// Guards the filter above: if `admin-view` were swept in, the rule under test
+// would pass while hiding the admin panel itself.
+report(
+  'the admin panel mount is not tagged as a reader view',
+  !/<section\b[^>]*id="admin-view"[^>]*data-reader-view/.test(html)
+);
+report(
+  'app.js hides reader views by the shared attribute, not an id list',
+  /data-reader-view/.test(appSrc) &&
+    !/byId\('(publication|gallery|credits)-view'\)\?\.classList/.test(appSrc)
+);
+report(
+  'admin.js hides reader views by the shared attribute, not an id list',
+  /data-reader-view/.test(adminSrc) &&
+    !/for \(const id of \['publication-view'/.test(adminSrc)
+);
+report(
+  'styles.css suppresses reader views by the shared attribute, not an id list',
+  /body\.admin-active \[data-reader-view\]/.test(cssSrc) &&
+    !/body\.admin-active #publication-view/.test(cssSrc)
+);
+report(
+  'app.js routes the interviews view',
+  /interviews/.test(appSrc)
+);
 report(
   'public.js renders the interviews feed',
   /function renderInterviews/.test(publicSrc)
