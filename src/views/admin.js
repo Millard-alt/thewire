@@ -452,18 +452,50 @@ function renderAssignmentsTab() {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Tab 4 — Breaking News Banner                                                */
+/* Tab 4 — Banner                                                              */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Resolve the stored banner colour to the `#rrggbb` an `<input type="color">`
+ * will actually accept.
+ *
+ * A colour input silently renders black and rewrites the field to #000000 the
+ * moment it is given anything else, so the raw stored value cannot be used as
+ * its `value`. Three things need normalising:
+ *   - the legacy named palette ('Red' / 'Gold' / 'Blue') still in seeded rows,
+ *     which is what the seeded banner actually holds;
+ *   - shorthand hex (#abc), which no picker will render;
+ *   - anything malformed, which must fall back rather than blank the input.
+ *
+ * The named values mirror the CSS custom properties used by public.js, so the
+ * swatch a reader sees matches the one the Owner picked.
+ */
+function bannerSwatch(color) {
+  const raw = String(color || '').trim();
+
+  if (/^#[0-9a-f]{6}$/i.test(raw)) return raw;
+  if (/^#[0-9a-f]{3}$/i.test(raw)) {
+    return `#${raw[1]}${raw[1]}${raw[2]}${raw[2]}${raw[3]}${raw[3]}`;
+  }
+
+  switch (raw.toLowerCase()) {
+    case 'gold':
+    case 'newsgold':
+      return '#b8860b'; // --color-newsgold
+    case 'blue':
+    case 'newsblue':
+      return '#1c3f60'; // --color-newsblue
+    default:
+      return '#8c1d11'; // --color-newsred
+  }
+}
 
 function renderBreakingTab() {
   const breaking = store.getState().breakingNews;
 
   return `
     <div class="space-y-5">
-      ${panelHeader(
-        'Breaking news banner',
-        'The real-time alert strip that runs above the masthead'
-      )}
+      ${panelHeader('Banner', 'The real-time alert strip that runs above the masthead')}
 
       <form id="breaking-form" class="panel-raised space-y-4 p-5" novalidate>
         <div class="flex flex-wrap items-center gap-4">
@@ -477,37 +509,43 @@ function renderBreakingTab() {
           <label class="field-label mb-0" for="breaking-enabled">
             Banner is live on the public site
           </label>
-
-          <label class="switch ml-auto" for="breaking-dismissible">
-            <input id="breaking-dismissible" type="checkbox" ${
-              breaking.dismissible ? 'checked' : ''
-            } />
-            <span class="switch-track"></span>
-            <span class="switch-thumb"></span>
-          </label>
-          <label class="field-label mb-0" for="breaking-dismissible">
-            Readers may dismiss it
-          </label>
         </div>
+
+        <p class="ink-muted text-xs">
+          Readers see three things only: the severity, the headline and the
+          supporting line.
+        </p>
 
         <div class="grid gap-4 sm:grid-cols-2">
           <div>
-            <label class="field-label" for="breaking-label">Label</label>
-            <input id="breaking-label" class="field" type="text"
-              value="${escapeHtml(breaking.label)}" />
+            <label class="field-label" for="breaking-severity">Severity</label>
+            <input id="breaking-severity" class="field" type="text"
+              list="breaking-severity-presets" maxlength="24"
+              placeholder="Breaking"
+              value="${escapeHtml(breaking.severity || 'Breaking')}" />
+            <datalist id="breaking-severity-presets">
+              ${['Breaking', 'Developing', 'Advisory', 'Urgent', 'Update']
+                .map((option) => `<option value="${option}"></option>`)
+                .join('')}
+            </datalist>
+            <p class="ink-muted mt-1 text-xs">
+              Any wording you like. Suggested values are offered as you type.
+            </p>
           </div>
           <div>
-            <label class="field-label" for="breaking-severity">Severity</label>
-            <select id="breaking-severity" class="field">
-              ${['Breaking', 'Developing', 'Advisory']
-                .map(
-                  (option) =>
-                    `<option value="${option}" ${
-                      breaking.severity === option ? 'selected' : ''
-                    }>${option}</option>`
-                )
-                .join('')}
-            </select>
+            <label class="field-label" for="breaking-color">Colour</label>
+            <div class="flex items-center gap-2">
+              <input id="breaking-color-picker" type="color"
+                class="h-10 w-12 shrink-0 cursor-pointer rounded border border-black/20 bg-transparent p-1"
+                value="${escapeHtml(bannerSwatch(breaking.color))}"
+                aria-label="Pick a banner colour" />
+              <input id="breaking-color" class="field" type="text"
+                placeholder="#8C1D11"
+                value="${escapeHtml(breaking.color || '')}" />
+            </div>
+            <p class="ink-muted mt-1 text-xs">
+              Pick a swatch or type any hex colour, e.g. #8C1D11.
+            </p>
           </div>
         </div>
 
@@ -521,19 +559,6 @@ function renderBreakingTab() {
           <label class="field-label" for="breaking-subtext">Supporting line</label>
           <input id="breaking-subtext" class="field" type="text"
             value="${escapeHtml(breaking.subtext)}" />
-        </div>
-
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label class="field-label" for="breaking-link-text">Link text</label>
-            <input id="breaking-link-text" class="field" type="text"
-              value="${escapeHtml(breaking.linkText)}" />
-          </div>
-          <div>
-            <label class="field-label" for="breaking-link-url">Link URL</label>
-            <input id="breaking-link-url" class="field" type="text"
-              value="${escapeHtml(breaking.linkUrl)}" />
-          </div>
         </div>
 
         <div class="flex justify-end gap-2">
@@ -3255,6 +3280,45 @@ function typedArticleExtraUrls() {
     .filter(Boolean);
 }
 
+/**
+ * Push a "new article" alert to every opted-in device.
+ *
+ * The link is a hash anchor because this is a single-page site with no slug
+ * router: `public.js` renders each card as `#article-<id>` on `/`, so the
+ * service worker's notificationclick can navigate straight to the story.
+ *
+ * `summary` is the article's own text, trimmed to a single line. Push
+ * notifications cannot wrap, so a full body would be truncated by the OS at an
+ * arbitrary point; the fallback sentence is used when there is nothing usable.
+ *
+ * Fire and forget: the caller has already saved the article, so a push failure
+ * is logged and otherwise ignored rather than surfaced as a failed publish.
+ */
+function notifyReadersOfArticle(article, body = '') {
+  const excerpt = String(body || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 140);
+
+  push
+    .dispatchWebPush({
+      title: article.title,
+      body: excerpt || 'A new article has just been published on The Wire!',
+      audience: 'Everyone',
+      url: `/#article-${encodeURIComponent(article.id)}`
+    })
+    .then((result) => {
+      console.log('[push] article announced', {
+        id: article.id,
+        delivered: result?.delivered ?? 0,
+        reason: result?.reason || 'ok'
+      });
+    })
+    .catch((error) => {
+      console.warn('[push] article announcement failed', error);
+    });
+}
+
 async function saveArticleFromForm(form) {
   // If the editor chose a file but had not finished the upload, finish it here
   // so an article is never saved with a blank image after they hit Save.
@@ -3323,12 +3387,30 @@ async function saveArticleFromForm(form) {
     return;
   }
 
+  // Whether this save puts a story in front of readers, and whether it is doing
+  // so for the first time. Re-saving a published article must not re-notify
+  // everyone on every typo fix, so the trigger is the published *transition*.
+  const goingLive = payload.status === 'Published';
+  const wasAlreadyLive =
+    Boolean(editingArticleId) &&
+    store.getState().articles.some(
+      (a) => a.id === editingArticleId && a.status === 'Published'
+    );
+
+  let saved = null;
   if (editingArticleId) {
-    await store.updateArticle(editingArticleId, payload);
+    saved = await store.updateArticle(editingArticleId, payload);
     showToast('Article updated.', { type: 'success' });
   } else {
-    await store.createArticle(payload);
+    saved = await store.createArticle(payload);
     showToast('Article created and added to the desk.', { type: 'success' });
+  }
+
+  // Announce the story. Failures here are deliberately swallowed: the article is
+  // already saved, and a push that did not go out must not turn a successful
+  // publish into a reported error.
+  if (goingLive && !wasAlreadyLive && saved?.id) {
+    notifyReadersOfArticle(saved, payload.body);
   }
 
   editingArticleId = null;
@@ -3683,20 +3765,24 @@ function handleChange(event) {
     });
     return;
   }
-  if (target.id === 'breaking-sticky' || target.id === 'breaking-dismissible') {
-    guard(async () => {
-      await store.saveBreakingNews({
-        [target.id.replace('breaking-', '')]: target.checked
-      });
-      paintActiveTab();
-    });
-    return;
-  }
+  // `breaking-sticky` and `breaking-dismissible` used to autosave here. Those
+  // toggles are gone from the form, so the branch was unreachable; removed
+  // rather than left as dead code that looks like it still works.
   if (target.id === 'breaking-severity' || target.id === 'breaking-color') {
     guard(async () => {
       await store.saveBreakingNews({ [target.id.replace('breaking-', '')]: target.value });
       paintActiveTab();
     });
+    return;
+  }
+
+  // The swatch mirrors into the hex box as it is dragged. It must not save on
+  // its own: a native colour picker fires `input` continuously while the Owner
+  // is still choosing, so persisting here would write dozens of half-picked
+  // colours. The hex field it updates is saved by Save banner instead.
+  if (target.id === 'breaking-color-picker') {
+    const hex = byId('breaking-color');
+    if (hex) hex.value = target.value;
     return;
   }
 
@@ -3734,17 +3820,22 @@ function handleChange(event) {
 }
 
 /**
- * Persist every field of the breaking-news banner in one write. The individual
- * switches already autosave through `handleChange`; this catches the text
- * inputs, which have no `change` handler of their own.
+ * Persist every field of the banner in one write.
+ *
+ * Only the three fields readers actually see are saved: severity, headline and
+ * supporting line, plus the colour and the live switch. `label`, `linkText` and
+ * `linkUrl` used to be saved here and are gone from both the form and the
+ * rendered banner - the inputs no longer exist, so `byId(...)?.value` returned
+ * undefined and every save blanked them.
+ *
+ * The colour is read from the hex field, not the picker, so a value typed by
+ * hand is honoured even when the two are momentarily out of step.
  */
 async function saveBreakingFromForm() {
-  const label = byId('breaking-label')?.value.trim() || '';
   const headline = byId('breaking-headline')?.value.trim() || '';
   const subtext = byId('breaking-subtext')?.value.trim() || '';
-  const linkText = byId('breaking-link-text')?.value.trim() || '';
-  const linkUrl = byId('breaking-link-url')?.value.trim() || '';
   const severity = byId('breaking-severity')?.value || 'Breaking';
+  const color = byId('breaking-color')?.value.trim() || '';
   const enabled = byId('breaking-enabled')?.checked ?? false;
 
   if (enabled && !headline) {
@@ -3755,13 +3846,21 @@ async function saveBreakingFromForm() {
     return;
   }
 
+  // Reject anything that is not a hex triplet before it reaches public.js. That
+  // value is interpolated into a `style` attribute, so it is sanitised again on
+  // render - but refusing it here means the Owner sees the refusal instead of
+  // the banner silently reverting to the house red.
+  if (color && !/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(color)) {
+    showToast('Banner colour must be a hex value, e.g. #8C1D11.', { type: 'error' });
+    byId('breaking-color')?.focus();
+    return;
+  }
+
   await store.saveBreakingNews({
-    label,
     headline,
     subtext,
-    linkText,
-    linkUrl,
     severity,
+    color,
     enabled
   });
 

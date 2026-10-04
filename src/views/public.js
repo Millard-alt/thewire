@@ -68,16 +68,17 @@ export function renderBreakingBanner() {
     return;
   }
 
-  const accent =
-    banner.color === 'Gold'
-      ? 'var(--color-newsgold)'
-      : banner.color === 'Blue'
-        ? 'var(--color-newsblue)'
-        : 'var(--color-newsred)';
+  // `color` used to be one of three fixed names. It is now whatever the Owner
+  // typed or picked, so a real hex value wins and the named palette is kept
+  // only as a fallback for banners saved before the colour picker existed.
+  const accent = bannerAccent(banner.color);
 
-  const url = safeUrl(banner.linkUrl);
   const severity = escapeHtml(banner.severity || 'Breaking');
 
+  // Deliberately three elements and nothing else: severity, headline,
+  // supporting line. The former Label / link-text / link-URL / dismiss
+  // controls were settings with nothing on screen to hang them on, so the
+  // Owner could fill them in and see no change. See renderBreakingTab().
   slot.innerHTML = `
     <div
       class="emergency-pulse text-white no-print"
@@ -96,26 +97,33 @@ export function renderBreakingBanner() {
             ? `<span class="hidden truncate opacity-90 md:inline">${escapeHtml(banner.subtext)}</span>`
             : ''
         }
-        ${
-          url && banner.linkText
-            ? `<a class="btn shrink-0 border border-white/50 text-white hover:bg-white hover:text-black" href="${escapeHtml(url)}">${escapeHtml(banner.linkText)}</a>`
-            : ''
-        }
-        ${
-          banner.dismissible
-            ? `<button type="button" id="dismiss-breaking" class="btn-quiet shrink-0 text-white" aria-label="Dismiss breaking news"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>`
-            : ''
-        }
       </div>
     </div>
   `;
+}
 
-  // The dismiss button only exists when the owner enabled `dismissible`, so it
-  // is bound defensively after each paint.
-  byId('dismiss-breaking')?.addEventListener('click', () => {
-    slot.replaceChildren();
-    showToast('Breaking-news alert dismissed for this visit.', { type: 'info' });
-  });
+/**
+ * Resolve the stored banner colour to something safe to put in a `style`
+ * attribute.
+ *
+ * This value is interpolated straight into `style="background: ..."`, so it is
+ * an injection point: an Owner (or anyone who reaches the settings row) could
+ * otherwise write `red; background-image: url(...)` and pull a remote request
+ * out of every reader's page. Only a real hex triplet is accepted; everything
+ * else falls back to the named palette and then to the house red.
+ */
+function bannerAccent(color) {
+  const raw = String(color || '').trim();
+
+  if (/^#[0-9a-f]{6}$/i.test(raw)) return raw;
+  if (/^#[0-9a-f]{3}$/i.test(raw)) {
+    // Expand #abc -> #aabbcc so the CSS that assumes six digits stays simple.
+    return `#${raw[1]}${raw[1]}${raw[2]}${raw[2]}${raw[3]}${raw[3]}`;
+  }
+
+  if (raw.toLowerCase() === 'gold') return 'var(--color-newsgold)';
+  if (raw.toLowerCase() === 'blue') return 'var(--color-newsblue)';
+  return 'var(--color-newsred)';
 }
 
 /* -------------------------------------------------------------------------- */
