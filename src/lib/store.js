@@ -436,7 +436,19 @@ export async function hydrate() {
         title: row.title,
         reporter: row.reporter || '',
         status: row.status,
-        deadline: row.deadline || ''
+        deadline: row.deadline || '',
+        // Migration 021 added these three. They were NOT carried through here, so
+        // after any re-hydrate every assignment silently reverted to "unassigned"
+        // and to a blank deadline in the editor - the value had been written to
+        // Postgres correctly and was thrown away one layer up. The same class of
+        // bug as the portrait columns noted below.
+        //
+        // `?? null` rather than `|| null`: PostgREST omits a key entirely when a
+        // deployment has not run 021 yet, and `row.assigned_to` being undefined
+        // must not be read as a real value.
+        assigned_to: row.assigned_to ?? null,
+        due_at: row.due_at ?? null,
+        reminder_sent: Boolean(row.reminder_sent)
       })),
       // NOTE: portrait_url and portrait_status are carried through here on
       // purpose. They were dropped by this mapper, so the Owner's Staff tab
