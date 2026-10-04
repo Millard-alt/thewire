@@ -3157,6 +3157,25 @@ function attachAdminListeners() {
 
   // "Keep me signed in"-style switches and inline selects.
   document.addEventListener('change', (event) => handleChange(event));
+
+  // The "Specific User" picker: filter the roster as the Owner types. `input`
+  // rather than `change`, because `change` only fires on blur and the list
+  // would never narrow while typing.
+  document.addEventListener('input', (event) => {
+    const field = event.target;
+    if (!(field instanceof HTMLElement) || field.id !== 'broadcast-target') return;
+    renderBroadcastTargetResults(field.value);
+  });
+
+  // Picking a row is a click, not a submit or a change, so the delegated submit
+  // listener never sees it. `closest` covers the row and its inner spans.
+  document.addEventListener('click', (event) => {
+    const option = event.target instanceof Element
+      ? event.target.closest('[data-target-id]')
+      : null;
+    if (!option) return;
+    chooseBroadcastTarget(option.dataset.targetId, option.dataset.targetLabel);
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -3641,6 +3660,20 @@ async function saveAssignmentFromForm(form) {
 function handleChange(event) {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
+
+  /* --- Broadcast audience -> reveal the "Specific User" picker ------------
+     This is the only thing that reveals #broadcast-target-wrap. Without it the
+     picker stays `hidden` for good and the Owner has no way to aim a
+     broadcast, even though the option is in the dropdown. */
+  if (target.id === 'broadcast-audience') {
+    syncBroadcastTargetVisibility(target.value);
+    if (target.value === 'Specific User') {
+      prepareBroadcastTarget().catch((error) =>
+        console.warn('[admin] could not load the staff directory', error)
+      );
+    }
+    return;
+  }
 
   /* --- Breaking news banner --------------------------------------------- */
   if (target.id === 'breaking-enabled') {
