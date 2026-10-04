@@ -75,8 +75,7 @@ begin
 
   update public.staff
      set portrait_url    = '',
-         portrait_status = 'none',
-         updated_at      = now()
+         portrait_status = 'none'
    where id = p_staff_id
   returning * into v_row;
 
@@ -108,7 +107,6 @@ declare
   v_target    uuid;
   v_saved_url text;
   v_saved     text;
-  v_saved_upd timestamptz;
   v_blocked   text;
   v_after     public.staff;
 begin
@@ -128,8 +126,13 @@ begin
   end if;
 
   -- Snapshot first, so every later step can put it back.
-  select portrait_url, portrait_status, updated_at
-    into v_saved_url, v_saved, v_saved_upd
+  --
+  -- portrait_url and portrait_status are the ONLY two columns this script reads
+  -- back or writes. public.staff (supabase/schema.sql) has no updated_at, so an
+  -- earlier draft that snapshotted and restored one failed outright with
+  -- 42703 "column updated_at does not exist". Nothing here touches timestamps.
+  select portrait_url, portrait_status
+    into v_saved_url, v_saved
     from public.staff
    where id = v_target;
 
@@ -151,8 +154,7 @@ begin
   --    show a phantom submission forever.
   update public.staff
      set portrait_url    = '',
-         portrait_status = 'none',
-         updated_at      = now()
+         portrait_status = 'none'
    where id = v_target
   returning * into v_after;
 
@@ -164,8 +166,7 @@ begin
   --    aborts later, the portrait must still be there.
   update public.staff
      set portrait_url    = v_saved_url,
-         portrait_status = v_saved,
-         updated_at      = v_saved_upd
+         portrait_status = v_saved
    where id = v_target;
 
   raise notice 'MIGRATED AND VERIFIED. A signed-out caller is blocked (%), a reset '
