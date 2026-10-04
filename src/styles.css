@@ -1328,6 +1328,24 @@ body.admin-active.dialog-locked {
   transform: rotate(0deg) scale(1.06);
 }
 
+/* Live circular preview in the portrait cropper.
+   This class is applied to a <canvas> in index.html and was never given a rule,
+   so the preview inherited `.byline-sticker`'s 2.25rem byline size instead of
+   the 120px canvas it is allocated. The canvas backing store (width/height
+   attributes, 120) and its CSS box then disagreed, and the circular mask cut
+   through the painted image rather than through a correctly sized frame - the
+   face rendered small and off-centre in the top-left of the ring, with the
+   remainder of the circle showing the bare canvas (black).
+
+   Sizing it here, and pinning the box to a square with `aspect-ratio`, is what
+   makes the drawn region and the visible circle the same shape. */
+.byline-sticker-preview {
+  width: 7.5rem; /* 120px, matching the canvas attributes */
+  height: 7.5rem;
+  max-width: 100%;
+  aspect-ratio: 1 / 1;
+}
+
 /* Credits card size. */
 .byline-sticker-lg {
   width: 6.5rem;

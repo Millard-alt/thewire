@@ -175,11 +175,26 @@ function paint() {
   ctx.stroke();
 
   // The preview mirrors the viewport and is masked to a circle by CSS.
+  //
+  // The scale factor is derived from the preview's OWN rendered size, not from
+  // its `width` attribute. A canvas backing store and its CSS box are
+  // independent: `.byline-sticker-preview` sizes the element, while the 120x120
+  // attributes size the bitmap. Taking the ratio of the two is what guarantees
+  // the painted image covers the whole circle, so no bare canvas (black) can
+  // show through a corner, whatever CSS ends up doing to the box.
   if (preview) {
     const pctx = preview.getContext('2d');
-    const ps = preview.width;
+    const pbox = preview.getBoundingClientRect();
+    const ps = preview.width || 1;
+    pctx.setTransform(1, 0, 0, 1, 0, 0);
     pctx.clearRect(0, 0, ps, ps);
-    const k = ps / side;
+
+    // Bitmap px per rendered px. Guard the divisor: a hidden dialog reports a
+    // zero-width rect, and dividing by it would paint NaN-sized nothing.
+    const boxSide = Math.max(1, Math.min(pbox.width || ps, pbox.height || ps));
+    const k = ps / boxSide;
+
+    pctx.imageSmoothingQuality = 'high';
     pctx.drawImage(image, originX * k, originY * k, drawW * k, drawH * k);
   }
 }

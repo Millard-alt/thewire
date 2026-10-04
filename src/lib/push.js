@@ -195,7 +195,9 @@ export async function deliverLocally({
     tag,
     renotify: true,
     icon: '/icons/icon-192.png',
-    badge: '/icons/badge-72.png',
+    // No `badge` - see the matching note in public/sw.js. There is no monochrome
+    // status-bar glyph in public/icons/, and pointing at a full-colour mark
+    // 404s on every notification. The OS default is used instead.
     // An alert must not be silent or the reader misses an emergency dispatch.
     requireInteraction: Boolean(requireInteraction),
     vibrate: [200, 100, 200, 100, 200],

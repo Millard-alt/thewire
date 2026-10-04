@@ -21,7 +21,6 @@ const SHELL_ASSETS = [
   '/index.html',
   '/vendor/fontawesome/all.min.css',
   '/icons/icon-192.png',
-  '/icons/badge-72.png',
   '/manifest.webmanifest'
 ];
 
@@ -106,7 +105,14 @@ async function display({ title, body, icon, tag, url, requireInteraction }) {
     tag: tag || 'the-wire-broadcast',
     renotify: true,
     icon: iconPath,
-    badge: '/icons/badge-72.png',
+    // No `badge`. A badge is the small monochrome glyph shown in the OS status
+    // bar, and this project has no such asset: public/icons/ holds only
+    // icon-192, icon-512 and icon-maskable-512, all full-colour brand marks.
+    // Pointing `badge` at one of those produced a 404 on every notification
+    // ("Failed to load resource: /icons/badge-72.png"), which the browser logs
+    // as an error even though the notification still displays. Omitting the key
+    // is the correct fix - the OS then shows its own default dot, and `icon`
+    // above already provides the full-colour artwork where it belongs.
     // Alarms must not be silent or the reader misses an emergency dispatch.
     requireInteraction: Boolean(requireInteraction),
     vibrate: [200, 100, 200, 100, 200],
