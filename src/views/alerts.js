@@ -258,15 +258,24 @@ function renderOptInBar() {
   const bar = byId(BAR_ID);
   if (!bar) return;
 
+  // The container ships with `hidden` in index.html. Every path below has to put
+  // that back explicitly when there is nothing to show, otherwise the bar keeps
+  // painting into an invisible box and the reader is never offered the button
+  // that triggers Notification.requestPermission().
+  const clear = () => {
+    bar.replaceChildren();
+    bar.hidden = true;
+  };
+
   // No bar at all when the owner has switched alerts off.
   if (!config.pushBroadcastsEnabled) {
-    bar.replaceChildren();
+    clear();
     return;
   }
 
   const status = push.pushStatus();
   if (status.ok) {
-    bar.replaceChildren();
+    clear();
     return;
   }
 
@@ -299,6 +308,9 @@ function renderOptInBar() {
 
     ensureAlertPermission();
   });
+
+  // Un-hide only now that there is a real bar to show.
+  bar.hidden = false;
 }
 
 /**

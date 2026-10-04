@@ -11,6 +11,45 @@ its migrations have been run in the Supabase SQL Editor.**
 
 ## [Unreleased]
 
+### Fixed
+
+- **The notification opt-in bar could never appear.** `#alert-optin-bar`
+  ships with the `hidden` attribute in `index.html`, and `renderOptInBar()`
+  in `src/views/alerts.js` wrote its contents into the element without ever
+  clearing that flag. The bar was therefore painted into an invisible box:
+  readers were never offered the "Turn on alerts" button, and so never got
+  as far as the permission prompt — which is very likely what made Android
+  look like it was refusing to prompt at all. The renderer now clears
+  `hidden` on the paths that return early and un-hides it only once there is
+  a real bar to show.
+
+- **Mojibake in user-visible strings.** Em dashes and curly quotes in
+  `src/views/alerts.js` had been re-encoded through CP-1252 and were
+  rendering as literal sequences of accented characters on the page.
+  Repaired to valid UTF-8.
+
+### Added
+
+- **`npm run test:push`** (`scripts/push-check.mjs`). Asserts the opt-in bar
+  is visible at 360 / 390 / 430px with no horizontal overflow, and that
+  `Notification.requestPermission()` is called **exactly once** by a real
+  click and **zero times** on page load — the gesture requirement that
+  Chrome on Android enforces.
+
+### Applied
+
+- Push notification fixes. `manifest.webmanifest` already declares
+  `display: standalone` with root `start_url` and `scope`; `index.html`
+  already links it and carries the `apple-mobile-web-app-*` tags; the
+  service worker registers at `/sw.js` (root scope) and already handles
+  `push` via `self.registration.showNotification()` plus
+  `notificationclick`; `pushManager.subscribe()` already passes
+  `userVisibleOnly: true` with a URL-safe base64-decoded VAPID key; and
+  `instructions()` in `src/views/alerts.js` already branches on
+  `isIOS() && !isStandalone()` to tell iPhone and iPad users to Add to
+  Home Screen rather than sending them into Safari settings where there is
+  nothing to change. These were verified in place rather than rewritten.
+
 ### Added
 
 - **Portrait zoom controls.** The portrait editor now has a slider plus

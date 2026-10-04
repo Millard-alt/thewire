@@ -18,6 +18,7 @@
     "lint:sql": "node scripts/role-consistency.mjs",
     "test:credits": "node scripts/credits-check.mjs",
     "test:gallery": "node scripts/gallery-check.mjs",
+    "test:push": "node scripts/push-check.mjs",
     "test:smoke": "node scripts/smoke.mjs",
     "lint:encoding": "node scripts/encoding-check.mjs",
     "test:install": "playwright install chromium"
