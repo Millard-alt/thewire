@@ -512,8 +512,366 @@ export function renderGalleryPage() {
 
 
 
+/* -------------------------------------------------------------------------- */
+/* Video interviews                                                            */
+/* -------------------------------------------------------------------------- */
+
 /**
- * Open the shared lightbox on one gallery image.
+ * Which page of the interviews feed the reader is on.
+ *
+ * Module state, deliberately NOT in the URL. A paginated reader page whose page
+ * number lives in a query string means the back button walks the reader back
+ * through their own page changes, and a refresh on page 3 of a two-page feed
+ * needs a second fetch to resolve. The gallery made the same call for the same
+ * reason (see renderGalleryPage); the feed is short enough that a bookmark to
+ * page 3 is not something anybody wants.
+ */
+let interviewPage = 1;
+
+/**
+ * Render one responsive YouTube embed.
+ *
+ * The 16/9 box is the whole trick. YouTube's player has no intrinsic size, so a
+ * bare <iframe> defaults to 300x150 and cannot be made responsive with width
+ * alone -- the classic result is a video letterboxed into a fixed box that
+ * overflows its column on a phone. Wrapping it in an aspect-ratio box and
+ * absolutely positioning the iframe inside makes the embed fill its column at
+ * any width.
+ *
+ * Everything the player needs to stop tracking the reader is set here:
+ * `youtube-nocookie` avoids setting cookies until play, `loading="lazy"` keeps
+ * three embeds from fetching the player bundle on page load, and
+ * `referrerpolicy` keeps our URLs out of the request.
+ *
+ * @param {string} videoId a bare 11-character id, from store.readVideoIds()
+ * @param {string} title used for the accessible name
+ * @param {number} index 1-based, for the label
+ * @returns {string} markup, or '' if the id is unusable
+ */
+function interviewEmbed(videoId, title, index) {
+  /*
+  Asserted against YOUTUBE_EMBED_HOSTS rather than trusted because it came out of
+  our own youtubeEmbedUrl(). The id is the untrusted part -- it arrives from a
+  database column a writer filled in -- so this is the one place that proves the
+  finished src cannot point anywhere but YouTube before it reaches an iframe.
+  Returning '' drops the embed entirely, which is the right outcome for a value
+  no id should ever have produced.
+  */
+  const src = safeUrl(store.youtubeEmbedUrl(videoId), {
+    allowedHosts: store.YOUTUBE_EMBED_HOSTS
+  });
+  if (!src) return '';
+
+  return `
+    <figure class="interview-embed">
+      <div class="interview-embed__frame">
+        <iframe
+          src="${escapeHtml(src)}"
+          title="${escapeHtml(`${title} — part ${index}`)}"
+          loading="lazy"
+          allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          referrerpolicy="strict-origin-when-cross-origin"
+          allowfullscreen="true"
+        ></iframe>
+      </div>
+      <figcaption class="interview-embed__caption">
+        <span class="interview-embed__part" aria-hidden="true">${index}</span>
+        <span>Part ${index} of this interview</span>
+      </figcaption>
+    </figure>
+  `;
+}
+
+/**
+ * One interview card on the feed.
+ *
+ * A poster image is preferred over an inline embed: three players loading at
+ * once is the single heaviest thing this page could do, and a reader scanning
+ * the feed wants to see who it is with before deciding to play anything.
+ *
+ * @param {object} interview
+ */
+function interviewCard(interview) {
+  if (!interview) return '';
+  const poster = safeUrl(interview.image) || BLANK_IMAGE;
+  const videoCount = (interview.videoIds || []).length;
+
+  return `
+    <article class="panel-raised flex h-full flex-col overflow-hidden">
+      <div class="relative">
+        <img
+          src="${escapeHtml(poster)}"
+          alt=""
+          loading="lazy"
+          decoding="async"
+          class="h-44 w-full object-cover"
+        />
+        ${
+          videoCount
+            ? `<span class="badge badge-neutral absolute bottom-2 left-2">
+                 <i class="fa-solid fa-play text-[0.5rem]" aria-hidden="true"></i>
+                 ${videoCount} video${videoCount === 1 ? '' : 's'}
+               </span>`
+            : ''
+        }
+      </div>
+
+      <div class="flex flex-1 flex-col p-4">
+        <p class="text-[0.625rem] font-semibold tracking-[0.12em] uppercase">
+          <span class="accent-text">Interview</span>
+          ${
+            interview.guestRole
+              ? `<span class="ink-muted"> · ${escapeHtml(interview.guestRole)}</span>`
+              : ''
+          }
+        </p>
+
+        <h3 class="mt-2 font-headline text-lg leading-tight font-black">
+          ${escapeHtml(interview.guest || 'Unnamed guest')}
+        </h3>
+
+        <p class="ink-muted mt-1 text-[0.6875rem]">
+          ${escapeHtml(interview.title)}
+          ${interview.interviewer ? ` · by ${escapeHtml(interview.interviewer)}` : ''}
+        </p>
+
+        ${
+          interview.summary
+            ? `<p class="mt-3 text-sm leading-relaxed ink-muted">${escapeHtml(
+                interview.summary
+              )}</p>`
+            : ''
+        }
+
+        <button type="button" class="btn btn-accent mt-4 self-start" data-interview="${escapeHtml(
+          interview.id
+        )}">
+          <i class="fa-solid fa-play" aria-hidden="true"></i>
+          Watch the interview
+        </button>
+      </div>
+    </article>
+  `;
+}
+
+/** The Newer/Older pager. Rendered only when there is somewhere to go. */
+function interviewPager({ page, pageCount, hasPrev, hasNext, total }) {
+  if (pageCount <= 1) {
+    return total
+      ? `<p class="ink-muted mt-6 text-center text-xs">
+           All ${total} published interview${total === 1 ? '' : 's'} are shown above.
+         </p>`
+      : '';
+  }
+
+  return `
+    <nav class="mt-8 flex items-center justify-center gap-3" aria-label="Interviews pages">
+      <button
+        class="btn btn-ghost"
+        data-interview-page="${page - 1}"
+        ${hasPrev ? '' : 'disabled aria-disabled="true"'}
+      >
+        <i class="fa-solid fa-arrow-left text-[0.6rem]" aria-hidden="true"></i>
+        Newer
+      </button>
+
+      <span class="ink-muted text-xs" aria-live="polite">
+        Page ${page} of ${pageCount}
+      </span>
+
+      <button
+        class="btn btn-ghost"
+        data-interview-page="${page + 1}"
+        ${hasNext ? '' : 'disabled aria-disabled="true"'}
+      >
+        Older
+        <i class="fa-solid fa-arrow-right text-[0.6rem]" aria-hidden="true"></i>
+      </button>
+    </nav>
+  `;
+}
+
+/**
+ * The interviews page: three published interviews per page, with a pager.
+ *
+ * Rendered into #interviews-view by src/app.js. Same shape as the gallery page --
+ * the element is repainted wholesale on every store change, so the click
+ * delegation is (re)assigned here rather than bound once per card.
+ */
+export function renderInterviewsPage() {
+  const view = byId('interviews-view');
+  if (!view) return;
+
+  const published = store.listPublishedInterviews();
+  const result = store.listPublishedInterviewsPage(interviewPage);
+
+  /*
+  Everything below reads `result.*`, NOT the raw `interviewPage`. The store
+  clamps a stale or out-of-range page number (an Owner who deletes an interview
+  from the panel while a reader sits on the last page would otherwise strand that
+  reader on an empty grid), and hasPrev/hasNext come from the clamped value so
+  the pager cannot disagree with the grid it sits under.
+  */
+
+  view.innerHTML = `
+    ${sectionHeading('interviews-page-heading', 'On the record', 'Interviews')}
+
+    ${
+      published.length
+        ? `<p class="ink-muted mb-6 text-sm">
+             ${published.length} published interview${published.length === 1 ? '' : 's'},
+             ${result.pageCount} page${result.pageCount === 1 ? '' : 's'}.
+           </p>`
+        : ''
+    }
+
+    ${
+      result.items.length
+        ? `<div class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+             ${result.items.map(interviewCard).join('')}
+           </div>
+           ${interviewPager({
+             page: result.page,
+             pageCount: result.pageCount,
+             hasPrev: result.hasPrev,
+             hasNext: result.hasNext,
+             total: result.total
+           })}`
+        : published.length
+          ? `<p class="panel p-6 text-sm ink-muted">No interviews on this page.</p>`
+          : `<p class="panel p-6 text-sm ink-muted">
+               No interviews have been published yet. The Wire interviews
+               commissioners, archivists and organisers on the record; recordings
+               appear here once the Owner has approved them.
+             </p>`
+    }
+  `;
+
+  view.onclick = (event) => {
+    const opener = event.target.closest('[data-interview]');
+    if (opener) {
+      openInterview(opener.dataset.interview);
+      return;
+    }
+
+    const pager = event.target.closest('[data-interview-page]');
+    if (pager) {
+      const next = Number(pager.dataset.interviewPage);
+      // A disabled button is still clickable in some browsers, and a NaN here
+      // would silently reset the reader to page 1 without them asking for it.
+      if (!Number.isInteger(next) || next < 1 || next > result.pageCount) return;
+      interviewPage = next;
+      renderInterviewsPage();
+      view.focus?.();
+      window.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
+    }
+  };
+}
+
+/**
+ * Open one interview in the reading modal.
+ *
+ * Pending interviews are refused with a toast rather than rendered: the store
+ * already filters them out of the public list, so a link reaching here with one
+ * is either a stale render or a hand-typed id, and either way the answer is the
+ * same -- it has not been approved yet.
+ *
+ * @param {string} id
+ */
+export function openInterview(id) {
+  const interview = store.getInterview(id);
+  const body = byId('interview-modal-body');
+  if (!interview || !body) return;
+
+  if (String(interview.status || '').toLowerCase() !== 'published') {
+    showToast('That interview is still awaiting approval.', { type: 'info' });
+    return;
+  }
+
+  // Split on blank lines so each becomes its own <p>, exactly as the article
+  // reader does. escapeHtml on every block: an interview description is
+  // free-text written by a writer in the panel, not trusted markup.
+  const paragraphs = String(interview.description || '')
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((block) => `<p class="mt-4">${escapeHtml(block)}</p>`)
+    .join('');
+
+  const poster = safeUrl(interview.image);
+  // readVideoIds() rather than trusting the stored array: it re-normalises, drops
+  // anything unparseable and caps the list, so a row written before the CHECK was
+  // tightened still renders three or fewer embeds rather than anything it holds.
+  const videos = store.readVideoIds(interview.videoIds);
+  const label = interview.guest || interview.title || 'Interview';
+
+  /*
+  published_at is a timestamptz, and the feed orders by it, so it is the date the
+  reader wants. Formatted through the same path as the masthead rather than
+  printed raw: the raw value is an ISO string and renders as a wall of digits in
+  the middle of a headline. Falls back to created_at for a row that was published
+  without a stamp.
+  */
+  const stamp = interview.publishedAt || interview.createdAt;
+  const shown = stamp
+    ? new Date(stamp).toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+      })
+    : '';
+
+  body.innerHTML = `
+    <article>
+      ${
+        poster
+          ? `<figure>
+               <img
+                 src="${escapeHtml(poster)}"
+                 alt="${escapeHtml(label)}"
+                 class="h-52 w-full object-cover md:h-72"
+               />
+             </figure>`
+          : ''
+      }
+
+      <div class="p-6 md:p-8">
+        <div class="flex flex-wrap items-center gap-2 text-[0.625rem] font-semibold tracking-[0.14em] uppercase">
+          <span class="badge badge-gold">Interview</span>
+          ${shown ? `<span class="ink-muted font-mono">${escapeHtml(shown)}</span>` : ''}
+        </div>
+
+        <h2 id="interview-modal-title" class="mt-3 font-headline text-2xl leading-tight font-black md:text-4xl">
+          ${escapeHtml(label)}
+        </h2>
+
+        <p class="ink-muted mt-2 text-xs font-semibold tracking-wide uppercase">
+          ${interview.guestRole ? escapeHtml(interview.guestRole) : ''}${interview.guestRole && interview.interviewer ? ' &middot; ' : ''}${interview.interviewer ? `by ${escapeHtml(interview.interviewer)}` : ''}
+        </p>
+
+        ${interview.title ? `<h3 class="mt-4 font-headline text-lg leading-snug font-bold">${escapeHtml(interview.title)}</h3>` : ''}
+
+        ${interview.summary ? `<p class="mt-3 text-base leading-relaxed">${escapeHtml(interview.summary)}</p>` : ''}
+
+        ${
+          videos.length
+            ? `<div class="mt-8 space-y-6">
+                 ${videos.map((videoId, index) => interviewEmbed(videoId, label, index + 1)).join('')}
+               </div>`
+            : `<p class="ink-muted mt-8 text-sm">No recording has been attached to this interview yet.</p>`
+        }
+
+        <div class="first-letter-cap mt-8">${
+          paragraphs || '<p class="mt-4">This interview has no written notes yet.</p>'
+        }</div>
+      </div>
+    </article>
+  `;
+
+  openDialog('interview-modal');
+}
+
+/**
  * The dialog is declared once in index.html, so it is only ever populated here.
  * @param {string} id
  */

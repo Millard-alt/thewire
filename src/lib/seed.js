@@ -231,6 +231,97 @@ export function createSeedState() {
       }
     ],
 
+    /*
+    Video interviews. camelCase to match what the views read -- mapInterviewRow()
+    in store.js accepts either spelling, so these survive a round trip through
+    mergeState(), which re-runs the mapper over the cached localStorage copy.
+
+    `videoIds` holds BARE 11-character ids, exactly as the database does. Two of
+    the rows carry multiple videos so the multi-embed detail view is exercised
+    without editing anything, and the last one is deliberately 'pending' so the
+    Owner's approval queue is not empty on a fresh demo load.
+
+    Four rows, deliberately, because the public feed pages three at a time: a
+    single demo interview would never reveal a page 2.
+    */
+    interviews: [
+      {
+        id: 'seed-interview-1',
+        title: 'On Running a County Through a Drought Year',
+        guest: 'Wanjiku Kamau',
+        guestRole: 'Nakuru County Governor',
+        interviewer: 'Grace Wanjiku',
+        summary:
+          'The Governor on water rationing, displaced herders, and why the county refused a centrally-imposed allocation formula.',
+        description:
+          'We sat down for ninety minutes at the county headquarters with Governor Wanjiku Kamau, three weeks after the second dry-season allocation was announced. She opened on the numbers: reservoir levels at 61 percent, a 40 percent cut in piped supply for three towns, and 12,000 households moved onto tanker deliveries.\n\nAsked whether the county had considered the allocation formula used elsewhere, she was blunt. "A formula built on a population register from 2019 does not know where people are now. It knows where they were. Water does not."\n\nOn the herders moving south along the Mau Escarpment, she was careful and unapologetic in equal measure, and repeatedly returned to a single theme: that the county government has spent four years being described as a problem to be solved, rather than an administration with a problem to solve.\n\nThe full conversation is published unedited, at the length it was recorded.',
+        image:
+          'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=1200&q=80',
+        videoIds: ['dQw4w9WgXcQ', 'jNQXAC9IVRw', '9bZkp7q19f0'],
+        status: 'published',
+        authorAccountId: null,
+        publishedAt: 'Sept 24, 2026',
+        createdAt: 'Sept 22, 2026'
+      },
+      {
+        id: 'seed-interview-2',
+        title: 'The Archivist Who Refused to Digitise',
+        guest: 'Samuel Otieno',
+        guestRole: 'Keeper of the Nakuru Central Records',
+        interviewer: 'Grace Wanjiku',
+        summary:
+          'On humidity, on what a digital copy is actually for, and on the case for keeping the paper day books.',
+        description:
+          'Samuel Otieno has kept the county record room for twenty-two years, through two floods and one near-total loss of the roof. He is, by some distance, the most qualified person in the county to digitise it, which is exactly why he has not.\n\nHis objection is not to digital preservation as such but to substitution. "A scan is a photograph of a document. It is not the document. The moment people believe the screen is the record, the paper stops being checked, and then the paper stops being correct, because nobody is looking."\n\nWe talked at length about what he does maintain digitally, about the day books the Press Club keeps, and about what he would want a young archivist to do with the collection he has been handed.',
+        image:
+          'https://images.unsplash.com/photo-1568667256549-094345857637?auto=format&fit=crop&w=1200&q=80',
+        videoIds: ['kJQP7kiw5Fk'],
+        status: 'published',
+        authorAccountId: null,
+        publishedAt: 'Sept 18, 2026',
+        createdAt: 'Sept 16, 2026'
+      },
+{
+        id: 'seed-interview-3',
+        title: 'Twelve Years Judging the Biggest Election in Nakuru',
+        guest: 'Justice Wanjiru Kimutai',
+        guestRole: 'Presiding Judge, Nakuru',
+        interviewer: 'Grace Wanjiku',
+        summary:
+          'On running a county election office under a parallel-results dispute, and what the courts will and will not fix.',
+        description:
+          'Justice Wanjiru Kimutai has spent twelve years on the bench in Nakuru County, and the two years since the last general election are the longest of them by some distance.\n\nShe is careful about the parallel-results dispute, and deliberately imprecise about her own view of it: what she will say, at length, is that the administrative contest happens weeks before any court does, and that the losing side is almost never the party with the weakest argument.\n\n"We are asked to answer a narrow question. Was the tally done correctly. Not: should the result stand. A judge who confuses the two ends up making a political decision and calling it jurisprudence, and I would rather not."\n\nOn why she still does the work.',
+        image:
+          'https://images.unsplash.com/photo-1589578527966-fdac0f44566c?auto=format&fit=crop&w=1200&q=80',
+        videoIds: ['3fumBcKC6RE', 'JGwWNGJdvx8'],
+        status: 'published',
+        authorAccountId: null,
+        publishedAt: 'Sept 11, 2026',
+        createdAt: 'Sept 9, 2026'
+      },
+      {
+        // Deliberately NOT published. A demo load that shipped only live rows
+        // would leave the Owner's approval queue permanently empty, which is
+        // the one part of the feature a demo cannot otherwise demonstrate.
+        id: 'seed-interview-4',
+        title: 'The Last Print Shop on Moi Avenue',
+        guest: 'Rashid Suleiman',
+        guestRole: 'Printer, Suleiman Print Works',
+        interviewer: 'Grace Wanjiku',
+        summary:
+          'Awaiting the Owner\'s review. On the machines that will not be replaced, and the apprentices nobody is training.',
+        description:
+          'Filed from Moi Avenue and awaiting review before publication.\n\nRashid Suleiman has run Suleiman Print Works since 1988. The shop still holds a Heidelberg press and two hand-fed platen presses that no manufacturer makes parts for any more.',
+        image:
+          'https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=1200&q=80',
+        videoIds: [],
+        status: 'pending',
+        authorAccountId: null,
+        publishedAt: null,
+        createdAt: 'Sept 25, 2026'
+      }
+    ],
+
     auditLogs: [
       {
         id: 'seed-audit-1',

@@ -29,13 +29,59 @@ export function escapeAttr(value) {
   return escapeHtml(value);
 }
 
-/** Only allow http(s) and root-relative URLs through to an href/src. */
-export function safeUrl(value) {
+/**
+ * Only allow http(s) and root-relative URLs through to an href/src.
+ *
+ * The scheme check is the load-bearing part: it is what stops `javascript:`,
+ * `data:` and `vbscript:` from reaching an attribute. `//host/path` is returned
+ * as-is because a protocol-relative URL inherits the page's own scheme and so
+ * cannot introduce a new one.
+ *
+ * `allowedHosts` is an OPTIONAL narrowing, not an allowlist by default. The
+ * interviews feature needed it: an <iframe src> built from a YouTube id must be
+ * provably a YouTube host, and asserting that at the point of use beats
+ * trusting the caller's template. Callers that pass it get '' for any host not
+ * listed, which is the correct failure -- the embed does not render rather than
+ * rendering from somewhere unexpected.
+ *
+ * Host comparison is on the lower-cased hostname only, never the full URL, so a
+ * hostile `https://evil.test/?x=youtube.com` cannot match. A leading `.` on an
+ * entry means "this host and any subdomain of it", which is how the bare
+ * `youtube.com` entry covers `www.` and `m.`.
+ *
+ * @param {unknown} value
+ * @param {{allowedHosts?: string[]}} [options]
+ * @returns {string} the URL, or '' when it is unsafe
+ */
+export function safeUrl(value, { allowedHosts } = {}) {
   const raw = String(value || '').trim();
   if (!raw) return '';
   if (raw.startsWith('/') || raw.startsWith('#')) return raw;
-  if (/^https?:\/\//i.test(raw)) return raw;
-  return '';
+  if (!/^https?:\/\//i.test(raw)) return '';
+
+  if (Array.isArray(allowedHosts) && allowedHosts.length) {
+    // new URL() throws on a malformed absolute URL, which the regex above
+    // already narrowed to http(s)://something -- but the something may still be
+    // junk, so a parse failure is a rejection, not a crash.
+    let host;
+    try {
+      host = new URL(raw).hostname.toLowerCase();
+    } catch {
+      return '';
+    }
+
+    const permitted = allowedHosts.some((entry) => {
+      const wanted = String(entry || '').trim().toLowerCase().replace(/^\.+/, '');
+      if (!wanted) return false;
+      // Exact match, or a subdomain of an entry that was written with a dot.
+      const suffix = String(entry || '').trim().startsWith('.') ? wanted : `.${wanted}`;
+      return host === wanted || host.endsWith(suffix);
+    });
+
+    if (!permitted) return '';
+  }
+
+  return raw;
 }
 
 /* -------------------------------------------------------------------------- */

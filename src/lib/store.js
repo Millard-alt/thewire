@@ -37,7 +37,8 @@ const TABLES = {
   mediaLibrary: 'media_assets',
   galleryCategories: 'gallery_categories',
   auditLogs: 'audit_logs',
-  broadcasts: 'broadcasts'
+  broadcasts: 'broadcasts',
+  interviews: 'interviews'
 };
 
 /**
@@ -86,6 +87,185 @@ export function readExtraImages(raw) {
       url: entry.url.trim(),
       caption: entry.caption ? String(entry.caption) : ''
     }));
+}
+
+/**
+ * How many YouTube videos one interview may carry.
+ *
+ * Three is the product decision from the spec, and it is enforced in three
+ * places that must agree: here (so the UI never offers a fourth field), in the
+ * `interviews_video_ids_check` CHECK in supabase/migrations/022_interviews.sql
+ * (so a hand-rolled request cannot bypass it), and in the editor's own trim.
+ * The database is the authority; this one is for the reader's benefit.
+ */
+export const MAX_INTERVIEW_VIDEOS = 3;
+
+/**
+ * The two hosts an embed may load from.
+ *
+ * `youtube-nocookie.com` is the default and `youtube.com` is kept as a fallback
+ * for the Owner if an embed is ever blocked. Both are honoured by the renderer,
+ * which builds the src from an id and never from a stored URL.
+ */
+export const YOUTUBE_EMBED_HOSTS = ['www.youtube-nocookie.com', 'www.youtube.com'];
+
+/**
+ * The workflow statuses an interview can hold, matching the CHECK constraint in
+ * supabase/migrations/022_interviews.sql exactly.
+ */
+export const INTERVIEW_STATUSES = ['pending', 'published'];
+
+/**
+ * The one place a candidate id is allowed to become an id.
+ *
+ * Centralising this is what makes the guarantee below auditable: there is no
+ * second code path that returns a video id, so there is no second place a bad
+ * one can be introduced. Also used as an array callback, hence the loose
+ * signature.
+ *
+ * @param {unknown} candidate
+ * @returns {string}
+ */
+function acceptId(candidate) {
+  const text = String(candidate ?? '').trim();
+  return /^[A-Za-z0-9_-]{11}$/.test(text) ? text : '';
+}
+
+/**
+ * Reduce any accepted YouTube URL shape to the bare 11-character video id.
+ *
+ * WHY THIS IS THE MOST IMPORTANT FUNCTION IN THE FEATURE
+ * Everything downstream interpolates the result straight into
+ * `<iframe src="https://www.youtube-nocookie.com/embed/${id}">`. If this ever
+ * returned anything but an id, that string becomes an attacker-controlled URL:
+ * a value like `x"></iframe><script>...` would close the tag and inject markup.
+ * Escaping the attribute would stop the attribute breaking out, but the value
+ * would still be spliced into a URL, so the real fix is to never accept a
+ * non-id in the first place. Hence the final guard -- a value is only returned
+ * if it matches YouTube's id alphabet AND is exactly 11 characters long.
+ *
+ * This is belt-and-braces with the CHECK constraint in migration 022, on purpose:
+ * a row that somehow bypassed the constraint must still not produce a bad src.
+ *
+ * Accepted shapes, all of which appear in the wild:
+ *   https://www.youtube.com/watch?v=ID            (the canonical link)
+ *   https://youtube.com/watch?v=ID&t=42s          (extra query junk)
+ *   https://youtu.be/ID                           (the short link)
+ *   https://youtu.be/ID?t=42                      (short link with a start time)
+ *   https://www.youtube.com/embed/ID              (the embed url itself)
+ *   https://www.youtube-nocookie.com/embed/ID     (privacy-preserving embed)
+ *   https://www.youtube.com/shorts/ID             (Shorts)
+ *   https://www.youtube.com/live/ID               (a livestream replay)
+ *   https://m.youtube.com/watch?v=ID              (mobile)
+ *   //www.youtube.com/watch?v=ID                  (protocol-relative paste)
+ *   www.youtube.com/watch?v=ID                    (schemeless paste)
+ *   ID                                            (a bare id typed by hand)
+ *   https://www.youtube.com/watch?list=PL...&v=ID (playlist member link)
+ *
+ * Returns '' for anything unrecognised, including a YouTube URL for a CHANNEL or
+ * PLAYLIST with no video in it -- those have no embeddable id, and silently
+ * returning a channel handle would build a 404 embed.
+ *
+ * @param {string} value
+ * @returns {string} an 11-character id, or '' if this is not a video reference
+ */
+export function normaliseYouTubeId(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+
+  // A bare id typed straight into the field. Checked first because it is the
+  // cheapest test and by far the most common input on an edit.
+  if (/^[A-Za-z0-9_-]{11}$/.test(raw)) return raw;
+
+  let url;
+  try {
+    // Accept schemeless and protocol-relative pastes too. `new URL` needs a
+    // scheme, and prefixing a throwaway one is safe because we only read
+    // pathname/search back out and never navigate to the result.
+    url = new URL(
+      raw.startsWith('//')
+        ? `https:${raw}`
+        : /^[a-z][a-z0-9+.-]*:\/\//i.test(raw)
+          ? raw
+          : `https://${raw}`
+    );
+  } catch {
+    return '';
+  }
+
+  const host = url.hostname.toLowerCase().replace(/^www\./, '').replace(/^m\./, '');
+
+  // youtube.com         -> 'youtube.com'
+  // youtu.be             -> 'youtu.be'
+  // youtube-nocookie.com -> 'youtube-nocookie.com'
+  // music.youtube.com    -> not collapsed by the www/m stripping above, but
+  //                         still matched by the `.youtube.com` suffix test,
+  //                         which is correct: a music.youtube.com link is a
+  //                         real YouTube video and carries a normal 11-char id.
+  const isYoutube =
+    host === 'youtube.com' ||
+    host === 'youtube-nocookie.com' ||
+    host.endsWith('.youtube.com');
+  const isShort = host === 'youtu.be';
+
+  if (!isYoutube && !isShort) return '';
+
+  // The short link carries the id in the path itself: youtu.be/ID
+  if (isShort) return acceptId(url.pathname.split('/').filter(Boolean)[0]);
+
+  // Standard link, and the one that also carries ?list=...&v=... from a
+  // "save to playlist" click. `v` wins over the path, because on a /watch URL
+  // the path carries no id at all.
+  const fromQuery = url.searchParams.get('v');
+  if (fromQuery) {
+    const id = acceptId(fromQuery);
+    if (id) return id;
+  }
+
+  // /embed/ID, /shorts/ID, /live/ID, /v/ID -- all id-in-path.
+  const segments = url.pathname.split('/').filter(Boolean);
+  if (['embed', 'shorts', 'live', 'v'].includes(segments[0])) {
+    return acceptId(segments[1]);
+  }
+
+  return '';
+}
+
+/**
+ * Build the `<iframe src>` for one video id.
+ *
+ * The ONLY way this feature produces a YouTube URL. Three properties matter and
+ * all three come from routing every call through here:
+ *
+ *   1. The host is a literal from YOUTUBE_EMBED_HOSTS, never anything derived
+ *      from the caller's value, so a stored id cannot redirect the embed.
+ *   2. The path segment is the output of normaliseYouTubeId(), which is
+ *      constrained to [A-Za-z0-9_-]{11}. That is what makes the result safe to
+ *      interpolate into an attribute -- a value like `x"></iframe><script>`
+ *      cannot survive the regex, so it can never close the tag.
+ *   3. Anything that does not normalise returns '' and the caller renders
+ *      nothing, rather than an iframe pointing at an invalid src.
+ *
+ * `rel=0` is omitted so the player shows its own related-video suggestions; the
+ * reader lands on the interview they asked for, not on a queue of other people's
+ * interviews.
+ *
+ * @param {unknown} value an id or any accepted URL shape
+ * @param {{host?: string}} [options] override the embed host (Owner fallback)
+ * @returns {string} an embed URL, or '' if this is not a usable video
+ */
+export function youtubeEmbedUrl(value, { host } = {}) {
+  const id = normaliseYouTubeId(value);
+  if (!id) return '';
+
+  const chosen =
+    YOUTUBE_EMBED_HOSTS.includes(String(host || '').toLowerCase())
+      ? String(host).toLowerCase()
+      : YOUTUBE_EMBED_HOSTS[0];
+
+  // encodeURIComponent on an already-validated id is a no-op today, and is kept
+  // so that relaxing the id charset later cannot silently open an injection.
+  return `https://${chosen}/embed/${encodeURIComponent(id)}`;
 }
 
 export const ARTICLE_STATUSES = [
@@ -211,6 +391,11 @@ function mergeState(next = {}, { remote = false } = {}) {
     // table means the Owner has not created any yet, which is the honest answer
     // and must not be papered over with demo rows.
     galleryCategories: pick(next.galleryCategories, seed.galleryCategories),
+    // Same reasoning, for the newest slice. `remote: true` matters most here: on
+    // a live database an empty `interviews` table means nobody has filed one yet,
+    // and re-injecting demo rows would put three fabricated interviews with fake
+    // video ids on the public front page.
+    interviews: pick(next.interviews, seed.interviews).map(mapInterviewRow),
     auditLogs: pick(next.auditLogs, seed.auditLogs),
     branding: pickObject(next.branding, seed.branding),
     breakingNews: pickObject(next.breakingNews, seed.breakingNews),
@@ -397,6 +582,30 @@ export async function hydrate() {
       }
     }
 
+    // Interviews are loaded in their own guarded block rather than as an entry in
+    // the Promise.all above, and that is the whole point of the arrangement.
+    //
+    // The Promise.all is wrapped in ONE try/catch that falls back to the whole
+    // local store. Adding interviews to it means a deployment that ships this
+    // build before migration 022 is pasted fails the select with PGRST204, and
+    // one unapplied migration then takes down articles, staff, media and
+    // everything else with it — the reader gets the demo site instead of the
+    // real one. Isolated here, the worst case is an empty interviews tab and a
+    // warning in the console.
+    let interviews = [];
+    if (!config.demoMode && client && (await hasInterviewsTable())) {
+      try {
+        const { data, error } = await client
+          .from(TABLES.interviews)
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (!error) interviews = data || [];
+        else console.warn('[store] could not load interviews', error.message);
+      } catch (error) {
+        console.warn('[store] interviews read failed', error);
+      }
+    }
+
     const local = readLocalState();
     const settingsRow = settings.data || {};
 
@@ -492,6 +701,20 @@ export async function hydrate() {
         coverUrl: row.cover_url || '',
         sortOrder: row.sort_order ?? null
       })),
+      /*
+       * Interviews.
+       *
+       * The rows were fetched above into the `interviews` local, and that value
+       * has to be handed to replaceState explicitly. Omitting it left the
+       * hydrated state falling back to whatever the local store held, so on a
+       * live database the feed rendered the demo seed and every interview the
+       * newsroom had actually filed was invisible -- while the Owner, whose
+       * writes had gone to Postgres correctly, saw nothing they could fix.
+       *
+       * `remote: true` is in force by this point, so an empty table yields an
+       * empty list rather than three fabricated interviews.
+       */
+      interviews: interviews.map(mapInterviewRow),
       auditLogs: (audit.data || []).map((row) => ({
         id: row.id,
         user: row.actor_name,
@@ -968,6 +1191,478 @@ export async function rejectArticle(id) {
   return updateArticle(id, { status: 'Rejected' });
 }
 
+
+/* -------------------------------------------------------------------------- */
+/* INTERVIEWS — full CRUD                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Reduce whatever a caller supplied to a clean list of video ids.
+ *
+ * Accepts ids OR urls, because the editor's fields are text boxes a writer
+ * pastes a share link into and nobody should have to be told which form is
+ * wanted. Anything unrecognised is DROPPED rather than passed through: an id we
+ * cannot parse is not a video, and the reader is better served by a missing
+ * embed than a broken one.
+ *
+ * Duplicates are collapsed because pasting the same link into all three fields
+ * is an easy mistake, and three identical embeds is not what it looks like.
+ * Order is otherwise preserved -- the writer chose it.
+ *
+ * Trimmed to MAX_INTERVIEW_VIDEOS so an over-long list can never reach either the
+ * database CHECK or the renderer.
+ *
+ * @param {unknown} value an array of ids/urls, or a single string
+ * @returns {string[]} unique 11-character ids, at most MAX_INTERVIEW_VIDEOS
+ */
+export function readVideoIds(value) {
+  const list = Array.isArray(value) ? value : value == null ? [] : [value];
+  const seen = new Set();
+  const out = [];
+
+  for (const entry of list) {
+    const id = normaliseYouTubeId(entry);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length === MAX_INTERVIEW_VIDEOS) break;
+  }
+
+  return out;
+}
+
+/**
+ * Read a field that may be spelled either way.
+ *
+ * Postgres rows arrive snake_case; the demo seed and anything already sitting in
+ * localStorage is camelCase, because that is the shape mergeState() hands to the
+ * views. Without this dual read, `mergeState()` re-running mapInterviewRow() over
+ * an in-memory state would blank every field whose snake_case name is absent —
+ * which for the demo store means every interview silently loses its guest,
+ * description and videos on the second read, not the first.
+ *
+ * @param {object} row
+ * @param {string} snake
+ * @param {string} camel
+ * @returns {unknown}
+ */
+function interviewField(row, snake, camel) {
+  return row[snake] ?? row[camel];
+}
+
+/**
+ * Map one database row onto the camelCase shape the views read.
+ *
+ * Centralised because the same mapping is needed on hydration AND after every
+ * write: create/update get their authoritative values back from the row the
+ * database returned, and re-mapping is what keeps a freshly written interview
+ * from differing in shape from one that arrived on boot. `video_ids` goes
+ * through readVideoIds() so a row written by hand, or by an older build, cannot
+ * put a non-id in front of the renderer.
+ *
+ * @param {object} row
+ * @returns {object}
+ */
+function mapInterviewRow(row) {
+  return {
+    id: row.id,
+    title: interviewField(row, 'title', 'title') || '',
+    guest: interviewField(row, 'guest', 'guest') || '',
+    guestRole: interviewField(row, 'guest_role', 'guestRole') || '',
+    interviewer: interviewField(row, 'interviewer', 'interviewer') || '',
+    summary: interviewField(row, 'summary', 'summary') || '',
+    description: interviewField(row, 'description', 'description') || '',
+    image: interviewField(row, 'image_url', 'image') || '',
+    videoIds: readVideoIds(interviewField(row, 'video_ids', 'videoIds')),
+    // Lower-cased here so a row pasted by hand in title case is not stranded
+    // behind a comparison that will never match.
+    status: String(interviewField(row, 'status', 'status') || 'pending').toLowerCase(),
+    authorAccountId: interviewField(row, 'author_account_id', 'authorAccountId') ?? null,
+    publishedAt: interviewField(row, 'published_at', 'publishedAt') || null,
+    createdAt: interviewField(row, 'created_at', 'createdAt') || null
+  };
+}
+
+/** Every interview, newest first. Owners and writers see the pending queue too. */
+export function listInterviews() {
+  return [...getState().interviews];
+}
+
+/**
+ * Only what a reader is allowed to see.
+ *
+ * The status filter here is a UI courtesy, not the security boundary -- that is
+ * the RLS policy in migration 022. Both exist because they fail differently: RLS
+ * keeps a pending row off the wire; this keeps a row that is ALREADY in local
+ * memory out of the public feed while an Owner happens to be signed in.
+ */
+export function listPublishedInterviews() {
+  return getState().interviews.filter((item) => isStatus(item.status, 'published'));
+}
+
+/** @param {string} id */
+export function getInterview(id) {
+  return getState().interviews.find((item) => item.id === id) || null;
+}
+
+/** Everything awaiting the Owner's approval. */
+export function getPendingInterviews() {
+  return getState().interviews.filter((item) => isStatus(item.status, 'pending'));
+}
+
+/**
+ * May the signed-in account delete this interview?
+ *
+ * A UI affordance only -- the real enforcement is the interviews_delete_own
+ * policy plus wire_owns_interview() in migration 022. Kept here so the panel
+ * shows an honest disabled button instead of letting the Owner click through to
+ * a database error.
+ *
+ * @param {{id: string, authorAccountId?: string|null}} interview
+ */
+export function canDeleteInterview(interview) {
+  if (!interview) return false;
+  const session = getSession();
+  if (!session?.isAdmin) return false;
+  if (isOwner()) return true;
+  return Boolean(
+    interview.authorAccountId &&
+      session.user?.id &&
+      interview.authorAccountId === session.user.id
+  );
+}
+
+/**
+ * Has migration 022 been applied (i.e. does `public.interviews` exist)?
+ *
+ * Same defensive shape as hasOwnershipColumn()/hasExtraImagesColumn() above.
+ *
+ * Unlike those two this one guards the WHOLE feature rather than one optional
+ * column, because every column of `interviews` arrives with the table: there is
+ * no migration that adds `interviews` before migration 022 adds `video_ids`. A
+ * deployment that ships this build before 022 is pasted would otherwise fail
+ * EVERY interview read in hydrate() with PGRST204, and because hydration is
+ * wrapped in one try/catch a single missing table would take the entire
+ * publication down to the local demo store.
+ *
+ * Probed once and cached for the session.
+ */
+let interviewsTableReady = null;
+
+export async function hasInterviewsTable() {
+  if (interviewsTableReady !== null) return interviewsTableReady;
+  if (config.demoMode || !db()) {
+    interviewsTableReady = false;
+    return false;
+  }
+  try {
+    const { error } = await db().from(TABLES.interviews).select('id').limit(1);
+    // PGRST204 here is the "table does not exist (yet)" signal. A permission
+    // error is not, and is deliberately NOT cached as "unavailable": the table
+    // exists, the RLS policy simply refused this key, and treating that as "the
+    // feature is gone" would hide a policy bug behind a silently empty tab.
+    interviewsTableReady =
+      !error || !/does not exist|not found|PGRST/i.test(error.message || '');
+    if (error) {
+      console.warn(
+        '[store] could not reach the interviews table — run supabase/migrations/022_interviews.sql',
+        error.message
+      );
+    }
+  } catch {
+    interviewsTableReady = false;
+  }
+  return interviewsTableReady;
+}
+
+/**
+ * The columns shared by an insert and an update, mapped from the camelCase the
+ * views use to the snake_case the columns actually have.
+ *
+ * Extracted so the two cannot drift: a field added to create but forgotten in
+ * update is the classic half-wired CRUD bug, and it shows up as "the Owner can
+ * attach a video but editing the interview loses it".
+ *
+ * @param {object} input
+ * @param {object} [existing] the current row, supplying fields the caller omits
+ * @returns {object} a PostgREST-shaped payload
+ */
+function interviewRowFrom(input = {}, existing = {}) {
+  const status = String(input.status ?? existing.status ?? 'pending').toLowerCase();
+  return {
+    title: String(input.title ?? existing.title ?? '').trim() || 'Untitled interview',
+    guest: String(input.guest ?? existing.guest ?? '').trim() || 'Unnamed guest',
+    guest_role: String(input.guestRole ?? existing.guestRole ?? '').trim(),
+    interviewer: String(input.interviewer ?? existing.interviewer ?? '').trim(),
+    summary: String(input.summary ?? existing.summary ?? '').trim(),
+    description: String(input.description ?? existing.description ?? '').trim(),
+    image_url: String(input.image ?? existing.image ?? '').trim(),
+    video_ids: readVideoIds(input.videoIds ?? existing.videoIds),
+    // Anything outside the vocabulary falls back to 'pending' rather than being
+    // written verbatim. A status the CHECK constraint rejects fails the whole
+    // INSERT and takes the writer's interview with it, and 'pending' is the safe
+    // direction to fail: it asks for review instead of publishing.
+    status: INTERVIEW_STATUSES.includes(status) ? status : 'pending'
+  };
+}
+
+/**
+ * CREATE — file a new interview.
+ *
+ * Writers land in 'pending' unless they explicitly ask for another status; the
+ * Owner can publish on the spot. Status is NOT forced by the session role here:
+ * the database is what actually enforces who may publish (the
+ * interviews_publish_guard trigger in migration 022), and duplicating that rule
+ * in the browser would give the Owner a second opinion that can disagree with
+ * the real one.
+ *
+ * @param {object} input
+ * @returns {Promise<object>} the created interview
+ */
+export async function createInterview(input) {
+  const current = getState();
+  const row = interviewRowFrom(input);
+  const interview = {
+    id: newId('interview'),
+    title: row.title,
+    guest: row.guest,
+    guestRole: row.guest_role,
+    interviewer: row.interviewer,
+    summary: row.summary,
+    description: row.description,
+    image: row.image_url,
+    videoIds: row.video_ids,
+    status: row.status,
+    authorAccountId: null,
+    publishedAt: null,
+    createdAt: nowStamp()
+  };
+
+  if (!config.demoMode && db() && (await hasInterviewsTable())) {
+    // Same convention as articles.author_account_id: stamp the filing account so
+    // the ownership policy has something to match on.
+    const inserted = assertOk(
+      await db()
+        .from(TABLES.interviews)
+        .insert({ ...row, author_account_id: currentAccountId() })
+        .select()
+        .single(),
+      'create interview'
+    );
+
+    // Re-map from the row the database RETURNED rather than trusting the payload
+    // we sent. That is what picks up published_at, stamped by a trigger we do
+    // not control, and it guarantees a freshly created interview has exactly the
+    // same shape as one that arrived on boot.
+    Object.assign(interview, mapInterviewRow(inserted));
+  } else {
+    // Demo store. Stamp the filer here too, otherwise a writer files an
+    // interview they have no right to delete and the ownership rule cannot be
+    // exercised outside a live database.
+    interview.authorAccountId = currentAccountId();
+    // Mirror the published_at trigger so the feed orders the same way in both
+    // stores. A pending row deliberately gets null.
+    if (interview.status === 'published') interview.publishedAt = nowStamp();
+  }
+
+  current.interviews = [interview, ...current.interviews];
+  await addAuditLog(`Created interview "${interview.title}"`);
+  commit();
+  return interview;
+}
+
+/**
+ * UPDATE — patch an existing interview.
+ *
+ * `video_ids` is always sent, even when the patch does not mention it. That is
+ * deliberate and it is what keeps a save from silently dropping videos: the
+ * payload is built from the patch MERGED OVER the live row, so an absent key
+ * falls back to what is already stored rather than to undefined (which PostgREST
+ * would write as SQL NULL). The remaining optional fields are only sent when the
+ * caller actually supplied them, for the same reason.
+ *
+ * @param {string} id
+ * @param {object} patch
+ * @returns {Promise<object|null>} the updated interview, or null if not found
+ */
+export async function updateInterview(id, patch) {
+  const current = getState();
+  const interview = current.interviews.find((item) => item.id === id);
+  if (!interview) return null;
+
+  // Built from the patch over the CURRENT row, so every value here is either
+  // what the caller just sent or what is already stored. Nothing is invented.
+  const row = interviewRowFrom(patch, interview);
+  const payload = {
+    title: row.title,
+    guest: row.guest,
+    guest_role: interview.guestRole,
+    interviewer: interview.interviewer,
+    summary: interview.summary,
+    description: interview.description,
+    image_url: interview.image,
+    video_ids: row.video_ids,
+    status: row.status
+  };
+  if (patch.guestRole !== undefined) payload.guest_role = row.guest_role;
+  if (patch.interviewer !== undefined) payload.interviewer = row.interviewer;
+  if (patch.summary !== undefined) payload.summary = row.summary;
+  if (patch.description !== undefined) payload.description = row.description;
+  if (patch.image !== undefined) payload.image_url = row.image_url;
+
+  if (!config.demoMode && db() && isPersistedId(id) && (await hasInterviewsTable())) {
+    // Re-map from the returned row: the published_at trigger has just fired (or
+    // deliberately not, when the status did not change) and that is the only
+    // place the authoritative value exists.
+    const updated = assertOk(
+      await db()
+        .from(TABLES.interviews)
+        .update(payload)
+        .eq('id', id)
+        .select()
+        .single(),
+      'update interview'
+    );
+    Object.assign(interview, mapInterviewRow(updated));
+  } else {
+    interview.title = payload.title;
+    interview.guest = payload.guest;
+    interview.guestRole = payload.guest_role;
+    interview.interviewer = payload.interviewer;
+    interview.summary = payload.summary;
+    interview.description = payload.description;
+    interview.image = payload.image_url;
+    interview.videoIds = payload.video_ids;
+    interview.status = payload.status;
+    // Mirror the published_at trigger in the demo store too, INCLUDING the
+    // clearing arm, so pulling an interview back to pending takes it off the
+    // ordered feed here exactly as it does in production.
+    interview.publishedAt =
+      interview.status === 'published' ? interview.publishedAt || nowStamp() : null;
+  }
+
+  await addAuditLog(`Updated interview "${interview.title}"`);
+  commit();
+  return interview;
+}
+
+/**
+ * DELETE — permanently remove an interview.
+ *
+ * The row count is requested back explicitly because PostgREST reports success
+ * even when RLS matched zero rows; without that check a delete the database
+ * silently refused would still report success to the panel.
+ *
+ * @param {string} id
+ * @returns {Promise<boolean>} true when a row was removed
+ */
+export async function deleteInterview(id) {
+  const current = getState();
+  const interview = current.interviews.find((item) => item.id === id);
+  if (!interview) return false;
+
+  if (!config.demoMode && db() && isPersistedId(id) && (await hasInterviewsTable())) {
+    const { data, error } = await db()
+      .from(TABLES.interviews)
+      .delete()
+      .eq('id', id)
+      .select('id');
+    assertOk({ data, error }, 'delete interview');
+    if (!data || data.length === 0) {
+      throw new Error(
+        'That interview was not deleted. You can only delete your own interviews.'
+      );
+    }
+  }
+
+  // A non-uuid id is a demo-store row that only ever existed in localStorage;
+  // removing it from memory is the correct outcome for it, so this is still a
+  // success rather than a silently skipped write.
+  current.interviews = current.interviews.filter((item) => item.id !== id);
+  await addAuditLog(`Deleted interview "${interview.title}"`);
+  commit();
+  return true;
+}
+
+/* --------------------------------------------------------------------------
+ * Workflow
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Move an interview into publication. This is also the "approve" action.
+ * @param {string} id
+ * @returns {Promise<object|null>}
+ */
+export async function publishInterview(id) {
+  return updateInterview(id, { status: 'published' });
+}
+
+/**
+ * Pull an interview back out of publication.
+ *
+ * Named "unpublish" rather than "reject" deliberately: unlike an article there
+ * is no second editorial verdict here. A Writer submitting an interview is
+ * filing a recording, not a draft that failed review, and no state here means
+ * "we looked at this and said no" — it is either in the publication or it is
+ * not. The column holds exactly the two values the CHECK constraint allows.
+ *
+ * @param {string} id
+ * @returns {Promise<object|null>}
+ */
+export async function unpublishInterview(id) {
+  return updateInterview(id, { status: 'pending' });
+}
+
+/**
+ * How many interviews one page of the public feed holds.
+ *
+ * Three is the product decision from the spec and, deliberately, also the layout:
+ * the feed is a single column on a phone, where three is already a full screen of
+ * scrolling, and three video embeds abreast is about as many as stay legible on a
+ * desktop. Changing this to a different number means re-reading that judgement,
+ * so it is exported rather than inlined at each use.
+ */
+export const INTERVIEWS_PER_PAGE = 3;
+
+/**
+ * One page of the published feed, newest first.
+ *
+ * The slice is taken over the PUBLISHED list only. Slicing `interviews` directly
+ * would let a pending row that happens to be in memory (an Owner is signed in and
+ * has the queue open) consume a slot on the public feed and push a real
+ * interview onto the next page — a bug that only reproduces for signed-in staff,
+ * which is exactly the kind that reaches production unnoticed.
+ *
+ * @param {number} [page] 1-based
+ * @returns {{items: object[], page: number, pageCount: number, total: number,
+ *            hasPrev: boolean, hasNext: boolean}}
+ */
+export function listPublishedInterviewsPage(page = 1) {
+  // Newest first. Falls back through publishedAt to createdAt so a row that was
+  // published without a stamp still sorts sensibly rather than jumping to 1970.
+  const ordered = [...listPublishedInterviews()].sort((a, b) => {
+    const at = String(a.publishedAt || a.createdAt || '');
+    const bt = String(b.publishedAt || b.createdAt || '');
+    return bt.localeCompare(at);
+  });
+
+  const total = ordered.length;
+  const pageCount = Math.max(1, Math.ceil(total / INTERVIEWS_PER_PAGE));
+  // Clamp rather than reject. A stale bookmark pointing at page 9 of a feed that
+  // now has two pages should land on the last page, not on an empty grid with no
+  // way back — the reader would be stuck with no control to press.
+  const current = Math.min(Math.max(1, Math.floor(Number(page) || 1)), pageCount);
+  const start = (current - 1) * INTERVIEWS_PER_PAGE;
+
+  return {
+    items: ordered.slice(start, start + INTERVIEWS_PER_PAGE),
+    page: current,
+    pageCount,
+    total,
+    hasPrev: current > 1,
+    hasNext: current < pageCount
+  };
+}
 
 /* -------------------------------------------------------------------------- */
 /* ASSIGNMENTS — full CRUD                                                      */

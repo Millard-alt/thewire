@@ -171,6 +171,9 @@
             <li><a class="nav-link" href="#assignments">Assignments</a></li>
             <li><a class="nav-link" href="#masthead-foot">Masthead</a></li>
             <li>
+              <button class="nav-link" type="button" data-nav="interviews">INTERVIEWS</button>
+            </li>
+            <li>
               <button class="nav-link" type="button" data-nav="gallery">PHOTO GALLERY</button>
             </li>
             <li>
@@ -240,6 +243,14 @@
         id="gallery-view"
         class="hidden"
         aria-label="Gallery"
+        tabindex="-1"
+      ></section>
+
+      <!-- Interviews feed: three published interviews per page (src/views/public.js) -->
+      <section
+        id="interviews-view"
+        class="hidden"
+        aria-label="Interviews"
         tabindex="-1"
       ></section>
 
@@ -583,7 +594,35 @@
       </div>
     </div>
 
-    <!-- ======================= GALLERY LIGHTBOX ======================= -->
+    <!-- ==================== INTERVIEW DETAIL MODAL ==================== -->
+      <!--
+      The interview reader. Modelled on #article-modal rather than a dedicated
+      route: a reader arrives from the feed and goes straight back, so a modal
+      keeps them in the list they were reading. #article-modal-body is the one
+      body element it shares, so it is never open at the same time as the
+      article reader and the two cannot overwrite each other.
+      -->
+      <div
+        id="interview-modal"
+        class="modal-backdrop hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="interview-modal-title"
+      >
+        <div class="modal-card relative w-full max-w-4xl">
+          <button
+            type="button"
+            class="btn-quiet absolute top-4 right-4 z-10"
+            data-close-dialog="interview-modal"
+            aria-label="Close interview"
+          >
+            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+          </button>
+          <div id="interview-modal-body" class="scroll-area max-h-[92vh]"></div>
+        </div>
+      </div>
+
+      <!-- ======================= GALLERY LIGHTBOX ======================= -->
     <!-- Opened by tapping any published photograph in the gallery section. -->
     <div
       id="lightbox"

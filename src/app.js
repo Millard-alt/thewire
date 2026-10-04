@@ -41,6 +41,7 @@ import {
   renderBreakingBanner,
   renderPublication,
   renderGalleryPage,
+  renderInterviewsPage,
   initPublicInteractions
 } from './views/public.js';
 
@@ -81,8 +82,8 @@ function renderChrome() {
 /** The reader-facing section currently on screen. */
 let readerView = 'publication';
 
-/** The three reader pages, in the order the router recognises them. */
-const READER_VIEWS = ['publication', 'credits', 'gallery'];
+/** The reader pages, in the order the router recognises them. */
+const READER_VIEWS = ['publication', 'credits', 'gallery', 'interviews'];
 
 /**
  * Show exactly one reader view. The Owner workspace is untouched by this, so a
@@ -93,7 +94,7 @@ const READER_VIEWS = ['publication', 'credits', 'gallery'];
  * dispatched as a `wire:navigate` event with nothing listening for it, which
  * left the gallery door as a dead button.
  *
- * @param {'publication'|'credits'|'gallery'} name
+ * @param {'publication'|'credits'|'gallery'|'interviews'} name
  */
 function showReaderView(name) {
   const target = READER_VIEWS.includes(name) ? name : 'publication';
@@ -102,10 +103,15 @@ function showReaderView(name) {
   const publication = byId('publication-view');
   const credits = byId('credits-view');
   const gallery = byId('gallery-view');
+  const interviews = byId('interviews-view');
 
   if (publication) publication.classList.toggle('hidden', target !== 'publication');
   if (credits) credits.classList.toggle('hidden', target !== 'credits');
   if (gallery) gallery.classList.toggle('hidden', target !== 'gallery');
+  // Interviews is a full reader view for the same reason the gallery is: it owns
+  // a #interviews-view mount and paginates three at a time, so a section anchor
+  // on the publication page cannot host it.
+  if (interviews) interviews.classList.toggle('hidden', target !== 'interviews');
 
   // Paint the credits roster on first reveal only: it costs a round-trip, and
   // the publication is what most visitors want first.
@@ -117,6 +123,11 @@ function showReaderView(name) {
   // The gallery is built from the Owner's categories, which the Owner can change
   // at any time, so it is repainted on every reveal rather than once.
   if (target === 'gallery') renderGalleryPage();
+
+  // Same reasoning as the gallery: the Owner can publish or pull an interview at
+  // any time, so the feed is rebuilt on every reveal. Painting once would leave
+  // a reader on a stale page after an approval.
+  if (target === 'interviews') renderInterviewsPage();
 
   // Keep the header nav's pressed state honest.
   document

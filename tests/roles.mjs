@@ -37,10 +37,15 @@ const ACCOUNTS = {
 
 /** Tabs each role is entitled to, weakest first. */
 const EXPECTED = {
-  Writer: ['overview', 'content', 'assignments', 'media'],
+  // `interviews` is a Writer tab: a writer files a submission with status
+  // 'pending' and the Owner approves it. Gating it at Board Manager would mean a
+  // Writer had nowhere to file one, so the approval workflow would have no
+  // submission to approve.
+  Writer: ['overview', 'content', 'interviews', 'assignments', 'media'],
   'Board Manager': [
     'overview',
     'content',
+    'interviews',
     'assignments',
     'media',
     'breaking',
@@ -51,6 +56,7 @@ const EXPECTED = {
   Owner: [
     'overview',
     'content',
+    'interviews',
     'assignments',
     'media',
     'breaking',

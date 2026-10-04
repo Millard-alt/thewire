@@ -69,6 +69,14 @@ import {
 
 /** Which article statuses the Content Desk is filtered to. */
 let contentFilter = 'all';
+// Same idea for the Interviews tab: 'all' | 'pending' | 'published'. Separate from
+// contentFilter because the two vocabularies are disjoint -- an interview is
+// never 'Pending Review', so sharing one filter would make every row vanish when
+// the Owner switched tabs.
+let interviewFilter = 'all';
+// Ids being edited, and the video rows staged in the editor.
+let editingInterviewId = null;
+let interviewVideoDraft = [];
 /** Which tab is showing. Not persisted — the workspace always opens on Overview. */
 let activeTab = 'overview';
 
@@ -383,6 +391,137 @@ function renderContent() {
           : emptyState('No articles match this filter.', 'fa-newspaper')
       }
     </div>
+  `;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Tab 2b -- Interviews Desk                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The Owner/Writer management tab for interviews.
+ *
+ * Deliberately a separate tab from Content rather than a second filter on it:
+ * an interview is a recording of a named person on the record, so it carries a
+ * guest and up to three video embeds, and the approve/publish decision applies
+ * to a different thing. Mixing the two vocabularies into one list is how you get
+ * a filter that hides everything.
+ */
+function renderInterviewsTab() {
+  const all = store.listInterviews();
+  const pending = store.getPendingInterviews();
+  const filtered =
+    interviewFilter === 'all'
+      ? all
+      : all.filter((item) =>
+          String(item.status || '').toLowerCase() ===
+          String(interviewFilter).toLowerCase()
+        );
+
+  const filters = ['all', ...store.INTERVIEW_STATUSES];
+
+  return `
+    <div class="space-y-5">
+      ${panelHeader(
+        'Interviews desk',
+        `${all.length} interview${all.length === 1 ? '' : 's'} on file - ${
+          pending.length
+        } awaiting approval`,
+        `<button class="btn btn-accent" data-action="interview-new">
+           <i class="fa-solid fa-plus" aria-hidden="true"></i> New interview
+         </button>`
+      )}
+
+      <div class="flex flex-wrap gap-2" role="group" aria-label="Filter interviews by status">
+        ${filters
+          .map(
+            (filter) => `
+          <button
+            class="btn ${interviewFilter === filter ? 'btn-accent' : 'btn-ghost'}"
+            data-action="interview-filter"
+            data-filter="${escapeHtml(filter)}"
+            aria-pressed="${interviewFilter === filter}"
+          >
+            ${escapeHtml(filter === 'all' ? 'All' : filter)}
+          </button>`
+          )
+          .join('')}
+      </div>
+
+      ${
+        filtered.length
+          ? `<div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        ${filtered.map(interviewAdminCard).join('')}
+      </div>`
+          : emptyState('No interviews match this filter.', 'fa-circle-play')
+      }
+    </div>
+  `;
+}
+
+/**
+ * One interview row in the management grid.
+ *
+ * The video count is shown from the stored ids rather than a separate counter so
+ * it cannot disagree with what the public detail view will actually embed.
+ */
+function interviewAdminCard(interview) {
+  const videos = store.readVideoIds(interview.videoIds);
+  const isPublished =
+    String(interview.status || '').toLowerCase() === 'published';
+
+  return `
+    <article class="panel-raised flex flex-col overflow-hidden">
+      <img
+        class="h-32 w-full object-cover"
+        src="${escapeHtml(artFor(interview.image))}"
+        alt="${escapeHtml(interview.title || interview.guest || '')}"
+        loading="lazy"
+      />
+      <div class="flex flex-1 flex-col gap-2 p-4">
+        <div class="flex items-center gap-2">
+          ${statusBadge(isPublished ? 'Published' : 'Pending Review')}
+          ${videos.length ? `<span class="badge badge-neutral">${videos.length} video${videos.length === 1 ? '' : 's'}</span>` : ''}
+        </div>
+        <h3 class="font-headline text-base leading-snug font-bold">
+          ${escapeHtml(interview.guest || 'Unnamed guest')}
+        </h3>
+        <p class="ink-muted text-[0.7rem]">
+          ${escapeHtml(interview.title || '')}
+          ${interview.interviewer ? ` - by ${escapeHtml(interview.interviewer)}` : ''}
+        </p>
+        <div class="mt-auto flex flex-wrap gap-2 pt-3">
+          <button class="btn btn-ghost" data-action="interview-edit"
+            data-id="${escapeHtml(interview.id)}">
+            <i class="fa-solid fa-pen" aria-hidden="true"></i> Edit
+          </button>
+          ${
+            isPublished
+              ? `<button class="btn btn-ghost" data-action="interview-unpublish"
+                  data-id="${escapeHtml(interview.id)}">Unpublish</button>`
+              : `<button class="btn btn-ghost" data-action="interview-publish"
+                  data-id="${escapeHtml(interview.id)}">Approve</button>`
+          }
+          ${
+            // Mirrors the article grid: the RLS policy plus
+            // wire_owns_interview() is the real enforcement, this only keeps the
+            // button honest.
+            store.canDeleteInterview(interview)
+              ? `<button class="btn btn-quiet" data-action="interview-delete"
+                  data-id="${escapeHtml(interview.id)}"
+                  data-title="${escapeHtml(interview.guest || interview.title || '')}">
+                   <i class="fa-solid fa-trash" aria-hidden="true"></i>
+                   <span class="sr-only">Delete</span>
+                 </button>`
+              : `<button class="btn btn-quiet" disabled
+                  title="You can only delete your own interviews.">
+                   <i class="fa-solid fa-trash" aria-hidden="true"></i>
+                   <span class="sr-only">Delete</span>
+                 </button>`
+          }
+        </div>
+      </div>
+    </article>
   `;
 }
 
@@ -1611,6 +1750,142 @@ function articleEditorDialog() {
   `;
 }
 
+/**
+ * Create/edit an interview, including the three-video YouTube picker.
+ *
+ * Videos are staged in `interviewVideoDraft` rather than read back out of the
+ * inputs on save, because the limit is enforced by the store's normaliser and the
+ * rows are rendered as a list with individual remove buttons -- there is no
+ * single input whose value is the answer.
+ */
+function interviewEditorDialog() {
+  return `
+    <div
+      id="interview-editor"
+      class="modal-backdrop hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="interview-editor-title"
+    >
+      <div class="modal-card relative w-full max-w-2xl p-6">
+        <button
+          type="button"
+          class="btn-quiet absolute top-4 right-4"
+          data-close-dialog="interview-editor"
+          aria-label="Close editor"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+        <h3
+          id="interview-editor-title"
+          class="font-headline text-xl font-black tracking-wide uppercase"
+        >
+          Create Interview
+        </h3>
+        <form id="interview-form" class="mt-4 space-y-3" novalidate>
+          <div>
+            <label class="field-label" for="interview-title">Headline</label>
+            <input id="interview-title" class="field" type="text" required />
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label class="field-label" for="interview-guest">Guest</label>
+              <input id="interview-guest" class="field" type="text" required />
+            </div>
+            <div>
+              <label class="field-label" for="interview-guest-role">Guest role</label>
+              <input
+                id="interview-guest-role"
+                class="field"
+                type="text"
+                placeholder="County Governor"
+              />
+            </div>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label class="field-label" for="interview-interviewer">Interviewer</label>
+              <input id="interview-interviewer" class="field" type="text" />
+            </div>
+            <div>
+              <label class="field-label" for="interview-status">Status</label>
+              <select id="interview-status" class="field">
+                ${store.INTERVIEW_STATUSES.map(
+                  (status) =>
+                    `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`
+                ).join('')}
+              </select>
+              <p class="ink-muted mt-1 text-xs">
+                Writers file as <strong>pending</strong>; the Owner approves to publish.
+              </p>
+            </div>
+          </div>
+          <div>
+            <label class="field-label" for="interview-image">Poster image</label>
+            <input
+              id="interview-image-file"
+              class="field"
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+            />
+            <input
+              id="interview-image"
+              class="field mt-2"
+              type="text"
+              placeholder="...or paste an image URL"
+            />
+          </div>
+          <div>
+            <label class="field-label" for="interview-summary">Standfirst</label>
+            <textarea id="interview-summary" class="field min-h-16" rows="2"></textarea>
+          </div>
+          <div>
+            <label class="field-label" for="interview-description">
+              Full description
+            </label>
+            <textarea id="interview-description" class="field min-h-40" rows="7"></textarea>
+            <p class="ink-muted mt-1 text-xs">
+              Shown in full on the interview's own page. Blank lines become paragraphs.
+            </p>
+          </div>
+          <div>
+            <label class="field-label" for="interview-video-url">YouTube videos</label>
+            <div class="flex gap-2">
+              <input
+                id="interview-video-url"
+                class="field"
+                type="text"
+                placeholder="Paste a YouTube URL"
+              />
+              <button type="button" class="btn btn-ghost" data-action="interview-video-add">
+                <i class="fa-solid fa-plus" aria-hidden="true"></i> Add
+              </button>
+            </div>
+            <p class="ink-muted mt-1 text-xs">
+              Up to ${store.MAX_INTERVIEW_VIDEOS} videos. Standard, youtu.be and
+              /embed/ links all work. Press Enter to add.
+            </p>
+            <div id="interview-video-preview" class="mt-2 space-y-2"></div>
+          </div>
+          <div class="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              class="btn btn-ghost"
+              data-close-dialog="interview-editor"
+            >
+              Cancel
+            </button>
+            <button type="submit" class="btn btn-accent">
+              <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+              Save interview
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
 /** Set a new password for somebody. The old one is never revealed. */
 function passwordResetDialog() {
   return `
@@ -2793,6 +3068,7 @@ function inlineMarkdown(text) {
 const TABS = [
   { id: 'overview', label: 'Overview', icon: 'fa-gauge-high', render: renderOverview, minRole: 'Writer' },
   { id: 'content', label: 'Content', icon: 'fa-newspaper', render: renderContent, minRole: 'Writer' },
+  { id: 'interviews', label: 'Interviews', icon: 'fa-circle-play', render: renderInterviewsTab, minRole: 'Writer' },
   { id: 'accounts', label: 'Accounts', icon: 'fa-user-check', render: renderAccountsTab, ownerOnly: true },
   { id: 'assignments', label: 'Assignments', icon: 'fa-clipboard-list', render: renderAssignmentsTab, minRole: 'Writer' },
   { id: 'breaking', label: 'Breaking', icon: 'fa-bolt', render: renderBreakingTab, minRole: 'Board Manager' },
@@ -2980,6 +3256,7 @@ function shellMarkup() {
       </div>
 
       ${articleEditorDialog()}
+      ${interviewEditorDialog()}
       ${staffEditorDialog()}
       ${assignmentEditorDialog()}
       ${passwordResetDialog()}
@@ -3135,6 +3412,12 @@ function attachAdminListeners() {
     if (form.id === 'article-form') {
       event.preventDefault();
       guard(() => saveArticleFromForm(form));
+    } else if (form.id === 'interview-form') {
+      // Without this branch the dialog did a native GET submit and reloaded the
+      // page, so saving an interview looked like it worked and then discarded
+      // every field. The handler existed; nothing routed to it.
+      event.preventDefault();
+      guard(() => saveInterviewFromForm(form));
     } else if (form.id === 'staff-form') {
       event.preventDefault();
       guard(() => saveStaffFromForm(form));
@@ -4283,6 +4566,8 @@ async function guard(action) {
 /** Delete confirmations, kept in one place. */
 const CONFIRM_COPY = {
   article: 'Delete this article permanently? This cannot be undone.',
+  interview:
+    'Delete this interview permanently? Any published videos go with it. This cannot be undone.',
   assignment: 'Close and delete this assignment?',
   staff: 'Remove this staff member from the roster?',
   media: 'Remove this image from the media library?',
@@ -4317,6 +4602,160 @@ function openArticleEditor(articleId) {
   byId('article-featured').checked = Boolean(article?.featured);
 
   openDialog('article-editor', { initialFocus: '#article-title' });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Interview editor                                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Repaint the staged video list.
+ *
+ * The list is rendered from `interviewVideoDraft` rather than read back out of
+ * the inputs on save, because each row has its own remove button and there is no
+ * single input whose value is the answer. Indices come straight from the rows on
+ * screen, so they cannot drift out of step with the array.
+ */
+function renderInterviewVideoPreview() {
+  const host = byId('interview-video-preview');
+  if (!host) return;
+
+  if (!interviewVideoDraft.length) {
+    host.innerHTML = '';
+    return;
+  }
+
+  host.innerHTML = interviewVideoDraft
+    .map(
+      (id, index) => `
+      <div class="surface-sunken flex items-center gap-2 px-3 py-2 text-xs">
+        <span class="badge badge-neutral">${index + 1}</span>
+        <code class="min-w-0 flex-1 truncate">${escapeHtml(id)}</code>
+        <button type="button" class="btn btn-quiet" data-action="interview-video-remove"
+          data-index="${index}" aria-label="Remove video ${index + 1}">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </div>`
+    )
+    .join('');
+}
+
+/**
+ * Stage one pasted YouTube reference into the draft.
+ *
+ * Nothing is written straight to the interview from the text box: the field is
+ * cleared and the id is appended to `interviewVideoDraft`, which is what the save
+ * reads. The id shown back to the writer is the normalised form, so a pasted
+ * share link visibly becomes the bare 11-character id that will be stored --
+ * the writer can see the normalisation actually happened.
+ *
+ * Rejects (with an explanation) rather than silently ignoring a bad paste, an
+ * over-limit add, and a duplicate. Silently ignoring all three is how a writer
+ * ends up saving an interview with two videos and no idea why.
+ */
+function stageInterviewVideo(rawValue) {
+  const value = String(rawValue ?? '').trim();
+  if (!value) return false;
+
+  if (interviewVideoDraft.length >= store.MAX_INTERVIEW_VIDEOS) {
+    showToast(
+      `That is the ${store.MAX_INTERVIEW_VIDEOS}-video limit. Remove one first.`,
+      { type: 'error' }
+    );
+    return false;
+  }
+
+  const id = store.normaliseYouTubeId(value);
+  if (!id) {
+    showToast('That does not look like a YouTube video link.', { type: 'error' });
+    return false;
+  }
+
+  if (interviewVideoDraft.includes(id)) {
+    showToast('That video is already attached.', { type: 'error' });
+    return false;
+  }
+
+  interviewVideoDraft.push(id);
+  renderInterviewVideoPreview();
+
+  const field = byId('interview-video-url');
+  if (field) field.value = '';
+  return true;
+}
+
+/** Open the interview editor, either blank or pre-filled. */
+function openInterviewEditor(interviewId) {
+  const interview = interviewId ? store.getInterview(interviewId) : null;
+  editingInterviewId = interview?.id ?? null;
+
+  byId('interview-editor-title').textContent = interview
+    ? 'Edit Interview'
+    : 'Create Interview';
+  byId('interview-title').value = interview?.title ?? '';
+  byId('interview-guest').value = interview?.guest ?? '';
+  byId('interview-guest-role').value = interview?.guestRole ?? '';
+  byId('interview-interviewer').value = interview?.interviewer ?? '';
+  byId('interview-status').value = interview?.status ?? 'pending';
+  byId('interview-summary').value = interview?.summary ?? '';
+  byId('interview-description').value = interview?.description ?? '';
+  byId('interview-image').value = interview?.image ?? '';
+
+  // Repopulate the staged videos on edit. The draft is the only place they live
+  // during editing, so an untouched text box reads as empty and a round trip
+  // through this dialog would otherwise silently drop every recording.
+  interviewVideoDraft = store.readVideoIds(interview?.videoIds);
+  if (byId('interview-video-url')) byId('interview-video-url').value = '';
+  renderInterviewVideoPreview();
+
+  openDialog('interview-editor', { initialFocus: '#interview-title' });
+}
+
+/** CREATE or UPDATE an interview from the editor dialog. */
+async function saveInterviewFromForm() {
+  const payload = {
+    title: byId('interview-title').value,
+    guest: byId('interview-guest').value,
+    guestRole: byId('interview-guest-role').value,
+    interviewer: byId('interview-interviewer').value,
+    status: byId('interview-status').value,
+    summary: byId('interview-summary').value,
+    description: byId('interview-description').value,
+    image: byId('interview-image').value.trim(),
+    videoIds: interviewVideoDraft
+  };
+
+  if (!payload.title.trim()) {
+    showToast('Every interview needs a headline.', { type: 'error' });
+    byId('interview-title').focus();
+    return;
+  }
+
+  // The guest is the subject of the interview, so a record without one is a
+  // record nobody can identify in the Owner's queue. Title alone is not enough.
+  if (!payload.guest.trim()) {
+    showToast('Name the person who was interviewed.', { type: 'error' });
+    byId('interview-guest').focus();
+    return;
+  }
+
+  if (editingInterviewId) {
+    await store.updateInterview(editingInterviewId, payload);
+    showToast('Interview updated.', { type: 'success' });
+  } else {
+    await store.createInterview(payload);
+    showToast(
+      payload.status === 'published'
+        ? 'Interview created and published.'
+        : 'Interview filed for approval.',
+      { type: 'success' }
+    );
+  }
+
+  editingInterviewId = null;
+  interviewVideoDraft = [];
+  closeDialog('interview-editor');
+  paintActiveTab();
 }
 
 /** Open the staff editor. */
@@ -4525,6 +4964,44 @@ function handleClick(event) {
         guard(async () => {
           await store.deleteArticle(id);
           showToast('Article deleted.', { type: 'success' });
+        });
+      }
+      break;
+    }
+
+    /* --- interviews --- */
+    case 'interview-new':
+      openInterviewEditor(null);
+      break;
+    case 'interview-edit':
+      openInterviewEditor(id);
+      break;
+    case 'interview-publish':
+      guard(async () => {
+        await store.publishInterview(id);
+        showToast('Interview approved and published.', { type: 'success' });
+      });
+      break;
+    case 'interview-unpublish':
+      guard(async () => {
+        await store.unpublishInterview(id);
+        showToast('Interview pulled back to the review queue.');
+      });
+      break;
+    case 'interview-delete': {
+      // Same reasoning as articles: hide the affordance honestly, but let the
+      // RLS policy in migration 022 be the thing that actually decides. A
+      // leaked anon key cannot bypass the database, so the browser must not be
+      // the authority here either.
+      const interview = store.listInterviews().find((item) => item.id === id);
+      if (!store.canDeleteInterview(interview)) {
+        showToast('You can only delete your own interviews.', { type: 'error' });
+        break;
+      }
+      if (askToDelete('interview', title)) {
+        guard(async () => {
+          await store.deleteInterview(id);
+          showToast('Interview deleted.', { type: 'success' });
         });
       }
       break;
