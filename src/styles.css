@@ -1304,8 +1304,16 @@ body.admin-active.dialog-locked {
   height: 2.25rem;
   flex-shrink: 0;
   border-radius: 9999px;
+  /* The source is always a centred square (see squareUpImage in
+  lib/portrait.js), so the frame must be centred too. The old
+  "center 30%" shifted the visible window up by 30% of the crop to
+  rescue raw, uncropped uploads whose heads sat near the top edge.
+  Now that the crop is exact, that offset is pure misregistration --
+  the portrait renders above where the user placed it. */
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
   object-fit: cover;
-  object-position: center 30%;
+  object-position: center;
   background: var(--panel-2, #f1f1ef);
   /* the die-cut edge */
   border: 2px solid #fff;

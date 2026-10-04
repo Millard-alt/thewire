@@ -37,6 +37,7 @@ import {
 } from './alerts.js';
 import * as push from '../lib/push.js';
 import { uploadImage, uploadImages, bindImagePicker } from '../lib/upload.js';
+import { squareUpImage } from '../lib/portrait.js';
 import { MAX_ARTICLE_PHOTOS } from '../lib/store.js';
 import {
   listCredits,
@@ -3306,7 +3307,15 @@ async function saveStaffFromForm(form) {
   if (pendingFile) {
     const busy = showToast('Uploading the portrait…', { type: 'info', duration: 0 });
     try {
-      const { url, isLocal } = await uploadImage(pendingFile);
+      // Square it first. Storing the raw upload left the portrait in
+      // whatever shape it arrived, and the credits grid then centre-cropped it
+      // with object-fit: cover -- which cuts the head off a wide photo and
+      // leaves a band of background on a tall one. Every portrait in the
+      // database is now the same 512 square, whichever route it came in by.
+      const squared = new File([await squareUpImage(pendingFile)], "portrait.jpg", {
+        type: "image/jpeg"
+      });
+      const { url, isLocal } = await uploadImage(squared);
       portraitUrl = url;
       busy.remove();
       if (isLocal) {

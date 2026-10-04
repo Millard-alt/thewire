@@ -46,7 +46,11 @@ let draft = {
   baseScale: 1,
   dragging: false,
   startX: 0,
-  startY: 0
+  startY: 0,
+  // Source-pixel crop recorded by paint(): { centreX, centreY, size }.
+  // cropToSquare reads this instead of re-deriving, so the saved file is cut
+  // from exactly the region that was on screen.
+  crop: null
 };
 
 /* -------------------------------------------------------------------------- */
@@ -146,6 +150,20 @@ function paint() {
   const originX = (side - drawW) / 2 + offsetX;
   const originY = (side - drawH) / 2 + offsetY;
 
+  // Remember what was actually painted, in SOURCE-image pixels, so the saved
+  // file is cut from the region on screen rather than re-derived from whatever
+  // the layout happens to be at save time. `centre` is the source pixel under
+  // the middle of the ring; `size` is that square's side in source pixels.
+  //
+  // The mapping is `frameX = originX + sourceX * scale`, so inverting it at
+  // frameX === side / 2 gives `sourceX = (side / 2 - originX) / scale`. There is
+  // no second term.
+  draft.crop = {
+    centreX: (side / 2 - originX) / scale,
+    centreY: (side / 2 - originY) / scale,
+    size: side / scale,
+  };
+
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(image, originX, originY, drawW, drawH);
 
@@ -228,34 +246,53 @@ function loadImage(file) {
  * is exactly what gets stored.
  * @returns {Promise<Blob>} a JPEG blob, ready to upload
  */
-function cropToSquare() {
+export function cropToSquare() {
   const { image, scale, offsetX, offsetY } = draft;
   if (!image) return Promise.reject(new Error('No photo loaded.'));
 
   const side = frameSide();
 
-  // Size, in source-image pixels, of the square the frame is showing. `scale`
-  // is CSS px per source px, so one CSS pixel of frame is 1/scale source
-  // pixels -- OUTPUT is the ENCODED size and has no bearing on the region.
+  // USE WHAT WAS PAINTED, NOT WHAT THE LAYOUT SAYS NOW.
   //
-  // The old code used OUTPUT / baseScale, which is unrelated to both, so the
-  // crop sampled a region far larger than the ring showed and then clamped it
-  // against the image edge. That is why the stored portrait could include
-  // background the editor had deliberately framed out.
-  const source = side / scale;
+  // `paint` already inverted its own transform into `draft.crop` (source-pixel
+  // centre + side) at the moment it drew. Re-deriving it here with the CURRENT
+  // `frameSide()` means any difference between the layout at paint time and at
+  // save time -- a font loading, a scrollbar appearing, a rotation, the panel
+  // being dragged to another screen -- silently shifts the crop away from what
+  // the editor framed.
+  //
+  // It also removes the arithmetic bug this replaces. The old lines were
+  //
+  //   const centreX = image.width / 2 + (side / 2 - originX) / scale;
+  //   const centreY = image.height / 2 + (side / 2 - originY) / scale;
+  //
+  // `originX` is the offset of the drawn image's TOP-LEFT corner within the
+  // frame, and `side / 2 - originX` is therefore already the source pixel under
+  // the frame's centre. Adding `image.width / 2` on top counts the image centre
+  // a second time. The sum overshoots the image on most crops, the clamp below
+  // silently swallows it, and the crop gets pinned to the bottom-right corner of
+  // the photo -- which for a portrait shot is the dark studio background. Hence
+  // the stored portrait came out off-centre with a black wedge in it.
+  const crop = draft.crop || (() => {
+    // Fallback only: no paint has happened yet (defensive, should be unreachable).
+    const drawW = image.width * scale;
+    const drawH = image.height * scale;
+    return {
+      centreX: (side / 2 - ((side - drawW) / 2 + offsetX)) / scale,
+      centreY: (side / 2 - ((side - drawH) / 2 + offsetY)) / scale,
+      size: side / scale,
+    };
+  })();
 
-  // Same transform as paint(): the frame centre, mapped back to source pixels.
-  const drawW = image.width * scale;
-  const drawH = image.height * scale;
-  const originX = (side - drawW) / 2 + offsetX;
-  const originY = (side - drawH) / 2 + offsetY;
-  const centreX = image.width / 2 + (side / 2 - originX) / scale;
-  const centreY = image.height / 2 + (side / 2 - originY) / scale;
+  // Size, in source-image pixels, of the square the frame was showing. `scale`
+  // is CSS px per source px, so one CSS pixel of frame is 1/scale source px.
+  // OUTPUT is the ENCODED size and has no bearing on the region.
+  const source = crop.size;
 
   // ClampOffsets guarantees this region lies inside the image; the clamp is
   // belt-and-braces against a float rounding error, not the boundary itself.
-  const sx = Math.max(0, Math.min(image.width - source, centreX - source / 2));
-  const sy = Math.max(0, Math.min(image.height - source, centreY - source / 2));
+  const sx = Math.max(0, Math.min(image.width - source, crop.centreX - source / 2));
+  const sy = Math.max(0, Math.min(image.height - source, crop.centreY - source / 2));
 
   const canvas = document.createElement('canvas');
   canvas.width = OUTPUT;
@@ -263,6 +300,46 @@ function cropToSquare() {
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(image, sx, sy, source, source, 0, 0, OUTPUT, OUTPUT);
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error('Could not build the portrait.'))),
+      'image/jpeg',
+      0.86
+    );
+  });
+}
+
+/**
+ * Render a File as the same 512x512 square, with no cropper involved.
+ *
+ * Used by the Owner's staff editor, which offers a plain file picker and a URL
+ * box alongside the self-service cropper. Those two paths used to store the
+ * uploaded file untouched, so a portrait added through the Owner panel was
+ * whatever shape the staffer happened to send. The credits grid then centre-
+ * cropped it with object-fit: cover, which on a wide photo chops the head off
+ * and on a tall one leaves a band of background. Normalising here means every
+ * portrait in the database is the same square, whatever route it came in by.
+ *
+ * The centre of the source is kept, which is the sensible default for a head
+ * and shoulder shot; the staffer can always re-crop it themselves afterwards.
+ *
+ * @param {File} file
+ * @returns {Promise<Blob>} a 512x512 JPEG
+ */
+export async function squareUpImage(file) {
+  const image = await loadImage(file);
+
+  const side = Math.min(image.width, image.height);
+  const sx = (image.width - side) / 2;
+  const sy = (image.height - side) / 2;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = OUTPUT;
+  canvas.height = OUTPUT;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(image, sx, sy, side, side, 0, 0, OUTPUT, OUTPUT);
 
   return new Promise((resolve, reject) => {
     canvas.toBlob(
@@ -362,7 +439,11 @@ function resetDraft() {
     baseScale: 1,
     dragging: false,
     startX: 0,
-    startY: 0
+    startY: 0,
+    // Source-pixel crop recorded by paint(): { centreX, centreY, size }.
+    // cropToSquare reads this instead of re-deriving, so the saved file is cut
+    // from exactly the region that was on screen.
+    crop: null
   };
   // Hide the zoom controls again: with no photo loaded they do nothing, and
   // leaving them visible between one photo and the next implies they still work.

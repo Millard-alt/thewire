@@ -52,6 +52,39 @@ its migrations have been run in the Supabase SQL Editor.**
   absolutely positioned over the frame, so it was printing "Tap to choose a
   photo" on top of the very image being lined up.
 
+- **Cropped portraits are saved centred, and the Owner panel displays them
+  centred.** The saved crop was computed from the wrong centre, so the
+  frame the user carefully lined up and the square that was actually
+  stored were different regions of the photo:
+
+  1. `cropToSquare()` added `image.width / 2` and `image.height / 2` to the
+     frame's centre, but `paint()` maps a source pixel `p` to frame position
+     `originX + p * scale`, so the centre of the frame is simply
+     `(side / 2 - originX) / scale` — nothing else. The extra half-image was
+     then swallowed by the clamp, which pinned the crop to the bottom-right
+     corner of the photo. For a 4000x3000 photo cropped 3000 wide, the
+     correct start is `sx = 500`; the code asked for 2500 and got 1000. The
+     bottom-right corner of a portrait photo is the dark backdrop, which is
+     exactly the "off-centre and partially black" report. Dragging appeared
+     to do nothing because the clamp overrode it at every zoom.
+  2. `.portrait-sticker` used `object-position: center 30%`, a shift that had
+     been added to rescue raw, uncropped uploads whose heads sat near the top
+     edge. Against an exactly-cropped square that offset is pure
+     misregistration, so even a correct crop rendered above where it was
+     placed. It is now `center`, with `aspect-ratio: 1 / 1` and
+     `overflow: hidden` so the frame cannot letterbox.
+
+  The Owner's own staff editor was also uploading the raw file, uncropped, so
+  portraits assigned from the panel bypassed the cropper entirely. It now runs
+  uploads through the same `squareUpImage()` normaliser, which means every
+  portrait in the database is the same 512 square whichever route it came in
+  by, and the display rule no longer needs an exception.
+
+  Verified in Chromium with a 1600x1000 test image: the centre of the saved
+  512 square matches the centre of the framed region to within 1px, the saved
+  square contains zero transparent/black padding, and the panel sticker
+  computes to `object-position: center` inside a 1:1 clipped box.
+
 - **Credits member names are now legible in dark mode.** They were invisible:
   black text on a near-black background. `.credits-card__name` used
   `var(--color-ink)`, but `--color-ink` is a fixed light-mode literal
