@@ -57,15 +57,5 @@
         { "key": "Permissions-Policy", "value": "geolocation=(), microphone=(), camera=()" }
       ]
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/send-push",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/check-deadlines",
-      "schedule": "0 * * * *"
-    }
   ]
 }
