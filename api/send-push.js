@@ -308,13 +308,27 @@ export default async function handler(req, res) {
   if (rowsError) return fail(res, 502, 'subscriptions_unreadable', rowsError.message);
 
   const total = rows ? rows.length : 0;
+  // "Specific User" means this is a category filter of "Everyone" as far as the
+  // rows are concerned. `syncSubscription()` writes p_audience: 'Everyone' on
+  // every device, and the target itself has already been applied above by the
+  // staff_id filter. Left in place, the third clause below compared
+  // broadcast.audience ('Specific User') against r.audience ('Everyone') for
+  // every row, matched nothing, and reported `no_subscribers` for a send whose
+  // target had exactly one device.
+  const categoryAudience =
+    !broadcast.audience || broadcast.audience === 'Everyone'
+      ? null
+      : broadcast.audience;
+
   const usable = (rows || []).filter(
-    (r) => r.endpoint && r.p256dh && r.auth &&
-      (!broadcast.audience || broadcast.audience === 'Everyone' || r.audience === broadcast.audience)
+    (r) =>
+      r.endpoint && r.p256dh && r.auth &&
+      (!categoryAudience || r.audience === categoryAudience)
   );
   const skipped = total - usable.length;
 
   console.log(`${TAG} subscriptions`, {
+    targeted: Boolean(targetStaffId),
     rows: total,
     usable: usable.length,
     skipped,
@@ -378,6 +392,16 @@ export default async function handler(req, res) {
 
   console.log(`${TAG} done`, { sent, pruned, failed: failed.length, skipped });
 
+  // Distinguish "that person has no device" from "your devices have no keys".
+  // The two look identical from the panel otherwise, and only one is fixable by
+  // the Owner: the first needs the recipient to open the site and allow alerts.
+  const targeted = Boolean(targetStaffId);
+  const zeroReason =
+    sent > 0 ? null
+      : total === 0
+        ? (targeted ? 'target_has_no_devices' : 'no_subscriptions')
+        : 'no_usable_subscriptions';
+
   return res.status(200).json({
     ok: true,
     sent,
@@ -385,6 +409,12 @@ export default async function handler(req, res) {
     skipped,
     failed: failed.slice(0, 10),
     broadcastId: broadcast.id,
+    targeted,
+    // How many devices the staff_id filter matched before the key check. Echoed
+    // so a targeted send that found the right devices but could not use them is
+    // visibly different from one that never found the person at all.
+    matched: total,
+    reason: zeroReason,
     // Echoed so the Owner Panel can report exactly what went out, rather than
     // guessing from its own (possibly stale) device count.
     title: payload.title,

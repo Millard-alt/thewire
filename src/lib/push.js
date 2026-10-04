@@ -1277,8 +1277,26 @@ export async function dispatchWebPush({
     }
 
     const delivered = Number(data.delivered ?? data.sent ?? 0);
-    console.log('[push] web push dispatched', { delivered, skipped: data.skipped });
-    return { ok: delivered > 0, delivered, reason: delivered > 0 ? undefined : 'no_subscribers' };
+    // Trust the sender's own diagnosis. It can tell "this person has no device
+    // registered" from "your devices have no push keys", and those need
+    // opposite fixes — collapsing both into `no_subscribers` is what made the
+    // targeted-send bug so hard to see from the panel.
+    const reason = delivered > 0 ? undefined : data.reason || 'no_subscribers';
+    console.log('[push] web push dispatched', {
+      delivered,
+      skipped: data.skipped,
+      targeted: data.targeted,
+      matched: data.matched,
+      reason
+    });
+    return {
+      ok: delivered > 0,
+      delivered,
+      reason,
+      // Pass the counts up so the panel can explain the shortfall.
+      matched: Number(data.matched ?? 0),
+      targeted: Boolean(data.targeted)
+    };
   } catch (error) {
     console.warn('[push] web push dispatch failed', error);
     return { ok: false, delivered: 0, reason: 'network', detail: error.message };

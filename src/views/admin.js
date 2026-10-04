@@ -4135,6 +4135,7 @@ export async function sendBroadcastFromForm(form) {
 
     // Not delivered by push. Explain the specific blocker instead of a vague
     // "in-app only", because each of these has a different fix.
+    const targeted = Boolean(result.pushTargeted);
     const why = {
       no_vapid_key:
         'No VAPID public key is set in this build, so devices cannot be pushed to.',
@@ -4143,6 +4144,16 @@ export async function sendBroadcastFromForm(form) {
         'PUSH_SEND_TOKEN is not set in Vercel and the panel could not authenticate.',
       no_subscribers:
         'No device has a usable push subscription yet. Readers must turn on alerts first.',
+      target_has_no_devices: targeted
+        ? 'That account has no device registered for push. They must open The Wire on ' +
+          'that device, turn on alerts, and sign in — the subscription is linked to ' +
+          'whoever is signed in when alerts are enabled.'
+        : 'No device has a usable push subscription yet.',
+      no_usable_subscriptions: targeted
+        ? `That account has ${result.pushMatched} device(s) registered, but none carry usable ` +
+          'push keys. They need to re-allow alerts on that device to generate a new subscription.'
+        : 'Devices are registered but none carry usable push keys. Readers need to ' +
+          're-allow alerts to generate a fresh subscription.',
       network: 'Could not reach the push sender. Check the connection and try again.'
     }[result.pushReason] || 'The push sender could not deliver this.';
 

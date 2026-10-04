@@ -442,6 +442,10 @@ export async function sendBroadcastToDevices({
     pushedOk: result.ok,
     pushReason: result.reason || null,
     pushDetail: result.detail || null,
+    // Carried so the panel can say "their N devices exist but have no keys"
+    // rather than a generic failure when a targeted send finds nothing usable.
+    pushMatched: result.matched ?? 0,
+    pushTargeted: result.targeted ?? false,
     popped,
     broadcast
   };
