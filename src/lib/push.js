@@ -328,6 +328,46 @@ function deviceLabel() {
 }
 
 /**
+ * Pull the two application-server keys off a PushSubscription.
+ *
+ * `subscription.toJSON().keys` is the supported shape, but a subscription that
+ * came back out of localStorage is a plain object, and older Safari builds omit
+ * `toJSON` entirely. Reading both means a subscription registered months ago
+ * still yields its keys the first time the reader re-opens the site.
+ *
+ * Returns `{ p256dh: null, auth: null }` rather than throwing when the shape is
+ * unfamiliar, because the caller can still register the device for in-app
+ * delivery; it simply cannot receive a real push.
+ *
+ * @param {object|null} subscription
+ * @returns {{p256dh: string|null, auth: string|null}}
+ */
+function subscriptionKeys(subscription) {
+  const empty = { p256dh: null, auth: null };
+  if (!subscription) return empty;
+
+  let keys = null;
+  try {
+    keys = typeof subscription.toJSON === 'function' ? subscription.toJSON().keys : null;
+  } catch {
+    keys = null;
+  }
+  if (!keys) keys = subscription.keys || null;
+  if (!keys) return empty;
+
+  const p256dh = typeof keys.p256dh === 'string' ? keys.p256dh.trim() : '';
+  const auth = typeof keys.auth === 'string' ? keys.auth.trim() : '';
+
+  // 65 bytes -> 87 url-safe base64 chars for p256dh; 16 bytes -> 22 for auth.
+  // Anything wildly outside that is junk and must not be handed to the server,
+  // where it would be fed straight into an ECDH handshake.
+  if (p256dh.length < 80 || p256dh.length > 100) return { ...empty, auth: auth || null };
+  if (auth.length < 16 || auth.length > 32) return { p256dh, auth: null };
+
+  return { p256dh, auth };
+}
+
+/**
  * Push this device's subscription up to `push_subscriptions`, or clear it when
  * the reader has switched notifications off.
  *
@@ -363,14 +403,26 @@ export async function syncSubscription(subscription = getStoredSubscription()) {
       return { removed: true };
     }
 
+    // Migration 019 added p_p256dh / p_auth. Without them the row is unusable
+    // to the sender: web-push cannot do the ECDH handshake with an endpoint
+    // alone, so a subscription stored without its keys can never be pushed to.
+    // The SQL function defaults both to null, so an older 004-only deployment
+    // still accepts this call - it just ignores the two extra arguments.
+    const keys = subscriptionKeys(subscription);
     const { error } = await client.rpc('wire_register_device', {
       p_endpoint: endpoint,
       p_device: deviceLabel(),
-      p_audience: 'Everyone'
+      p_audience: 'Everyone',
+      p_p256dh: keys.p256dh,
+      p_auth: keys.auth
     });
 
     if (error) throw error;
-    return { stored: true };
+    console.log('[push] subscription synced', {
+      endpoint: endpoint.slice(-48),
+      keysStored: Boolean(keys.p256dh && keys.auth)
+    });
+    return { stored: true, keysStored: Boolean(keys.p256dh && keys.auth) };
   } catch (error) {
     // A missing RPC means migration 004 has not been applied yet. Say so
     // plainly, because otherwise this looks like a permissions bug and sends
