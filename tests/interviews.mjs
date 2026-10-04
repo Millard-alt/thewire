@@ -521,7 +521,7 @@ const sql = read('supabase/migrations/022_interviews.sql');
 for (const fragment of [
   ['the interviews table is created', 'create table if not exists public.interviews'],
   ['status is constrained to pending/published', "status in ('pending', 'published')"],
-  ['the video list is capped at three', 'jsonb_array_length(video_ids) <= 3'],
+  ['the video list is capped at three', 'jsonb_array_length(video_ids) > 3'],
   ['each stored video is a bare 11-char id', '^[A-Za-z0-9_-]{11}$'],
   ['updated_at is trigger-maintained', 'interviews_touch_updated_at'],
   ['published_at is stamped on the transition', 'interviews_stamp_published'],
@@ -530,6 +530,26 @@ for (const fragment of [
 ]) {
   report(`migration 022 ${fragment[0]}`, sql.includes(fragment[1]));
 }
+
+/*
+ * Regression guard for the INVERTED video_ids CHECK, which shipped as a 400 on
+ * every write and is why this suite asserts semantics rather than spelling.
+ *
+ * The fragment check above only proves the regex PATTERN appears somewhere in the
+ * file. It says nothing about what the surrounding predicate does with it, so it
+ * passed happily against a constraint whose logic was exactly backwards:
+ *
+ *     not (video_ids @? '$[*] ? (@ like_regex "^[A-Za-z0-9_-]{11}$")')
+ *
+ * `@?` means "does ANY element match", so that reads "REJECT the row if any
+ * element is a VALID id" -- and jsonpath has no `not like_regex`, which is how the
+ * negation ended up wrapped around the wrong term when the earlier 42601 was fixed
+ * by switching `!~` to `like_regex`. The Owner could save an interview with no
+ * videos and could not save one with any; every real update failed with
+ *
+ *     new row for relation "interviews" violates check constraint
+ *     "interviews_video_ids_check"
+ */
 
 /*
  * Regression guard for the 42601 that shipped in the first version of this file.
@@ -573,6 +593,97 @@ report(
   repoJsonpathViolations.length
     ? repoJsonpathViolations.join(' | ')
     : `${sqlFiles.length} migration(s) scanned`
+);
+
+/*
+ * Polarity guard.
+ *
+ * LESSON (recorded because the first attempt at this test was worthless): an
+ * earlier version of this check evaluated a hand-written JS re-implementation of
+ * the predicate. Mutation testing showed it still passed with the inverted
+ * predicate pasted into the migration -- it was validating the test author's
+ * model of the SQL rather than the SQL. A guard that cannot fail is worse than no
+ * guard, because it is trusted.
+ *
+ * So this asserts the two structural properties of the real file whose absence
+ * caused the 400, and which together pin the polarity:
+ *
+ *   1. No negation may wrap a jsonpath quantifier. `@?` already means "ANY
+ *      element matches", so `not (x @? ...)` reads "reject if any element is
+ *      valid" -- exactly backwards. This is the literal shape that shipped.
+ *   2. Validity must be decided by comparing a filtered count against the array
+ *      length, which is correct by construction and needs no negation.
+ *
+ * Property 1 alone catches the shipped bug. Property 2 catches a re-introduction
+ * of the same mistake wearing a different mask.
+ */
+const videoCheckStart = sql.indexOf('add constraint interviews_video_ids_check');
+report(
+  'the video_ids CHECK statement can be located',
+  videoCheckStart !== -1,
+  videoCheckStart === -1 ? 'not found' : `at offset ${videoCheckStart}`
+);
+
+// Isolate just the CHECK expression: from the add-constraint keyword up to the
+// statement's terminating `);`, so the scrub UPDATE and the header prose (which
+// legitimately mention `@?` when explaining the bug) cannot be mistaken for it.
+const checkBody =
+  videoCheckStart === -1
+    ? ''
+    : sql.slice(videoCheckStart, sql.indexOf(');', sql.indexOf('end', videoCheckStart)));
+
+// `not (` wrapping a `@?` quantifier -- the inverted form, verbatim.
+const negationWrappingQuantifier = /not\s*\([^)]*@\?/.test(checkBody);
+report(
+  'no negation wraps a jsonpath quantifier (the shipped inversion)',
+  !negationWrappingQuantifier,
+  negationWrappingQuantifier
+    ? 'found `not (... @? ...)`: @? is already an ANY-match, so this rejects VALID ids'
+    : 'quantifiers are only reached positively'
+);
+
+// Validity decided by a filtered count vs the array length.
+const countComparison =
+  /jsonb_path_query_array\s*\(/.test(checkBody) &&
+  /jsonb_array_length\s*\(\s*jsonb_path_query_array/.test(checkBody.replace(/\s+/g, ' ')) &&
+  /=\s*jsonb_array_length\s*\(\s*video_ids\s*\)/.test(checkBody);
+report(
+  'validity is decided by a filtered count against the array length',
+  countComparison,
+  countComparison
+    ? 'all-elements-well-formed form, which cannot be inverted'
+    : 'expected jsonb_path_query_array(...) length = jsonb_array_length(video_ids)'
+);
+
+// The cap must be enforced as a rejection arm, so an over-long array cannot slip
+// through a positive-only rule.
+report(
+  'the three-video cap is enforced inside the CHECK',
+  /jsonb_array_length\(\s*video_ids\s*\)\s*>\s*3/.test(checkBody),
+  'jsonb_array_length(video_ids) > 3'
+);
+
+/*
+ * Ordering guard. The scrub UPDATE originally sat AFTER the add-constraint
+ * statement, while its own comment insisted it had to run first. ADD CONSTRAINT
+ * validates every existing row immediately, so the normalisation could not protect
+ * the very statement that depended on it.
+ */
+const scrubIdx = sql.indexOf('set video_ids = cleaned.value');
+const addIdx = sql.indexOf('add constraint interviews_video_ids_check');
+report(
+  'rows are scrubbed BEFORE the CHECK is added',
+  scrubIdx !== -1 && addIdx !== -1 && scrubIdx < addIdx,
+  scrubIdx === -1
+    ? 'no scrub UPDATE found'
+    : addIdx === -1
+      ? 'no add-constraint statement found'
+      : `scrub @${scrubIdx} < add constraint @${addIdx}`
+);
+report(
+  'the superseded null-only coalesce UPDATE is gone',
+  !/where video_ids is null or jsonb_typeof\(video_ids\) <> 'array'/.test(sql),
+  'replaced by the element-scrubbing UPDATE'
 );
 
 report(

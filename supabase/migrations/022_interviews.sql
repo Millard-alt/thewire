@@ -100,21 +100,81 @@ alter table public.interviews
 
 -- video_ids: at most three bare, non-empty 11-character ids.
 --
--- The CASE guard and jsonpath operators mirror the articles.extra_images CHECK
--- in 017 for the same reason: jsonb_array_length('{}') RAISES 22023 rather
--- than returning 0, so an unguarded `jsonb_array_length(video_ids) <= 3` turns
--- a malformed value into a failed statement with a misleading error instead of
--- a clean constraint violation. The CASE makes the short-circuit explicit.
+-- THE POLARITY BUG THIS REPLACES
+-- The first working version of this constraint negated the wrong term:
 --
--- The regex pins each element to exactly 11 characters of YouTube id alphabet.
--- Storing a whole URL would sail past this and end up in the iframe src.
+--     not (video_ids @? '$[*] ? (@ like_regex "^[A-Za-z0-9_-]{11}$")')
 --
--- NOTE the operator is `like_regex`, not the SQL `~` / `!~` pair. Those are
--- regex MATCHES operators in ordinary SQL expressions and do not exist inside a
--- jsonpath filter at all -- writing `@ !~ "..."` there does not fail the row, it
--- fails to PARSE, and Postgres reports 42601 "syntax error at or near "!"" the
--- moment the migration is run. `like_regex` is the jsonpath spelling, and it is
--- unanchored-by-default in the same way `~` is, hence the explicit ^ and $.
+-- `@?` means "does ANY element match", so that expression reads "reject the row
+-- if any element is a VALID id" -- precisely backwards. It accepted a whole
+-- pasted URL and rejected every correctly-normalised id, so the Owner could
+-- save an interview with no videos and could not save one with any. jsonpath
+-- offers no `not like_regex`, which is how the `not` got misplaced when the
+-- earlier `!~` 42601 was fixed by switching to the `like_regex` spelling.
+--
+-- So the rule is now stated positively and needs no negation at all: count the
+-- elements that ARE well-formed, and require that to equal the array length.
+-- If every element is valid the counts match; if any is not, the filtered count
+-- is short and the row is rejected. An empty array trivially passes.
+--
+-- jsonb_path_query_array is used rather than a set-returning function in a
+-- subquery because Postgres rejects `subquery in check constraint` (0A000) --
+-- the same wall documented for articles.extra_images in 017.
+--
+-- The CASE is load-bearing, not decoration. AND does not short-circuit, and
+-- `like_regex` on a non-string element raises rather than returning false, so a
+-- row holding e.g. `[42]` would abort the statement instead of failing the
+-- constraint cleanly. Inside a CASE each WHEN is evaluated in order and only
+-- until one matches, so the type guard is guaranteed to have already run.
+-- Scrub any row that predates this constraint into a shape it will accept.
+--
+-- This MUST run BEFORE the CHECK is added below, not after. ADD CONSTRAINT
+-- validates every existing row immediately, so one hand-inserted row with a null
+-- video_ids -- or, far more likely now, a row saved while the inverted predicate
+-- was live and therefore holding whatever the client managed to smuggle through
+-- -- would abort the entire migration with 23514 and leave the table unconstrained.
+-- Normalising first is what makes the ADD CONSTRAINT below safe.
+--
+-- It scrubs, rather than merely coalescing nulls, because the broken version of
+-- this file REJECTED well-formed ids and ACCEPTED everything else. Any row that
+-- got written during that window may hold a full URL or a fragment. Those
+-- elements are dropped (they cannot be trusted to have been normalised) and the
+-- surviving well-formed ones keep their original order.
+--
+-- `is distinct from` means untouched rows are not rewritten at all, so the
+-- updated_at trigger does not fire across the whole table for nothing.
+update public.interviews as i
+   set video_ids = cleaned.value
+  from (
+    select k.id,
+           coalesce(
+             (
+               select jsonb_agg(e.value order by e.ord)
+                 from jsonb_array_elements(
+                        -- Coalesce the array form first: jsonb_array_elements
+                        -- raises 22023 on a non-array, so a null or scalar
+                        -- video_ids must be replaced before it reaches here
+                        -- rather than aborting the statement.
+                        case
+                          when jsonb_typeof(k.video_ids) = 'array'
+                            then k.video_ids
+                          else '[]'::jsonb
+                        end
+                      ) with ordinality as e(value, ord)
+                where jsonb_typeof(e.value) = 'string'
+                  -- #>> '{}' renders even a scalar jsonb to text, so the regex
+                  -- always has a string to test. The type check above must come
+                  -- first anyway: it is what guarantees no array/object element
+                  -- reaches the comparison.
+                  and e.value #>> '{}' ~ '^[A-Za-z0-9_-]{11}$'
+             ),
+             '[]'::jsonb
+           ) as value
+      from public.interviews k
+  ) as cleaned
+ where i.id = cleaned.id
+   and i.video_ids is distinct from cleaned.value;
+
 alter table public.interviews
   drop constraint if exists interviews_video_ids_check;
 alter table public.interviews
@@ -122,18 +182,16 @@ alter table public.interviews
   check (
     case
       when jsonb_typeof(video_ids) is distinct from 'array' then false
-      else jsonb_array_length(video_ids) <= 3
-       and not (video_ids @? '$[*] ? (@.type() != "string")')
-       and not (video_ids @? '$[*] ? (@ == "")')
-       and not (video_ids @? '$[*] ? (@ like_regex "^[A-Za-z0-9_-]{11}$")')
+      when video_ids @? '$[*] ? (@.type() != "string")' then false
+      when jsonb_array_length(video_ids) > 3 then false
+      else jsonb_array_length(
+             jsonb_path_query_array(
+               video_ids,
+               '$[*] ? (@ like_regex "^[A-Za-z0-9_-]{11}$")'
+             )
+           ) = jsonb_array_length(video_ids)
     end
   );
-
--- Normalise any NULL/non-array a hand-written row may already carry, then pin
--- the default so no client has to defend against null here.
-update public.interviews
-   set video_ids = coalesce(video_ids, '[]'::jsonb)
- where video_ids is null or jsonb_typeof(video_ids) <> 'array';
 
 alter table public.interviews
   alter column video_ids set default '[]'::jsonb;
