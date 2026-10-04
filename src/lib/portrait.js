@@ -81,12 +81,41 @@ export function validateSelfie(file) {
 /* Crop painting                                                               */
 /* -------------------------------------------------------------------------- */
 
-/** Clamp the offset so the image can never be dragged inside out of frame. */
+/** The side, in CSS pixels, of the square crop frame. */
+function frameSide() {
+  const view = byId('portrait-canvas');
+  if (!view) return 1;
+  const box = view.getBoundingClientRect();
+  return Math.max(1, Math.min(box.width, box.height));
+}
+
+/**
+ * Clamp the drag offset so the frame can never show empty canvas.
+ *
+ * THE BUG THIS REPLACES
+ * The old line read `(image.width * scale - baseScale) / 2`. `image.width *
+ * scale` is a LENGTH in CSS pixels; `baseScale` is a SCALE FACTOR. Subtracting
+ * a dimensionless number from a length produced a slack hundreds of pixels too
+ * large, so the photo could be dragged most of the way out of its own ring and
+ * the saved square came out largely blank.
+ *
+ * THE CORRECT ARITHMETIC
+ * The frame is `side` CSS px on a side. The image is painted at
+ * `image.width * scale` CSS px wide. It may therefore move by exactly half of
+ * the amount it OVERFLOWS the frame -- `(drawW - side) / 2` -- and not one
+ * pixel further. At scale === baseScale the overflow is zero on the short axis
+ * and positive on the long one, which is correct: a tall photo can slide
+ * vertically until either end meets the ring, but never past it.
+ *
+ * It also makes zoom safe for free. Slack grows with scale, so the photo stays
+ * pinned to the frame at every zoom level instead of drifting outward.
+ */
 function clampOffsets() {
-  const { image, scale, baseScale } = draft;
+  const { image, scale } = draft;
   if (!image) return;
-  const slackX = Math.max(0, (image.width * scale - baseScale) / 2);
-  const slackY = Math.max(0, (image.height * scale - baseScale) / 2);
+  const side = frameSide();
+  const slackX = Math.max(0, (image.width * scale - side) / 2);
+  const slackY = Math.max(0, (image.height * scale - side) / 2);
   draft.offsetX = Math.max(-slackX, Math.min(slackX, draft.offsetX));
   draft.offsetY = Math.max(-slackY, Math.min(slackY, draft.offsetY));
 }
@@ -137,10 +166,39 @@ function paint() {
   }
 }
 
+/** Most the editor may zoom in, as a multiple of the "cover the frame" fit. */
+const ZOOM_MAX = 6;
+
+/**
+ * Zoom, expressed as a 0-100 slider position, so the same control works whether
+ * the editor dragged a slider, pressed +/-, pinched or scrolled.
+ * @returns {number} 0 (fitted, cannot go lower) to 100 (maximum zoom)
+ */
+function zoomPercent() {
+  if (!draft.image || draft.baseScale <= 0) return 0;
+  return ((draft.scale / draft.baseScale - 1) / (ZOOM_MAX - 1)) * 100;
+}
+
+/** Push the current zoom back into the slider and the zoom readout. */
+function syncZoomControl() {
+  const slider = byId('portrait-zoom');
+  const readout = byId('portrait-zoom-value');
+  const percent = Math.round(zoomPercent());
+  if (slider) {
+    // Only write when it differs, or dragging the thumb fights the handler.
+    if (Number(slider.value) !== percent) slider.value = String(percent);
+    slider.setAttribute('aria-valuetext', `${percent}% zoom`);
+  }
+  if (readout) readout.textContent = `${percent}%`;
+}
+
 function applyZoom(next) {
-  draft.scale = Math.max(draft.baseScale, Math.min(next, draft.baseScale * 6));
+  // The floor is baseScale: zooming OUT past "cover the frame" is exactly what
+  // exposed blank canvas around the crop, so it is not offered at all.
+  draft.scale = Math.max(draft.baseScale, Math.min(next, draft.baseScale * ZOOM_MAX));
   clampOffsets();
   paint();
+  syncZoomControl();
 }
 
 
@@ -171,13 +229,31 @@ function loadImage(file) {
  * @returns {Promise<Blob>} a JPEG blob, ready to upload
  */
 function cropToSquare() {
-  const { image, scale, offsetX, offsetY, baseScale } = draft;
+  const { image, scale, offsetX, offsetY } = draft;
   if (!image) return Promise.reject(new Error('No photo loaded.'));
 
-  // Size, in source-image pixels, that maps to the whole canvas.
-  const source = OUTPUT / baseScale;
-  const centreX = image.width / 2 - offsetX / scale;
-  const centreY = image.height / 2 - offsetY / scale;
+  const side = frameSide();
+
+  // Size, in source-image pixels, of the square the frame is showing. `scale`
+  // is CSS px per source px, so one CSS pixel of frame is 1/scale source
+  // pixels -- OUTPUT is the ENCODED size and has no bearing on the region.
+  //
+  // The old code used OUTPUT / baseScale, which is unrelated to both, so the
+  // crop sampled a region far larger than the ring showed and then clamped it
+  // against the image edge. That is why the stored portrait could include
+  // background the editor had deliberately framed out.
+  const source = side / scale;
+
+  // Same transform as paint(): the frame centre, mapped back to source pixels.
+  const drawW = image.width * scale;
+  const drawH = image.height * scale;
+  const originX = (side - drawW) / 2 + offsetX;
+  const originY = (side - drawH) / 2 + offsetY;
+  const centreX = image.width / 2 + (side / 2 - originX) / scale;
+  const centreY = image.height / 2 + (side / 2 - originY) / scale;
+
+  // ClampOffsets guarantees this region lies inside the image; the clamp is
+  // belt-and-braces against a float rounding error, not the boundary itself.
   const sx = Math.max(0, Math.min(image.width - source, centreX - source / 2));
   const sy = Math.max(0, Math.min(image.height - source, centreY - source / 2));
 
@@ -288,6 +364,13 @@ function resetDraft() {
     startX: 0,
     startY: 0
   };
+  // Hide the zoom controls again: with no photo loaded they do nothing, and
+  // leaving them visible between one photo and the next implies they still work.
+  byId('portrait-zoom-controls')?.classList.add('hidden');
+  // ...and bring the placeholder back, since there is again nothing to crop.
+  byId('portrait-empty')?.classList.remove('hidden');
+  byId('portrait-save')?.setAttribute('disabled', '');
+  syncZoomControl();
 }
 
 /** Set the starting zoom so the image always covers the frame. */
@@ -301,6 +384,7 @@ function fitImage() {
   draft.scale = draft.baseScale;
   draft.offsetX = 0;
   draft.offsetY = 0;
+  syncZoomControl();
 }
 
 /** Load a File into the draft and frame it. */
@@ -316,6 +400,12 @@ async function acceptFile(file) {
     draft.image = image;
     fitImage();
     paint();
+    // Reveal the zoom controls only now there is something to zoom, and get the
+    // "choose a photo" placeholder out of the way: it is absolutely positioned
+    // over the frame, so leaving it up would print "Choose a photo" on top of
+    // the very photo the writer is trying to line up.
+    byId('portrait-zoom-controls')?.classList.remove('hidden');
+    byId('portrait-empty')?.classList.add('hidden');
     byId('portrait-save')?.removeAttribute('disabled');
   } catch (error) {
     showToast(error.message, { type: 'error' });
@@ -384,6 +474,79 @@ function wire() {
     (event) => event.preventDefault(),
     { passive: false }
   );
+
+  // TWO-FINGER PINCH.
+  // The wheel handler above covers a mouse and a trackpad, but iOS and Android
+  // report a touch pinch as two pointerdowns and never send a wheel event at
+  // all. Without this, touch is the one platform with no zoom -- which is most
+  // of the readers of a phone-first site.
+  //
+  // Distance is measured between the two live touches and compared against the
+  // distance when the pinch began, so the scale factor is the true ratio rather
+  // than a guess. Only the zoom factor is taken from the gesture: dragging is
+  // already handled by pointermove, and letting both run at once makes the
+  // photo slide out from under the fingers.
+  const touches = new Map();
+  let pinchStartDistance = 0;
+  let pinchStartScale = 0;
+
+  view?.addEventListener(
+    'pointerdown',
+    (event) => {
+      if (event.pointerType === 'touch') touches.set(event.pointerId, event);
+      if (touches.size === 2) {
+        const [a, b] = [...touches.values()];
+        pinchStartDistance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        pinchStartScale = draft.scale;
+        // Drop any in-flight drag so the pinch does not fight it.
+        draft.dragging = false;
+      }
+    },
+    { capture: true }
+  );
+
+  view?.addEventListener(
+    'pointermove',
+    (event) => {
+      if (event.pointerType !== 'touch' || !touches.has(event.pointerId)) return;
+      touches.set(event.pointerId, event);
+      if (touches.size !== 2 || !pinchStartDistance) return;
+      event.preventDefault();
+      const [a, b] = [...touches.values()];
+      const distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      if (distance <= 0) return;
+      applyZoom(pinchStartScale * (distance / pinchStartDistance));
+    },
+    { passive: false, capture: true }
+  );
+
+  const endTouch = (event) => {
+    touches.delete(event.pointerId);
+    if (touches.size < 2) pinchStartDistance = 0;
+  };
+  view?.addEventListener('pointerup', endTouch, { capture: true });
+  view?.addEventListener('pointercancel', endTouch, { capture: true });
+
+  // Visible zoom controls. The slider is the precise control for a phone; the
+  // two buttons are the ones that work one-handed, and they are real buttons
+  // so they are reachable by keyboard and screen reader.
+  const stepZoom = (factor) => () => applyZoom(draft.scale * factor);
+
+  byId('portrait-zoom-in')?.addEventListener('click', stepZoom(1.25));
+  byId('portrait-zoom-out')?.addEventListener('click', stepZoom(0.8));
+  byId('portrait-zoom-reset')?.addEventListener('click', () => {
+    draft.offsetX = 0;
+    draft.offsetY = 0;
+    applyZoom(draft.baseScale);
+  });
+
+  byId('portrait-zoom')?.addEventListener('input', (event) => {
+    const percent = Math.max(0, Math.min(100, Number(event.target.value) || 0));
+    // Interpolate between "cover the frame" and maximum zoom, so the slider's
+    // midpoint is genuinely half-zoomed rather than half of some other scale.
+    const factor = 1 + (percent / 100) * (ZOOM_MAX - 1);
+    applyZoom(draft.baseScale * factor);
+  });
 
   // Keyboard: arrows nudge, +/- zoom. Keeps the crop usable without a mouse.
   document.addEventListener('keydown', (event) => {

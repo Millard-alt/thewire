@@ -27,6 +27,9 @@
 import { getSupabase } from './supabase.js';
 import { config } from './config.js';
 import { escapeHtml, safeUrl } from './dom.js';
+// Only for the demo-mode branch of resetPortrait(). store.js does not import
+// this module, so there is no cycle.
+import { updateStaff } from './store.js';
 
 /**
  * Set when a roster read failed because `credits_people` does not exist yet.
@@ -353,6 +356,64 @@ export async function setPortraitStatus(staffId, status) {
           ? 'Portrait rejected. It stays hidden until a new one is approved.'
           : 'Portrait cleared.'
   };
+}
+
+/**
+ * Wipe a staffer's portrait so they can submit a properly cropped one.
+ *
+ * DISTINCT FROM `setPortraitStatus(id, 'rejected')`
+ * -----------------------------------------------------------------------------
+ * Rejecting leaves the bad photo on the row and only hides it. The Owner is then
+ * looking at the very image that is wrong, with no way to judge the replacement,
+ * and the staffer's row still carries a URL that a stale byline cache can pick up.
+ *
+ * A reset clears BOTH halves: `portrait_url` goes to '' and `portrait_status`
+ * returns to 'none', the state a new hire starts in. Their bylines fall back to
+ * initials immediately and the Owner's review queue stops showing a phantom
+ * submission that no longer has a photo attached.
+ *
+ * It is deliberately not routed through `wire_assign_portrait`, which looks
+ * equivalent but is gated on `is_staff()` rather than `is_owner()` and is not
+ * granted to `anon`. See supabase/018_portrait_reset.sql for the full argument.
+ *
+ * @param {string} staffId
+ */
+export async function resetPortrait(staffId) {
+  if (config.demoMode) {
+    // Mirror the real write so the Owner's panel is fully usable in demo, and so
+    // the suites can exercise the button without a database.
+    const member = await updateStaff(staffId, {
+      portrait_url: '',
+      portrait_status: 'none'
+    });
+    if (!member) return { ok: false, message: 'That staffer is no longer on the roster.' };
+    return {
+      ok: true,
+      message: 'Portrait cleared. They can submit a new one.'
+    };
+  }
+
+  const client = getSupabase();
+  if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
+
+  const { error } = await client.rpc('wire_reset_portrait', { p_staff_id: staffId });
+
+  if (error) {
+    const message = String(error?.message || '');
+    if (/wire_reset_portrait/.test(message)) {
+      return {
+        ok: false,
+        message:
+          'The newsroom server is missing the portrait reset function. Paste supabase/018_portrait_reset.sql into the Supabase SQL editor.'
+      };
+    }
+    if (/only the Owner/.test(message)) {
+      return { ok: false, message: 'Only the Owner can reset a portrait.' };
+    }
+    return { ok: false, message: describe(error, 'portrait reset') };
+  }
+
+  return { ok: true, message: 'Portrait cleared. They can submit a new one.' };
 }
 
 /* -------------------------------------------------------------------------- */

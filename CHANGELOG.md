@@ -11,7 +11,46 @@ its migrations have been run in the Supabase SQL Editor.**
 
 ## [Unreleased]
 
+### Added
+
+- **Portrait zoom controls.** The portrait editor now has a slider plus
+  zoom in / out / reset buttons, and accepts wheel and pinch gestures. The
+  slider is a 0-100 position where 0 is the "cover the frame" fit, so the
+  same control drives the slider, the buttons, the wheel and the pinch.
+
+- **"Reset portrait" in the Newsroom Panel.** An Owner can now delete a
+  staffer's portrait outright and let them submit a properly cropped
+  replacement. It appears on any staffer whose portrait is live or rejected,
+  and deliberately not on a pending one, where Approve and Reject already
+  cover the case. Backed by `supabase/018_portrait_reset.sql` — a reset is
+  destructive, so it gets its own Owner-only function rather than reusing
+  `wire_assign_portrait`, which is gated on `is_staff()` and is not granted
+  to `anon`. **Paste that file into the Supabase SQL Editor; until you do,
+  the button reports that the server is missing the function.** Until then
+  the rest of the panel is unaffected.
+
 ### Fixed
+
+- **The crop box can no longer leave the photo.** Two separate arithmetic
+  bugs were letting portraits be submitted mostly blank:
+
+  1. `clampOffsets()` compared `(image.width * scale)` — a length in CSS
+     pixels — against `baseScale`, a dimensionless scale factor. Subtracting
+     one from the other produced a slack hundreds of pixels too large, so the
+     photo could be dragged most of the way out of its own ring. It now
+     clamps to half the actual overflow, `(drawW - side) / 2`, per axis.
+  2. `fitImage()` used `contain` scaling, so a tall or wide photo started
+     smaller than the ring and showed empty canvas before the writer touched
+     anything. It now uses `cover`, and zooming has a hard floor at that fit
+     so empty padding cannot be reintroduced by zooming out.
+
+  Verified in Chromium: after dragging hard in all four directions and
+  zooming to minimum, the sampled canvas contains **zero** fully transparent
+  pixels at the fitted position, with no horizontal overflow at 360/390/430px.
+
+- **The "choose a photo" placeholder is hidden once a photo loads.** It is
+  absolutely positioned over the frame, so it was printing "Tap to choose a
+  photo" on top of the very image being lined up.
 
 - **Credits member names are now legible in dark mode.** They were invisible:
   black text on a near-black background. `.credits-card__name` used

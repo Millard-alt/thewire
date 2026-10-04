@@ -46,6 +46,7 @@ import {
   removePerson,
   assignPortrait,
   setPortraitStatus,
+  resetPortrait,
   primePortraits,
   isCreditsMigrationMissing,
   normaliseColour,
@@ -882,16 +883,45 @@ function renderPortraitReview(member) {
   if (status === 'approved' && hasPhoto) {
     return `<span class="badge badge-emerald">
               <i class="fa-solid fa-check" aria-hidden="true"></i> Portrait live
-            </span>`;
+            </span>
+            ${renderResetButton(member)}`;
   }
 
   if (status === 'rejected') {
     return `<span class="badge badge-amber" title="Waiting on a new upload">
               <i class="fa-solid fa-rotate" aria-hidden="true"></i> Rejected
-            </span>`;
+            </span>
+            ${renderResetButton(member)}`;
   }
 
   return '';
+}
+
+/**
+ * The "Reset portrait" button: clear the photo entirely and let the staffer
+ * submit a properly cropped replacement.
+ *
+ * Rendered for a live OR rejected portrait but never for a pending one. A
+ * pending upload is already awaiting a decision, so clearing it would destroy
+ * the submission the Owner is about to judge for no gain — the Approve and
+ * Reject buttons already sit right there and cover that case.
+ *
+ * Owner only, like the rest of this block. `renderPortraitReview` bails before
+ * reaching here for anyone else, and the RPC re-checks is_owner() in Postgres,
+ * so the client gate is a convenience rather than the enforcement.
+ *
+ * @param {{id: string, name: string, portrait_status?: string}} member
+ * @returns {string} HTML
+ */
+function renderResetButton(member) {
+  const who = escapeHtml(member.name);
+  return `<button class="btn btn-quiet" data-action="portrait-reset"
+            data-id="${escapeHtml(member.id)}"
+            data-name="${who}"
+            title="Delete this photo and let ${who} submit a new one"
+            aria-label="Reset ${who}'s portrait">
+            <i class="fa-solid fa-eraser" aria-hidden="true"></i> Reset
+          </button>`;
 }
 
 
@@ -4046,6 +4076,36 @@ function handleClick(event) {
             : `${who}'s portrait was rejected. They can upload a new one.`,
           { type: approving ? 'success' : 'info' }
         );
+      });
+      break;
+    }
+
+    // Deletes the stored photo outright rather than flagging it. There is no
+    // un-reject: once cleared, the only way back is a fresh upload, so this
+    // asks for a second, unambiguous confirmation instead of the shared
+    // askToDelete() copy -- a mis-click here destroys someone's portrait.
+    case 'portrait-reset': {
+      const who = name || 'this staffer';
+      if (
+        !window.confirm(
+          `Delete ${who}'s portrait?\n\nThe photo will be removed from the server, not just hidden, and cannot be recovered. ${who} will be able to upload a replacement.`
+        )
+      ) {
+        return;
+      }
+      guard(async () => {
+        const result = await resetPortrait(id);
+        if (!result.ok) {
+          showToast(result.message, { type: 'error', duration: 8000 });
+          return;
+        }
+        // Same reason as the approve/reject branch: the byline photo and the
+        // Credits page read from the cached sticker list, so without priming
+        // they keep showing a portrait that no longer exists.
+        await primePortraits();
+        showToast(`${who}'s portrait was cleared. They can submit a new one.`, {
+          type: 'success'
+        });
       });
       break;
     }

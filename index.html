@@ -737,6 +737,57 @@
             </div>
 
             <div class="flex w-full flex-col gap-2">
+              <!-- Zoom controls.
+                   Hidden until a photo is loaded, because with no image there is
+                   nothing to zoom and a dead slider is just clutter. -->
+              <div id="portrait-zoom-controls" class="hidden w-full flex-col gap-1.5">
+                <div class="flex items-center gap-2">
+                  <button
+                    id="portrait-zoom-out"
+                    class="btn btn-quiet shrink-0 px-2 py-1.5"
+                    type="button"
+                    aria-label="Zoom out"
+                  >
+                    <i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i>
+                  </button>
+
+                  <input
+                    id="portrait-zoom"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value="0"
+                    class="min-w-0 flex-1 accent-(--color-accent)"
+                    aria-label="Zoom"
+                  />
+
+                  <button
+                    id="portrait-zoom-in"
+                    class="btn btn-quiet shrink-0 px-2 py-1.5"
+                    type="button"
+                    aria-label="Zoom in"
+                  >
+                    <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
+                  </button>
+
+                  <span
+                    id="portrait-zoom-value"
+                    class="w-9 shrink-0 text-right text-[0.6875rem] tabular-nums ink-muted"
+                    aria-hidden="true"
+                  >0%</span>
+                </div>
+
+                <button
+                  id="portrait-zoom-reset"
+                  class="btn btn-quiet w-full justify-center text-xs"
+                  type="button"
+                >
+                  <i class="fa-solid fa-crosshairs" aria-hidden="true"></i>
+                  Reset crop
+                </button>
+              </div>
+
               <input
                 id="portrait-input"
                 class="sr-only"
