@@ -149,6 +149,21 @@
   .accent-text {
     color: var(--accent);
   }
+
+  /* Footer attribution line ("This website has been made by Millard").
+     A component class rather than utilities because `.ink-muted` is a
+     hand-written colour, and Tailwind cannot synthesise an opacity variant
+     (`ink-muted/70`) from a class it did not generate — the modifier compiles
+     to nothing and the line silently renders at full strength, same size and
+     colour as the copyright above it. Mixing against --text-muted here keeps
+     it visibly quieter in both themes. */
+  .footer-credit {
+    margin-top: 0.75rem;
+    text-align: center;
+    font-size: 0.7rem;
+    letter-spacing: 0.02em;
+    color: color-mix(in srgb, var(--text-muted) 62%, transparent);
+  }
   /* Headline links: accent on hover, ink at rest. A component class rather
      than `hover:accent-text` because variants cannot target @layer components. */
   .text-link {
