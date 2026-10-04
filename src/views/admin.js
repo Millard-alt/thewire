@@ -1818,14 +1818,12 @@ function assignmentEditorDialog() {
           </div>
           <div>
             <label class="field-label" for="assignment-deadline">Deadline</label>
-            <input id="assignment-deadline" class="field" type="text" />
-            <label class="mt-1 flex items-start gap-2 text-xs ink-muted" for="assignment-due-at">
-              <input id="assignment-due-at" type="checkbox" class="mt-0.5" />
-              <span>
-                Treat the deadline above as a real date
-                (<code id="assignment-due-hint"></code>) and remind them a day ahead.
-              </span>
-            </label>
+            <input id="assignment-deadline" class="field" type="datetime-local" step="300" />
+            <p class="mt-1 text-xs ink-muted">
+              Pick the date and time from the calendar. This is the exact instant
+              the reminder is measured against.
+            </p>
+            <p class="mt-1 text-xs ink-muted" id="assignment-due-hint"></p>
           </div>
           <div>
             <label class="field-label" for="assignment-status">Status</label>
@@ -3527,33 +3525,67 @@ async function saveGalleryCategoryFromForm(form) {
   paintActiveTab();
 }
 
+/**
+ * Convert a Date into the exact string `datetime-local` expects:
+ * `YYYY-MM-DDTHH:mm`, in the browser's LOCAL time.
+ *
+ * Two traps this avoids:
+ *   - `.toISOString()` is UTC, so a London afternoon picked as 14:00 would be
+ *     written as 13:00 (or worse, 15:00 in Nairobi) and silently shift the
+ *     deadline by the UTC offset.
+ *   - The value has no seconds and no zone marker; assigning that verbatim to a
+ *     date input is invalid and the browser rejects it, blanking the field.
+ */
+function toDateTimeLocalValue(date) {
+  if (!date || Number.isNaN(date.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  );
+}
+
+/**
+ * The human-readable deadline the public board renders.
+ *
+ * The board shows this string (`deadline`), while the cron compares `due_at`.
+ * Storing a raw "2026-04-18T17:00" in the display column would put machine
+ * syntax in front of readers, so the two are deliberately formatted differently.
+ */
+function formatDeadlineForBoard(dueAt) {
+  if (!dueAt) return '';
+  const date = new Date(dueAt);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  });
+}
+
 /** CREATE or UPDATE an assignment from the editor dialog. */
 async function saveAssignmentFromForm(form) {
-  const deadlineText = byId('assignment-deadline').value.trim();
+  // The picker yields an exact instant, so there is no free text left to parse
+  // and no way to enter something unreadable. `new Date('YYYY-MM-DDTHH:mm')` is
+  // specified as LOCAL time, which is what we want: it is the same wall clock
+  // the Owner just picked, not a UTC-shifted version of it.
+  const picked = byId('assignment-deadline').value;
+  const parsed = picked ? new Date(picked) : null;
+  const dueAt = parsed && Number.isNaN(parsed.getTime()) ? null : parsed?.toISOString();
 
-  // The free-text deadline is what the public board renders. `due_at` is the
-  // machine-readable copy the reminder cron compares against now(), so it is
-  // parsed only when the Owner ticks the box - otherwise an unparseable string
-  // like "next week" would silently produce NaN and either never fire or fire
-  // immediately.
-  let dueAt = null;
-  if (byId('assignment-due-at')?.checked && deadlineText) {
-    const parsed = new Date(deadlineText);
-    dueAt = Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
-    if (!dueAt) {
-      showToast(
-        `Could not read "${deadlineText}" as a date. Use something like "2026-04-18 17:00", or untick the reminder box to keep it as plain text.`,
-        { type: 'error' }
-      );
-      return;
-    }
+  if (picked && Number.isNaN(parsed.getTime())) {
+    showToast('That deadline could not be read. Re-pick it in the calendar.', {
+      type: 'error'
+    });
+    return;
   }
 
   const payload = {
     title: byId('assignment-title').value,
     reporter: byId('assignment-reporter').value,
     status: byId('assignment-status').value,
-    deadline: deadlineText,
+    // The board renders `deadline`, so it gets a formatted string; the cron
+    // compares `due_at`, which stays the exact UTC instant.
+    deadline: dueAt ? formatDeadlineForBoard(dueAt) : '',
     assigned_to: byId('assignment-assigned-to')?.value || null,
     due_at: dueAt
   };
@@ -3572,12 +3604,29 @@ async function saveAssignmentFromForm(form) {
     );
   }
 
-  if (editingAssignmentId) {
-    await store.updateAssignment(editingAssignmentId, payload);
-    showToast('Assignment updated.', { type: 'success' });
+  const saved = editingAssignmentId
+    ? await store.updateAssignment(editingAssignmentId, payload)
+    : await store.createAssignment(payload);
+
+  // Read the value back off the row we just wrote rather than reporting success
+  // from the payload we intended to write. `createAssignment`/`updateAssignment`
+  // return the stored object, so this catches a column that silently failed to
+  // persist - the exact failure that made this look like "the picker reset
+  // itself" when in fact the write was being dropped.
+  if (payload.assigned_to && saved?.assigned_to !== payload.assigned_to) {
+    console.warn('[admin] assigned_to did not persist', {
+      expected: payload.assigned_to,
+      got: saved?.assigned_to ?? null
+    });
+    showToast(
+      'Saved, but the assignee did not stick. If the roster list is empty, check that Supabase migration 021 has been run.',
+      { type: 'error' }
+    );
   } else {
-    await store.createAssignment(payload);
-    showToast('Assignment published to the board.', { type: 'success' });
+    showToast(
+      editingAssignmentId ? 'Assignment updated.' : 'Assignment published to the board.',
+      { type: 'success' }
+    );
   }
 
   editingAssignmentId = null;
@@ -4165,7 +4214,33 @@ async function populateAssignedTo(currentId) {
   if (!select) return;
 
   const rows = await loadAccounts();
-  const eligible = rows.filter((row) => row.is_active !== false && !row.is_owner);
+  if (rows === null) {
+    // The roster read FAILED. Do not rebuild the select from an empty list: that
+    // would leave only "Nobody yet" in the dropdown, and the Owner's next save
+    // would read that placeholder back and clear the assignee - a data-loss bug
+    // wearing the costume of a permissions problem.
+    console.warn('[admin] roster unreadable; leaving the assignee select as-is');
+    return;
+  }
+
+  // `wire_list_accounts()` returns `status`, NOT `is_active`. The filter read
+  // `row.is_active !== false`, which is undefined on every row, so it excluded
+  // nobody -- and then `!row.is_owner` dropped the Owner. Together those left an
+  // empty dropdown whenever the only other accounts were pending or suspended,
+  // which is exactly what "it resets to Nobody" looks like from the outside.
+  //
+  // Only genuinely unusable accounts are excluded now: a pending account cannot
+  // sign in, and a suspended one has had access revoked, so in both cases the
+  // reminder push would go nowhere. The Owner IS includable - they receive
+  // broadcasts and are as entitled to a deadline reminder as anyone else.
+  const eligible = rows.filter((row) => {
+    const status = String(row.status || '').toLowerCase();
+    return status !== 'pending' && status !== 'suspended';
+  });
+
+  // Remember what was already chosen, and restore it. A selection that vanishes
+  // on re-open is indistinguishable from one that was never saved.
+  const previous = currentId || select.value || '';
 
   select.innerHTML =
     '<option value="">Nobody yet</option>' +
@@ -4179,7 +4254,12 @@ async function populateAssignedTo(currentId) {
       })
       .join('');
 
-  if (currentId) select.value = String(currentId);
+  // Only restore if the id is genuinely still offered. Assigning a value that is
+  // not among the options leaves the select on the placeholder, which would
+  // silently unassign somebody on the next save.
+  if (previous && [...select.options].some((option) => option.value === String(previous))) {
+    select.value = String(previous);
+  }
 }
 
 /** Open the assignment editor. */
@@ -4195,15 +4275,23 @@ async function openAssignmentEditor(assignmentId) {
   byId('assignment-title').value = item?.title ?? '';
   byId('assignment-reporter').value = item?.reporter ?? '';
   byId('assignment-status').value = item?.status ?? 'Open';
-  byId('assignment-deadline').value = item?.deadline ?? '';
+  // Seed the picker from the machine-readable instant. Falling back to the
+  // free-text `deadline` column would put something like "18 April" into a
+  // `datetime-local` input, which the browser silently rejects and blanks - the
+  // value is then written back as empty, quietly losing the deadline on save.
+  byId('assignment-deadline').value = toDateTimeLocalValue(
+    item?.due_at ? new Date(item.due_at) : null
+  );
 
-  // Show the parsed instant so the Owner can see what the cron will actually
-  // compare against, rather than trusting that "Friday" resolved correctly.
+  // Reflect the stored instant back, so the Owner sees the exact value the cron
+  // compares against rather than trusting that it round-tripped.
   const dueAt = item?.due_at || null;
   const hint = byId('assignment-due-hint');
-  if (hint) hint.textContent = dueAt ? new Date(dueAt).toLocaleString() : '';
-  const dueBox = byId('assignment-due-at');
-  if (dueBox) dueBox.checked = Boolean(dueAt);
+  if (hint) {
+    hint.textContent = dueAt
+      ? `Reminder fires a day ahead — ${new Date(dueAt).toLocaleString()}.`
+      : 'No deadline set, so no reminder will be sent.';
+  }
 
   openDialog('assignment-editor', { initialFocus: '#assignment-title' });
 
