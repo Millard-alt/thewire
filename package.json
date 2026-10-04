@@ -6,7 +6,7 @@
   "engines": {
     "node": "22.x"
   },
-  "description": "The Wire - Nakuru Press Club publication & newsroom panel.",
+  "description": "The Wire - MJLA Press Club publication & newsroom panel.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

@@ -100,7 +100,7 @@ create index if not exists audit_logs_created_idx on public.audit_logs (created_
 create table if not exists public.site_settings (
   id                   integer primary key default 1 check (id = 1),
   title                text not null default 'THE WIRE',
-  subtitle             text not null default 'NAKURU PRESS CLUB - INDEPENDENT VERIFIED DISPATCHES',
+  subtitle             text not null default 'MJLA PRESS CLUB - INDEPENDENT VERIFIED DISPATCHES',
   -- Every text column needs a non-null default. The masthead renders these
   -- values directly, so a NULL here shows up on the page as the literal text
   -- "undefined" rather than falling back to anything sensible.

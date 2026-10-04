@@ -47,7 +47,7 @@ Every `VITE_` variable must be added by hand in the Vercel dashboard:
 | `VITE_SUPABASE_ANON_KEY` | your **anon/publishable** key | safe in the browser; RLS protects it |
 | `VITE_DEMO_MODE` | `false` | `true` would make the deployed site ignore the database |
 | `VITE_SITE_NAME` | `The Wire` | |
-| `VITE_SITE_TAGLINE` | `Nakuru Press Club` | |
+| `VITE_SITE_TAGLINE` | `MJLA Press Club` | |
 | `VITE_PUBLICATION_LOCATION` | `Nakuru, Kenya` | |
 | `VITE_ADMIN_USERNAMES` | `chief.owner` | comma-separated |
 | `VITE_ADMIN_EMAILS` | `chief.owner@example.com` | legacy fallback, still honoured |

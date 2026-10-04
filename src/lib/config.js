@@ -91,7 +91,7 @@ export const config = {
   siteName: env('VITE_SITE_NAME', 'The Wire'),
   siteTagline: env(
     'VITE_SITE_TAGLINE',
-    'Nakuru Press Club • Independent Verified Dispatches'
+    'MJLA Press Club • Independent Verified Dispatches'
   ),
   publicationLocation: env('VITE_PUBLICATION_LOCATION', 'Nakuru, Kenya'),
 

@@ -27,7 +27,7 @@ select
   v.title, v.author, v.category, v.status, v.published_at, v.body,
   v.image_url, v.caption, v.featured
 from (values
-  ('The Architecture of Civic Truth in Rift Valley Journalism', 'Grace Wanjiku', 'Investigation', 'Published', 'Sept 24, 2026', 'Journalism in Nakuru has long served as a vital pillar of civic life. As news platforms transition into digital frontiers, maintaining verified records remains sovereign. The Nakuru Press Club continues to champion editorial integrity above algorithmic speed. Our correspondents keep physical day books, notarised transcripts and a public corrections ledger, because a story that cannot be audited is a rumour with a byline.', 'https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=1200&q=80', 'Press archives preserved in the Nakuru central room.', true),
+  ('The Architecture of Civic Truth in Rift Valley Journalism', 'Grace Wanjiku', 'Investigation', 'Published', 'Sept 24, 2026', 'Journalism in Nakuru has long served as a vital pillar of civic life. As news platforms transition into digital frontiers, maintaining verified records remains sovereign. The MJLA Press Club continues to champion editorial integrity above algorithmic speed. Our correspondents keep physical day books, notarised transcripts and a public corrections ledger, because a story that cannot be audited is a rumour with a byline.', 'https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=1200&q=80', 'Press archives preserved in the Nakuru central room.', true),
   ('Rift Water Rights Assembly Convenes in the Lake Nakuru Basin', 'David Kiprop', 'Civic Dispatch', 'Published', 'Sept 23, 2026', 'Representatives from regional agricultural collectives gathered this morning to deliberate water conservation strategies. Local journalists documented the open council discussions and published the full attendance register alongside the minutes.', 'https://images.unsplash.com/photo-1541872703-74c5e44368f9?auto=format&fit=crop&w=1200&q=80', 'Delegates gathering at the lake basin.', false),
   ('Shadows and Light: Photographs from the Old Railway Quarter', 'Amina Mohamed', 'Culture', 'Published', 'Sept 22, 2026', 'A visual exploration of Nakuru''s historic railway neighbourhood reveals stories written into architectural facades and morning markets.', 'https://images.unsplash.com/photo-1495020689067-958852a7765e?auto=format&fit=crop&w=1200&q=80', 'A quiet morning at the railway terminus.', false),
   ('Pending Editorial Submission: Municipal Infrastructure Review', 'Samuel Ochieng', 'Investigation', 'Pending Review', 'Sept 24, 2026', 'This draft was submitted by staff and requires owner approval before it can run on the front page.', 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&w=1200&q=80', 'Draft review under editorial inspection.', false)
@@ -136,9 +136,9 @@ where not exists (
 -- treats as 'nothing curated' instead of rendering the text 'undefined'.
 update public.site_settings
    set title         = 'THE WIRE',
-       subtitle      = 'NAKURU PRESS CLUB   INDEPENDENT VERIFIED DISPATCHES',
+       subtitle      = 'MJLA PRESS CLUB   INDEPENDENT VERIFIED DISPATCHES',
        edition       = 'VOL. CXIV... NO. 32,841   NAKURU, KENYA',
-       breaking_news = '{"enabled":true,"label":"BREAKING DISPATCH","headline":"Nakuru Press Club Launches Sovereign Editorial Control Suite","subtext":"Full administrative controls are live across the newsroom.","severity":"Breaking","color":"Red","sticky":true,"dismissible":false,"linkText":"Read the announcement","linkUrl":"#"}'::jsonb,
+       breaking_news = '{"enabled":true,"label":"BREAKING DISPATCH","headline":"MJLA Press Club Launches Sovereign Editorial Control Suite","subtext":"Full administrative controls are live across the newsroom.","severity":"Breaking","color":"Red","sticky":true,"dismissible":false,"linkText":"Read the announcement","linkUrl":"#"}'::jsonb,
        weekly_slots  = '{"article":"seed-article-1","event":"seed-article-2","picture":"seed-article-3"}'::jsonb,
        todays_pick_id = (
          select id from public.articles

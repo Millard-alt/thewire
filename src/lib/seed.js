@@ -10,7 +10,7 @@ export function createSeedState() {
   return {
     branding: {
       title: 'THE WIRE',
-      subtitle: 'NAKURU PRESS CLUB • INDEPENDENT VERIFIED DISPATCHES',
+      subtitle: 'MJLA PRESS CLUB • INDEPENDENT VERIFIED DISPATCHES',
       edition: 'VOL. CXIV... NO. 32,841 — NAKURU, KENYA'
     },
 
@@ -18,7 +18,7 @@ export function createSeedState() {
       enabled: true,
       label: 'BREAKING DISPATCH',
       headline:
-        'Nakuru Press Club Launches Sovereign Editorial Control Suite',
+        'MJLA Press Club Launches Sovereign Editorial Control Suite',
       subtext: 'Full administrative controls are live across the newsroom.',
       severity: 'Breaking',
       color: 'Red',
@@ -55,7 +55,7 @@ export function createSeedState() {
         image:
           'https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=1200&q=80',
         caption: 'Press archives preserved in the Nakuru central room.',
-        body: 'Journalism in Nakuru has long served as a vital pillar of civic life. As news platforms transition into digital frontiers, maintaining verified records remains sovereign. The Nakuru Press Club continues to champion editorial integrity above algorithmic speed. Our correspondents keep physical day books, notarised transcripts and a public corrections ledger, because a story that cannot be audited is a rumour with a byline.',
+        body: 'Journalism in Nakuru has long served as a vital pillar of civic life. As news platforms transition into digital frontiers, maintaining verified records remains sovereign. The MJLA Press Club continues to champion editorial integrity above algorithmic speed. Our correspondents keep physical day books, notarised transcripts and a public corrections ledger, because a story that cannot be audited is a rumour with a byline.',
         status: 'Published',
         featured: true
       },
