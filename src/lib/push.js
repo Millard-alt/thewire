@@ -224,32 +224,187 @@ export async function deliverLocally({
 /* Web Push subscription (requires a VAPID key + a sender)                     */
 /* -------------------------------------------------------------------------- */
 
-/** Decode a base64url VAPID public key into the Uint8Array the API expects. */
-function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const raw = atob(base64);
-  return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
+/** How many bytes a decoded VAPID public key must contain. */
+// An uncompressed P-256 point: 0x04 || X(32) || Y(32). Anything else is not a
+// VAPID key, and `pushManager.subscribe()` rejects it with a bare AbortError
+// that gives no hint as to why.
+const VAPID_PUBLIC_KEY_BYTES = 65;
+
+/** base64url, possibly with padding, possibly wrapped in quotes or newlines. */
+const BASE64URL_RE = /^[A-Za-z0-9\-_+/=]+$/;
+
+/**
+ * Normalise a VAPID public key pasted from anywhere into clean base64url.
+ *
+ * The value reaches us from a `.env` file, a Vercel dashboard textarea or a
+ * `window.__WIRE_ENV__` override, so in practice it arrives with stray
+ * whitespace, a trailing newline, or the quotes someone kept when copying.
+ * Those characters are not valid base64 and `atob()` rejects them — but not
+ * before the browser has already surfaced a generic "push service error" that
+ * says nothing about the real cause. Stripping them here turns a silent
+ * misconfiguration into a working subscription.
+ */
+function normaliseVapidKey(raw) {
+  return String(raw == null ? '' : raw)
+    .trim()
+    // Strip one layer of matching quotes: "key" or 'key'.
+    .replace(/^["'](.*)["']$/, '$1')
+    // Remove ALL whitespace, including interior line breaks from a wrapped value.
+    .replace(/\s+/g, '');
+}
+
+/**
+ * Decode a base64url VAPID public key into the Uint8Array the Push API expects.
+ *
+ * Throws a specific, readable error rather than letting a malformed key reach
+ * `subscribe()`, where the browser reports every possible cause as the same
+ * opaque `AbortError: Registration failed - push service error`.
+ *
+ * @param {string} raw the configured key, in any of the shapes above
+ * @returns {Uint8Array} exactly `VAPID_PUBLIC_KEY_BYTES` long
+ */
+function urlBase64ToUint8Array(raw) {
+  const key = normaliseVapidKey(raw);
+
+  if (!key) throw new Error('VAPID public key is empty.');
+  if (!BASE64URL_RE.test(key)) {
+    throw new Error(
+      'VAPID public key contains characters that are not base64url ' +
+        `(offending: ${key.replace(BASE64URL_RE, '').slice(0, 8) || 'whitespace'}).`
+    );
+  }
+
+  // Re-pad to a multiple of 4. `(4 - len % 4) % 4` is 0 when already aligned,
+  // which is what stops an already-padded key gaining four more "=" characters.
+  const padding = '='.repeat((4 - (key.length % 4)) % 4);
+  const base64 = (key + padding).replace(/-/g, '+').replace(/_/g, '/');
+
+  let raw_;
+  try {
+    raw_ = atob(base64);
+  } catch (error) {
+    throw new Error(`VAPID public key is not valid base64: ${error.message}`);
+  }
+
+  const bytes = Uint8Array.from([...raw_].map((char) => char.charCodeAt(0)));
+
+  // Length is the single most useful check available, and the one the browser
+  // will not give us. A 32-byte value is the *private* key pasted into the
+  // public variable; 33 bytes usually means a compressed point; anything else
+  // is truncated. All three produce an identical AbortError from subscribe().
+  if (bytes.length !== VAPID_PUBLIC_KEY_BYTES) {
+    throw new Error(
+      `VAPID public key decodes to ${bytes.length} bytes, ` +
+        `but must be exactly ${VAPID_PUBLIC_KEY_BYTES}. ` +
+        (bytes.length === 32
+          ? 'A 32-byte key is the PRIVATE half — check you copied the public key.'
+          : 'The value is likely truncated, or is not a VAPID key at all.')
+    );
+  }
+
+  return bytes;
+}
+
+/**
+ * Everything needed to tell "the env var never arrived" apart from "the browser
+ * refused to talk to the push service", logged in one object.
+ *
+ * Reports `Boolean(key)` and `key.length` but never the key itself: the public
+ * key is not secret, but logging it would put it in shared screenshots and CI
+ * output for no diagnostic gain — its length and byte length are what matter.
+ */
+function vapidDiagnostics(raw) {
+  const configured = Boolean(raw);
+  const normalised = normaliseVapidKey(raw);
+
+  let decoded = null;
+  let valid = false;
+  let problem = configured ? 'not checked' : 'missing';
+
+  if (configured) {
+    try {
+      decoded = urlBase64ToUint8Array(raw).length;
+      valid = true;
+      problem = null;
+    } catch (error) {
+      problem = error.message;
+    }
+  }
+
+  return {
+    configured,
+    /** Characters in the value as configured, before normalisation. */
+    keyLength: configured ? String(raw).length : 0,
+    /** Characters after trimming quotes/whitespace — the real key length. */
+    normalisedLength: normalised.length,
+    /** Decoded byte length. A valid VAPID public key is exactly 65. */
+    decodedBytes: decoded,
+    valid,
+    problem,
+    /** Which resolution path supplied the value (see config.js). */
+    source: import.meta.env?.VITE_VAPID_PUBLIC_KEY
+      ? 'import.meta.env (baked at build time)'
+      : 'window.__WIRE_ENV__ (runtime override)',
+    secureContext:
+      typeof window !== 'undefined' ? Boolean(window.isSecureContext) : 'unknown'
+  };
 }
 
 /**
  * Create or refresh this device's Web Push subscription and store it locally.
- * Returns null when push is not configured, which is the expected case today.
+ * Returns null when push is not configured or the browser refuses, both of
+ * which are legitimate outcomes rather than crashes.
  */
 export async function subscribeToPush() {
   const vapidKey = config.vapidPublicKey;
-  if (!vapidKey) {
-    console.info('[push] no VAPID key configured — in-app delivery only.');
+
+  // Logged unconditionally, not only on failure: a successful subscription is
+  // the only proof the build actually baked the key in, and the Owner Panel
+  // cannot see the browser console.
+  const diag = vapidDiagnostics(vapidKey);
+  console.log('[push] VAPID diagnostics', diag);
+
+  if (!diag.configured) {
+    console.warn(
+      '[push] VITE_VAPID_PUBLIC_KEY is not set in this build — the browser ' +
+        'cannot subscribe, so no push keys ever reach Supabase and every ' +
+        'broadcast reports no_subscribers. Set it in .env locally, and in the ' +
+        'Vercel project settings in production, then REBUILD: Vite inlines ' +
+        'VITE_ variables at build time, so changing the variable without ' +
+        'redeploying changes nothing. Generate a pair with: ' +
+        'npx web-push generate-vapid-keys'
+    );
     return null;
   }
-  if (getPermission() !== 'granted') return null;
-  if (!('PushManager' in window)) return null;
+
+  if (!diag.valid) {
+    console.error(
+      '[push] VITE_VAPID_PUBLIC_KEY is present but unusable: ' + diag.problem +
+        ' — subscription will fail. Confirm the PUBLIC key is in the public ' +
+        'variable and the private key in VAPID_PRIVATE_KEY.'
+    );
+    return null;
+  }
+
+  if (getPermission() !== 'granted') {
+    console.log('[push] subscribe skipped: permission is not "granted".');
+    return null;
+  }
+  if (!('PushManager' in window)) {
+    console.warn('[push] subscribe skipped: this browser has no PushManager.');
+    return null;
+  }
 
   const registration = await initPush();
-  if (!registration?.pushManager) return null;
+  if (!registration?.pushManager) {
+    console.warn('[push] subscribe skipped: no service worker registration.');
+    return null;
+  }
 
   try {
     const existing = await registration.pushManager.getSubscription();
+    if (existing) console.log('[push] reusing this device\'s existing subscription.');
+
     const subscription =
       existing ||
       (await registration.pushManager.subscribe({
@@ -257,16 +412,88 @@ export async function subscribeToPush() {
         applicationServerKey: urlBase64ToUint8Array(vapidKey)
       }));
 
+    // Confirm we can read keys off the subscription. One without both keys is
+    // structurally undeliverable, and discovering that here gives a clear
+    // message instead of a silent "skipped: no keys" from the sender later.
+    const keys = subscriptionKeys(subscription);
+    console.log('[push] subscription ready', {
+      endpointHost: (() => {
+        try {
+          return new URL(subscription.endpoint).host;
+        } catch {
+          return 'not a URL';
+        }
+      })(),
+      hasP256dh: Boolean(keys.p256dh),
+      hasAuth: Boolean(keys.auth)
+    });
+
+    if (!keys.p256dh || !keys.auth) {
+      console.warn(
+        '[push] the subscription is missing one or both applicationServerKey ' +
+          'values, so the sender will skip it as "no keys". This usually means ' +
+          'the browser reused a stale subscription from an earlier build. Clear ' +
+          'site data for this origin, then allow notifications again.'
+      );
+    }
+
     try {
       localStorage.setItem(SUBSCRIPTION_KEY, JSON.stringify(subscription));
     } catch {
       /* private browsing */
     }
 
-    await syncSubscription(subscription);
+    const synced = await syncSubscription(subscription);
+    if (synced?.error) {
+      console.warn('[push] subscribed, but syncing to Supabase failed', synced);
+    }
     return subscription;
   } catch (error) {
-    console.warn('[push] subscription failed', error);
+    // `AbortError: Registration failed - push service error` is the most common
+    // Web Push failure and the least informative: the browser collapses a
+    // blocked network request, a rejected key and a revoked permission into one
+    // message. Log enough to tell them apart.
+    const name = error?.name || 'Error';
+    const isAbort = name === 'AbortError';
+
+    console.error(`[push] subscription failed (${name})`, {
+      message: error?.message,
+      vapid: diag,
+      // An insecure context blocks the push service outright, and is invisible
+      // from the page's own code otherwise.
+      secureContext:
+        typeof window !== 'undefined' ? Boolean(window.isSecureContext) : 'unknown',
+      serviceWorker: {
+        scope: registration?.scope,
+        active: Boolean(registration?.active)
+      }
+    });
+
+    if (isAbort) {
+      console.error(
+        '[push] AbortError means the browser could not complete the push ' +
+          'subscription. In order of likelihood:\n' +
+          '  1. The push service was blocked. Ad/privacy blockers, corporate ' +
+          'proxies and DNS filtering commonly block fcm.googleapis.com, ' +
+          'updates.push.services.mozilla.com or notify.windows.com. Retest in a ' +
+          'clean Incognito window with extensions disabled.\n' +
+          '  2. Not a secure context. Push requires https or localhost; a LAN IP ' +
+          'over plain http fails exactly this way.\n' +
+          '  3. The key is still wrong despite passing validation above — the ' +
+          'decoded bytes should begin with 0x04 (an uncompressed P-256 point).\n' +
+          '  4. Permission was revoked between the check and the call.'
+      );
+    }
+
+    // A rejected registration can leave a half-built subscription that then
+    // blocks every retry. Clear it so the next attempt starts clean.
+    try {
+      const stale = await registration.pushManager.getSubscription();
+      if (stale) await stale.unsubscribe();
+    } catch {
+      /* best effort only */
+    }
+
     return null;
   }
 }
