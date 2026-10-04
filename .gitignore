@@ -52,3 +52,8 @@ tmp-*.cjs
 tmp-*.png
 tmp-*.jpg
 vite-*.log
+
+# Vite's dep-optimizer cache. Created by `npm run dev` / `npm run build`, never
+# source, and regenerated on demand. Unlike `dist/` it was not ignored, so it
+# showed up as untracked noise in `git status`.
+.vite/

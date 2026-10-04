@@ -357,17 +357,27 @@ export async function initAlerts() {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Send a broadcast from the Newsroom Panel and raise a real notification for it
- * on this device immediately.
+ * Send a broadcast from the Newsroom Panel: save the row AND push it to every
+ * subscribed device.
  *
- * The record is written first so that every *other* opted-in device picks it up
- * on its next poll, and so the send survives in the delivery history. The local
- * notification is raised straight away rather than waiting a minute for the
- * poller, and the broadcast id is marked as already-seen so this device does
- * not raise a duplicate when the poller reaches the same row.
+ * Two things happen, and both are needed:
+ *
+ *   1. The row goes into `broadcasts`. That is the durable record for the
+ *      delivery history, and it is how a device that is not push-capable (or a
+ *      reader with the tab open) still hears about it on the next poll.
+ *
+ *   2. `/api/broadcast` is called so the serverless sender can run `web-push`
+ *      against every stored subscription. This is the part that actually reaches
+ *      a reader whose tab is closed. The VAPID private key stays on the server;
+ *      this browser only presents its own Owner session token.
+ *
+ * A failed push is reported, never swallowed: the row is still saved, and the
+ * caller toasts the real delivery count rather than implying everyone was
+ * reached.
  *
  * @param {{title: string, message: string, audience: string}} payload
- * @returns {Promise<{sent: number, popped: boolean, broadcast: object}>}
+ * @returns {Promise<{sent: number, pushed: number, pushedOk: boolean,
+ *                    pushReason: string|null, popped: boolean, broadcast: object}>}
  */
 export async function sendBroadcastToDevices({ title, message, audience }) {
   if (!config.pushBroadcastsEnabled) {
@@ -382,22 +392,28 @@ export async function sendBroadcastToDevices({ title, message, audience }) {
     audience
   });
 
-  // NO REAL WEB PUSH HAPPENS HERE. There is no server, no `web-push`
-  // dependency and no VAPID private key anywhere in this project - the
-  // broadcast is only a ROW in public.broadcasts. Every subscribed browser
-  // discovers it by POLLING that table and then raising the notification on
-  // its own device. `broadcast.delivered` is a row count of the subscriber
-  // table, not a count of notifications actually shown.
-  console.warn(
-    '[push] broadcast stored as row ' + broadcast.id +
-    ' - delivery is by client polling, not by web push.' +
-    ' `sent: ' + (broadcast.delivered ?? 0) + '` is a subscriber COUNT, not a delivery confirmation.'
-  );
-
-  // Mark seen first: if delivery fails we do not want the poller retrying it
-  // either, because the owner already has the error toast.
+  // Mark seen before any delivery attempt: if the push fails, this device must
+  // not have the poller raise the same text a second time a minute later. The
+  // local popup below is the confirmation on this device instead.
   push.markBroadcastSeen(broadcast.id);
 
+  // Real Web Push, via the serverless sender. This is NOT a count of rows in the
+  // subscriber table - it is what the push service accepted.
+  const result = await push.dispatchWebPush({
+    title: title || 'The Wire',
+    body: message || '',
+    audience,
+    url: config.notificationTargetUrl || '/'
+  });
+
+  console.log('[push] web push dispatch result', {
+    ok: result.ok,
+    delivered: result.delivered,
+    reason: result.reason
+  });
+
+  // The local popup is a courtesy proof on the Owner's own machine. It is
+  // deliberately not counted as delivery to anybody else.
   const popped = await push.deliverLocally({
     title: title || 'The Wire',
     body: message || '',
@@ -406,10 +422,13 @@ export async function sendBroadcastToDevices({ title, message, audience }) {
     requireInteraction: audience === 'Emergency'
   });
 
-  console.log('[push] local notification on the OWNING device only:', { popped });
-
   return {
+    // Row count of the subscriber table. Useful context, NOT a delivery count.
     sent: broadcast.delivered ?? 0,
+    pushed: result.delivered,
+    pushedOk: result.ok,
+    pushReason: result.reason || null,
+    pushDetail: result.detail || null,
     popped,
     broadcast
   };

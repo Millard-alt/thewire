@@ -86,14 +86,26 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-/** Show a notification. Called for real pushes and for in-page sends. */
-async function display({ title, body, tag, url, requireInteraction }) {
+/**
+ * Show a notification. Called for real pushes and for in-page sends.
+ *
+ * `icon` is accepted from the payload so the sender controls it, but it is
+ * validated against this origin first: an arbitrary remote URL in a push payload
+ * is a tracking-pixel vector, and a bad path just makes the OS fall back to a
+ * generic glyph. `/icons/icon-192.png` is the file that actually exists.
+ */
+async function display({ title, body, icon, tag, url, requireInteraction }) {
+  const iconPath =
+    typeof icon === 'string' && icon.startsWith('/') && !icon.startsWith('//')
+      ? icon
+      : '/icons/icon-192.png';
+
   const options = {
     body: body || '',
     // The tag collapses repeat broadcasts instead of stacking them.
     tag: tag || 'the-wire-broadcast',
     renotify: true,
-    icon: '/icons/icon-192.png',
+    icon: iconPath,
     badge: '/icons/badge-72.png',
     // Alarms must not be silent or the reader misses an emergency dispatch.
     requireInteraction: Boolean(requireInteraction),
@@ -149,18 +161,33 @@ self.addEventListener('push', (event) => {
     bodyPreview: payload && payload.body ? String(payload.body).slice(0, 80) : undefined
   });
 
+  // A push with no body at all still has to say something: an empty notification
+  // is indistinguishable from a failed one, and a reader cannot tell the
+  // difference between "no news" and "the app is broken".
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const shown = {
+    title: data.title || 'New Alert',
+    body: data.body || data.message || 'You have an update!',
+    icon: data.icon,
+    tag: data.tag || (data.id ? `broadcast-${data.id}` : undefined),
+    url: data.url,
+    requireInteraction: data.requireInteraction !== false
+  };
+
+  console.log(SW_LOG_PREFIX + 'push: showing', {
+    parseMode,
+    title: shown.title,
+    icon: shown.icon,
+    tag: shown.tag,
+    requireInteraction: shown.requireInteraction
+  });
+
   event.waitUntil(
-    display({
-      title: payload.title,
-      body: payload.body || payload.message,
-      tag: payload.tag || (payload.id ? `broadcast-${payload.id}` : undefined),
-      url: payload.url,
-      requireInteraction: payload.requireInteraction !== false
-    })
+    display(shown)
       .then((result) => {
         console.log(SW_LOG_PREFIX + 'push: showNotification resolved', {
           ok: Boolean(result),
-          tag: payload.tag
+          tag: shown.tag
         });
       })
       .catch((error) => {

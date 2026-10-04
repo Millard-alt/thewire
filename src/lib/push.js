@@ -8,14 +8,16 @@
        requestPermission()       ask the reader (must come from a user gesture)
        subscribeToPush()         real Web Push subscription (needs a VAPID key)
        deliverLocally()          show a real notification on THIS device, now
+       dispatchWebPush()         ask the serverless sender to push to subscribers
        startBroadcastPolling()   poll for the owner's broadcasts and raise them
 
    Two delivery paths, because they need different infrastructure:
 
    1. Web Push reaches a reader whose tab is closed, but it needs a VAPID key
-      pair AND a trusted sender holding the private key. A static front-end can
-      do neither, so the private key must never ship to the browser. Without a
-      sender, delivery is limited to path 2.
+      pair AND a trusted sender holding the private key. That sender is the
+      serverless function in api/send-push.js, so the private key never ships to
+      the browser and the Owner's panel only calls the endpoint -- see
+      dispatchWebPush().
 
    2. In-app delivery needs no backend at all: the owner posts a broadcast, it
       lands in the `broadcasts` table, and every open client polls for it and
@@ -26,7 +28,7 @@
    ========================================================================== */
 
 import { config } from './config.js';
-import { getSupabase } from './supabase.js';
+import { getSupabase, getSessionToken } from './supabase.js';
 
 const SW_URL = '/sw.js';
 const SUBSCRIPTION_KEY = 'wire.pushSubscription';
@@ -682,4 +684,85 @@ export function pushStatus() {
         : 'The owner can reach you while this tab is open. Background delivery ' +
           'needs a VAPID key — see the README.'
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Sending — Owner Panel only                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Ask the serverless sender (api/send-push.js, also mounted at /api/broadcast)
+ * to push a custom message to every subscribed device via Web Push.
+ *
+ * This is the step that was missing: the Owner Panel wrote a broadcast into
+ * Supabase and stopped there, so a reader with the tab closed never heard about
+ * it and the panel could only honestly say "in-app delivery". The sender holds
+ * the VAPID private key, reads `push_subscriptions` and calls web-push for us.
+ *
+ * Authentication is the Owner's own browser session, presented as the same
+ * `x-wire-token` header every other database request already carries. The panel
+ * never sees the VAPID private key or PUSH_SEND_TOKEN.
+ *
+ * @param {{title: string, body?: string, audience?: string, url?: string}} broadcast
+ * @returns {Promise<{ok: boolean, delivered: number, reason?: string, detail?: string}>}
+ *          `ok` is true only when the sender actually dispatched to at least one
+ *          device — callers must not claim success otherwise.
+ */
+export async function dispatchWebPush({
+  title,
+  body = '',
+  audience = 'Everyone',
+  url = ''
+} = {}) {
+  const text = String(title || '').trim();
+  if (!text) return { ok: false, delivered: 0, reason: 'empty_title' };
+
+  // Without a VAPID public key in the build there is nothing on the devices to
+  // push to, so do not spend a round-trip pretending otherwise.
+  if (!config.vapidPublicKey) {
+    return {
+      ok: false,
+      delivered: 0,
+      reason: 'no_vapid_key',
+      detail: 'VITE_VAPID_PUBLIC_KEY is not set in this build.'
+    };
+  }
+
+  try {
+    const response = await fetch('/api/broadcast', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // The Owner's session token. The function verifies it resolves to the
+        // Owner before it will touch the subscriber list.
+        ...(getSessionToken() ? { 'x-wire-token': getSessionToken() } : {})
+      },
+      body: JSON.stringify({
+        title: text,
+        body: String(body || ''),
+        audience,
+        url: url || config.notificationTargetUrl || '/'
+      })
+    });
+
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+
+    if (!response.ok || !data?.ok) {
+      const detail = data?.detail || data?.code || `HTTP ${response.status}`;
+      console.warn('[push] web push dispatch refused', response.status, detail);
+      return { ok: false, delivered: 0, reason: data?.code || 'http_error', detail };
+    }
+
+    const delivered = Number(data.delivered ?? data.sent ?? 0);
+    console.log('[push] web push dispatched', { delivered, skipped: data.skipped });
+    return { ok: delivered > 0, delivered, reason: delivered > 0 ? undefined : 'no_subscribers' };
+  } catch (error) {
+    console.warn('[push] web push dispatch failed', error);
+    return { ok: false, delivered: 0, reason: 'network', detail: error.message };
+  }
 }

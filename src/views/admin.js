@@ -575,11 +575,10 @@ function renderBroadcastsTab() {
         <p class="panel-sunken flex items-start gap-2 p-3 text-[0.7rem] leading-relaxed ink-muted">
           <i class="fa-solid fa-circle-info mt-0.5 shrink-0" aria-hidden="true"></i>
           <span>
-            <strong class="text-[0.7rem]">In-app delivery.</strong>
-            A broadcast is saved to the database and raised as a notification on
-            devices that currently have The Wire open. Reaching a reader whose tab
-            is closed needs a Web Push sender, which is not connected yet — so
-            treat the audience as staff currently reading, not the whole readership.
+            <strong class="text-[0.7rem]">Sent as a real push notification.</strong>
+            This goes out through Web Push, so it reaches opted-in devices even when
+            The Wire is closed. Open devices also pick it up on their next refresh,
+            which covers anyone whose browser cannot take a push.
           </span>
         </p>
 
@@ -3805,15 +3804,42 @@ async function sendBroadcastFromForm(form) {
     const result = await sendBroadcastToDevices({ title, message, audience });
     form.reset();
     paintActiveTab();
-    // Be precise about what happened. `sent` is the row's delivered_count, which
-    // only counts devices a Web Push sender actually reached — and no sender is
-    // connected yet, so it is legitimately 0 even on a successful send. Claiming
-    // "N devices notified" there would be a lie the owner acts on.
+
+    // Report what actually happened, and nothing more.
+    //
+    // `pushedOk` means the serverless sender really ran web-push and the push
+    // service accepted at least one subscription. Only THEN can we say
+    // "Delivered via Web Push to N devices" — the previous copy claimed in-app
+    // only, which understated what now happens. If the push did not happen, say
+    // why in terms the Owner can act on, rather than implying success.
+    const devices = result.pushed;
+    const viaPush = result.pushedOk && devices > 0;
+
+    if (viaPush) {
+      showToast(
+        `Delivered via Web Push to ${devices} device${devices === 1 ? '' : 's'}.` +
+          (result.popped ? '' : ' This device blocked its own popup.'),
+        { type: 'success', duration: 7000 }
+      );
+      return;
+    }
+
+    // Not delivered by push. Explain the specific blocker instead of a vague
+    // "in-app only", because each of these has a different fix.
+    const why = {
+      no_vapid_key:
+        'No VAPID public key is set in this build, so devices cannot be pushed to.',
+      unauthorised: 'The push sender refused the request — sign in as the Owner and try again.',
+      push_send_token_unset:
+        'PUSH_SEND_TOKEN is not set in Vercel and the panel could not authenticate.',
+      no_subscribers:
+        'No device has a usable push subscription yet. Readers must turn on alerts first.',
+      network: 'Could not reach the push sender. Check the connection and try again.'
+    }[result.pushReason] || 'The push sender could not deliver this.';
+
     showToast(
-      result.popped
-        ? 'Broadcast saved and shown on this device. Other devices pick it up on their next refresh.'
-        : 'Broadcast saved. This device blocked the popup — allow notifications to see it here.',
-      { type: result.popped ? 'success' : 'info', duration: 7000 }
+      `Broadcast saved, in-app delivery only. ${why} Open devices will still see it on their next refresh.`,
+      { type: 'info', duration: 10000 }
     );
   } finally {
     if (button) {

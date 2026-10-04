@@ -9,14 +9,28 @@
  * payload to the push service (FCM on Android, APNs on iOS).
  *
  * Three ways in:
- *   POST /api/send-push   body { broadcastId } or { title, message }
+ *   POST /api/send-push   body { broadcastId } or { title, body, audience }
+ *                         (the Owner Panel's custom broadcast form posts here)
  *   GET  /api/send-push   flushes anything not yet sent (Vercel Cron)
  *   Supabase Database Webhook on INSERT into public.broadcasts posting
  *   { type: 'INSERT', table: 'broadcasts', record: { id } }
  *
- * Set PUSH_SEND_TOKEN in Vercel and this refuses unauthenticated callers, so a
- * third party cannot use it to spam every subscriber. Unset, it still works but
- * anyone who learns the URL can trigger a send.
+ * `/api/broadcast` is an alias of this route, so the Owner Panel can use either.
+ *
+ * AUTHENTICATION
+ *   Two accepted credentials, so the Owner Panel can call this directly:
+ *     1. PUSH_SEND_TOKEN, as `Authorization: Bearer <token>` or `?token=`. This
+ *        is for the cron and the Supabase webhook.
+ *     2. The Owner's own browser session, presented in the `x-wire-token`
+ *        header. This is the SAME opaque token every other database request in
+ *        this app already carries (see src/lib/supabase.js), and it is resolved
+ *        server-side through wire_session_diagnostic(), which reports whether the
+ *        caller is the Owner. Requiring that header is what stops a third party
+ *        spamming the subscriber list, without forcing the VAPID secret or a
+ *        second token into the browser bundle.
+ *
+ *   If PUSH_SEND_TOKEN is unset and no valid Owner session is presented, the
+ *   endpoint refuses the call rather than defaulting to open.
  */
 
 import webpush from 'web-push';
@@ -47,12 +61,41 @@ function fail(res, status, code, detail) {
   return res.status(status).json({ ok: false, code, detail: detail || null });
 }
 
-function authorised(req) {
-  if (!PUSH_TOKEN) return true;
+/** True when the caller's bearer/query token matches PUSH_SEND_TOKEN. */
+function hasSharedSecret(req) {
   const header = req.headers.authorization || '';
   const bearer = header.startsWith('Bearer ') ? header.slice(7) : '';
   const query = new URL(req.url, 'http://localhost').searchParams.get('token');
   return bearer === PUSH_TOKEN || query === PUSH_TOKEN;
+}
+
+/**
+ * Is the caller the Owner, using the browser session token the rest of the app
+ * already sends?
+ *
+ * The browser holds an opaque `wire_login` token in localStorage and presents it
+ * as `x-wire-token`; the RLS helpers resolve it to a staff account. Here we do
+ * the same resolution through `wire_session_diagnostic()`, which explicitly
+ * reports `is_owner` and never leaks anything about other accounts.
+ *
+ * This exists because the Owner Panel cannot hold PUSH_SEND_TOKEN: anything in a
+ * VITE_ variable ships to every reader. Without this branch the Owner Panel's
+ * POST is rejected with 401 and custom broadcasts can only ever be in-app.
+ */
+async function isOwnerSession(req, db) {
+  const token = req.headers['x-wire-token'] || req.headers['X-Wire-Token'];
+  if (!token || !db) return false;
+  try {
+    const { data, error } = await db.rpc('wire_session_diagnostic');
+    if (error) {
+      console.warn(`${TAG} owner session check failed`, error.message);
+      return false;
+    }
+    return Boolean(data && data.session_resolved && data.is_owner);
+  } catch (error) {
+    console.warn(`${TAG} owner session check threw`, error.message);
+    return false;
+  }
 }
 
 /** Parse a webhook envelope, a cron GET and a direct POST into one shape. */
@@ -89,26 +132,46 @@ async function readRequest(req) {
   if (body.type === 'INSERT' && body.record) {
     return { source: 'webhook', broadcastId: body.record.id ?? null };
   }
-  if (body.broadcastId) return { source: 'api', broadcastId: body.broadcastId };
+
+  // The Owner Panel's custom broadcast. `body` is the field name the Service
+  // Worker reads; `message` is accepted as an alias because that is what the
+  // `broadcasts` table column is called.
   if (body.title) {
     return {
       source: 'api',
-      broadcastId: null,
-      inline: { title: body.title, message: body.message || '' },
+      broadcastId: body.broadcastId ?? null,
+      inline: {
+        title: body.title,
+        message: body.body ?? body.message ?? '',
+        audience: body.audience || 'Everyone',
+        url: body.url || '',
+        requiresAction: body.requiresAction !== false
+      }
     };
   }
+
+  if (body.broadcastId) return { source: 'api', broadcastId: body.broadcastId };
   return { source: 'api', broadcastId: url.searchParams.get('id') };
 }
 
-/** Turn one stored row into the payload shape public/sw.js expects. */
+/**
+ * Turn one broadcast (stored row or inline POST) into the JSON payload
+ * public/sw.js parses in its `push` handler.
+ *
+ * `icon` is included because the Service Worker honours it, and
+ * `/icons/icon-192.png` is the file that actually exists in `public/` —
+ * `/icon-192.png` would 404 and the OS would fall back to a generic glyph.
+ */
 function payloadFor(broadcast) {
   if (broadcast) {
     return {
       title: broadcast.title || 'THE WIRE',
       body: broadcast.message || '',
+      icon: '/icons/icon-192.png',
       url: broadcast.url || '/',
       tag: `wire-${broadcast.id}`,
-      broadcastId: broadcast.id,
+      requireInteraction: broadcast.requiresAction !== false,
+      broadcastId: broadcast.id
     };
   }
   return null;
@@ -124,10 +187,6 @@ export default async function handler(req, res) {
 
   if (req.method !== 'GET' && req.method !== 'POST') {
     return fail(res, 405, 'method_not_allowed', 'Use GET or POST.');
-  }
-
-  if (!authorised(req)) {
-    return fail(res, 401, 'unauthorised', 'PUSH_SEND_TOKEN mismatch.');
   }
 
   if (!SUPABASE_URL || !SUPABASE_KEY) {
@@ -147,6 +206,27 @@ export default async function handler(req, res) {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
+  // Authenticate before doing any real work, so an unauthorised call costs one
+  // round-trip and never reaches the subscriber list.
+  //
+  // The shared secret covers the cron and the Supabase webhook; the Owner's own
+  // browser session covers the Owner Panel. Firing a custom broadcast at every
+  // subscriber is privileged either way, so an unauthenticated POST is refused
+  // rather than silently degrading to in-app only.
+  if (hasSharedSecret(req)) {
+    // Authorised by PUSH_SEND_TOKEN.
+  } else if (!(await isOwnerSession(req, db))) {
+    return fail(
+      res,
+      PUSH_TOKEN ? 401 : 503,
+      PUSH_TOKEN ? 'unauthorised' : 'push_send_token_unset',
+      PUSH_TOKEN
+        ? 'Not the Owner, or no valid session token.'
+        : 'PUSH_SEND_TOKEN is not set, and no Owner session was presented. ' +
+          'Add the secret in Vercel, or sign in as the Owner.'
+    );
+  }
+
   let request;
   try {
     request = await readRequest(req);
@@ -158,9 +238,12 @@ export default async function handler(req, res) {
   let broadcast = null;
   if (request.inline) {
     broadcast = {
-      id: null,
+      id: request.broadcastId ?? null,
       title: request.inline.title,
       message: request.inline.message,
+      audience: request.inline.audience,
+      url: request.inline.url,
+      requiresAction: request.inline.requiresAction,
     };
   } else {
     let query = db
@@ -275,5 +358,9 @@ export default async function handler(req, res) {
     skipped,
     failed: failed.slice(0, 10),
     broadcastId: broadcast.id,
+    // Echoed so the Owner Panel can report exactly what went out, rather than
+    // guessing from its own (possibly stale) device count.
+    title: payload.title,
+    delivered: sent,
   });
 }
