@@ -25,6 +25,7 @@
 
 import { config, describeBackend } from './lib/config.js';
 import { initAuth, onAuthChange, getSession } from './lib/auth.js';
+import { linkSubscriptionToSession } from './lib/push.js';
 import * as store from './lib/store.js';
 import { initThemeControls, getActiveTheme } from './lib/theme.js';
 import {
@@ -447,6 +448,18 @@ export async function boot() {
 
     if (!session) return;
     closeDialogSafely('auth-modal');
+
+    // Attribute this device's alerts to the account that just signed in.
+    //
+    // The staff_id on a subscription row is otherwise only written at the moment
+    // permission is granted, so anyone who allowed alerts before signing in kept
+    // a NULL staff_id forever: a "Specific User" broadcast skipped their device,
+    // and deadline reminders had nobody to resolve. Re-linking on every
+    // authenticated visit closes that. It is a no-op with no session or no stored
+    // subscription, so it is safe here and must never block sign-in.
+    linkSubscriptionToSession().catch((error) => {
+      console.warn('[app] could not link this device to the account', error);
+    });
 
     if (session.isAdmin) {
       showToast(
