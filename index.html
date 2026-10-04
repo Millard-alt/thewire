@@ -47,6 +47,13 @@
       PWA manifest. This project compiles Tailwind locally (there is no CDN), so
       the manifest exists purely so the site can be installed to a phone home
       screen and launched full-screen.
+
+      Deliberately NOT `crossorigin="anonymous"`. The manifest is same-origin, so
+      CORS mode buys nothing, and forcing it makes the fetch require an explicit
+      Access-Control-Allow-Origin - which turns any misconfigured cache or proxy
+      that omits the header into a *hard* fetch failure rather than the harmless
+      one an install prompt is. The header is set in vercel.json instead, where it
+      helps if the file is ever served cross-origin, without that downside here.
     -->
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="apple-mobile-web-app-capable" content="yes" />

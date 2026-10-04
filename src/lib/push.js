@@ -29,6 +29,10 @@
 
 import { config } from './config.js';
 import { getSupabase, getSessionToken } from './supabase.js';
+// dom.js imports nothing, so this cannot become a cycle. Used to surface push
+// failures on screen: the browser collapses every cause of an AbortError into
+// one console line, and the reader has no console to look at.
+import { showToast } from './dom.js';
 
 const SW_URL = '/sw.js';
 const SUBSCRIPTION_KEY = 'wire.pushSubscription';
@@ -135,10 +139,32 @@ export async function requestPermission() {
   try {
     const result = await Notification.requestPermission();
     if (result === 'granted') {
+      // Run the pre-flight BEFORE subscribing. Every check in it is cheaper
+      // than a real subscribe() call, and one of them either names the actual
+      // blocker or rules out whole categories of cause. It never throws, so a
+      // failed probe cannot stop a subscription that would otherwise work.
+      const report = await debugPushEnvironment().catch((error) => {
+        console.warn('[push] diagnostic pass failed', error);
+        return null;
+      });
+
       // Always register the device, even when Web Push is unconfigured, so the
       // Owner's subscriber list reflects real opted-in devices.
-      await subscribeToPush();
+      const subscription = await subscribeToPush();
       await registerDevice().catch(() => {});
+
+      // Only complain when there is genuinely nothing to deliver through. A
+      // failed probe alone is not a failure: the browser may use a different
+      // push service than the one probed, or block our probe while permitting
+      // its own request.
+      if (!subscription && report && !report.ok) {
+        console.warn('[push] subscription unavailable:', report.summary);
+        showToast(
+          `Alerts are on, but not working yet. ${report.summary}`,
+          { type: 'error', duration: 9000 }
+        );
+      }
+
       return result;
     }
     return result;
@@ -348,6 +374,202 @@ function vapidDiagnostics(raw) {
     secureContext:
       typeof window !== 'undefined' ? Boolean(window.isSecureContext) : 'unknown'
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Pre-flight environment diagnostic                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Push service endpoints, per browser engine.
+ *
+ * The subscription request is sent to ONE of these by the browser itself - the
+ * page never chooses. So when `subscribe()` fails, the first question is always
+ * "could the browser reach its push service?", and that is answerable without
+ * subscribing at all.
+ */
+function pushServiceFor(ua = navigator.userAgent) {
+  if (/Firefox/i.test(ua)) {
+    return {
+      name: 'Mozilla autopush',
+      url: 'https://updates.push.services.mozilla.com/wpush/v2/'
+    };
+  }
+  if (/Edg\//i.test(ua)) {
+    return { name: 'Windows WNS', url: 'https://login.live.com/accesstoken.srf' };
+  }
+  if (/Chrome|Chromium|CriOS|Opera|OPR|Samsung/i.test(ua)) {
+    return { name: 'Google FCM', url: 'https://fcm.googleapis.com/fcm/send' };
+  }
+  return { name: 'unknown engine', url: 'https://fcm.googleapis.com/fcm/send' };
+}
+
+/**
+ * Is the browser's push service reachable from this machine?
+ *
+ * `mode: 'no-cors'` is deliberate. An opaque response still proves the request
+ * left the browser, completed DNS and TLS, and reached a server - the status is
+ * hidden from us but the round trip is not. A blocked request (ad blocker,
+ * extension filter, corporate proxy, DNS sinkhole) never resolves at all and
+ * rejects, which is exactly the signal we want.
+ *
+ * This is the check that separates "your environment is blocking push" from
+ * "your VAPID key is wrong" - otherwise indistinguishable, because both
+ * surface as the same AbortError.
+ *
+ * @returns {Promise<{service: string, reachable: boolean|null, detail: string}>}
+ */
+async function probePushService() {
+  const target = pushServiceFor();
+  console.log('[push-debug] Testing reachability of', target.name, target.url);
+
+  try {
+    const response = await fetch(target.url, {
+      method: 'HEAD',
+      mode: 'no-cors',
+      // No caching: a cached response would mask a network that is now blocked.
+      cache: 'no-store',
+      // Short timeout. A hanging request is itself a symptom, and waiting the
+      // full browser default would leave the reader staring at a blank screen.
+      signal: AbortSignal.timeout(6000)
+    });
+    // 'opaque' under no-cors is success: the server answered, we just may not
+    // read the status.
+    console.log(
+      `[push-debug] ${target.name} REACHABLE (type: ${response.type}) - not a network block.`
+    );
+    return {
+      service: target.name,
+      reachable: true,
+      detail: `response type ${response.type}`
+    };
+  } catch (error) {
+    // AbortError here is OUR timeout, not the browser's push AbortError.
+    const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+    console.error(
+      `[push-debug] ${target.name} UNREACHABLE - the request never completed.`,
+      {
+        name: error?.name,
+        message: error?.message,
+        likely: timedOut
+          ? 'Connection blackholed or very slow (proxy/firewall dropping packets).'
+          : 'Blocked by an ad blocker, privacy extension, or DNS filter.',
+        toTest: 'Retry in a clean Incognito window with all extensions disabled.'
+      }
+    );
+    return {
+      service: target.name,
+      reachable: false,
+      detail: timedOut ? 'timed out after 6s' : error?.message || 'request failed'
+    };
+  }
+}
+
+/**
+ * Run every check that can be done BEFORE attempting a real subscription.
+ *
+ * Order matters: the cheapest and most decisive checks run first, so a reader
+ * whose network is blocked is told that in a second rather than after a real
+ * `subscribe()` call has already failed.
+ *
+ * @param {string} [vapidPublicKey]
+ * @returns {Promise<{ok: boolean, summary: string, secure: boolean,
+ *                    network: object, key: object, sw: object}>}
+ */
+export async function debugPushEnvironment(vapidPublicKey = config.vapidPublicKey) {
+  console.log('[push-debug] ===== push environment diagnostic =====');
+
+  // --- Secure context -------------------------------------------------------
+  // Push requires https or localhost. Free to check, impossible to recover
+  // from, so it is verified before anything touches the network.
+  const secure = typeof window !== 'undefined' && Boolean(window.isSecureContext);
+  console.log('[push-debug] Secure context:', secure, '| origin:', location.origin);
+  if (!secure) {
+    console.error(
+      '[push-debug] Not a secure context. Web Push is unavailable outside https ' +
+        'and localhost; a LAN IP over plain http cannot subscribe.'
+    );
+  }
+
+  // --- VAPID key ------------------------------------------------------------
+  const key = vapidDiagnostics(vapidPublicKey);
+  try {
+    // Decoding for real, not just counting characters: this proves the key
+    // survives atob() and is 65 bytes long, which is the actual precondition.
+    const bytes = urlBase64ToUint8Array(vapidPublicKey);
+    console.log('[push-debug] VAPID key decodes to', bytes.length, 'bytes - usable.');
+  } catch (error) {
+    console.error('[push-debug] VAPID key will not decode:', error.message);
+  }
+  console.log('[push-debug] VAPID key:', key);
+
+  // --- Service worker -------------------------------------------------------
+  const sw = {
+    supported: 'serviceWorker' in navigator,
+    ready: false,
+    scope: null,
+    active: false
+  };
+  if (sw.supported) {
+    try {
+      // `ready` never rejects, so it must be raced against a timeout: a worker
+      // that fails to activate would otherwise hang this call forever.
+      const registration = await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise((resolve) => setTimeout(() => resolve(null), 5000))
+      ]);
+      if (registration) {
+        sw.ready = true;
+        sw.scope = registration.scope;
+        sw.active = Boolean(registration.active);
+        console.log('[push-debug] Service worker active. Scope:', registration.scope);
+      } else {
+        console.error('[push-debug] No active service worker after 5s.');
+      }
+    } catch (error) {
+      console.error('[push-debug] Service worker lookup threw:', error.message);
+    }
+  } else {
+    console.error('[push-debug] This browser has no serviceWorker support at all.');
+  }
+
+  // --- Push service reachability -------------------------------------------
+  const network = await probePushService();
+
+  // --- Verdict --------------------------------------------------------------
+  // Ordered by what most often breaks first, so `summary` names the thing the
+  // reader can actually act on.
+  let summary;
+  if (!secure) {
+    summary = 'Alerts need a secure (https) connection. Open the site over https.';
+  } else if (!key.configured) {
+    summary = 'This build has no VAPID key, so alerts cannot be sent.';
+  } else if (!key.valid) {
+    summary = 'The VAPID key is unusable: ' + (key.problem || 'unknown problem');
+  } else if (network.reachable === false) {
+    summary =
+      `Your network is blocking the ${network.service} push service. ` +
+      'This is an ad blocker, privacy extension or network filter - not a site fault.';
+  } else if (!sw.active) {
+    summary = 'Alerts are blocked because the service worker is not active.';
+  } else {
+    summary = `Environment looks healthy (${network.service} reachable).`;
+  }
+
+  const report = {
+    ok: Boolean(secure && key.valid && network.reachable !== false && sw.active),
+    secure,
+    network,
+    key,
+    sw,
+    summary
+  };
+
+  console.log('[push-debug] VERDICT:', summary);
+  console.log('[push-debug] report:', report);
+  console.log('[push-debug] =========================================');
+
+  return report;
 }
 
 /**
