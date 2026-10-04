@@ -336,6 +336,11 @@ export async function initAlerts() {
   renderOptInBar();
   if (push.getPermission() === 'granted') {
     push.startBroadcastPolling();
+
+    // Re-attach this device to the signed-in staff account so "Specific User"
+    // broadcasts can actually find it. Fire-and-forget: linking is a repair, not
+    // a precondition for rendering the page.
+    push.linkSubscriptionToSession().catch(() => {});
   }
 
   // Keep the bar honest when the reader changes the permission in browser
@@ -379,7 +384,12 @@ export async function initAlerts() {
  * @returns {Promise<{sent: number, pushed: number, pushedOk: boolean,
  *                    pushReason: string|null, popped: boolean, broadcast: object}>}
  */
-export async function sendBroadcastToDevices({ title, message, audience }) {
+export async function sendBroadcastToDevices({
+  title,
+  message,
+  audience,
+  targetStaffId = null
+}) {
   if (!config.pushBroadcastsEnabled) {
     throw new Error('The owner has paused broadcasts, so this send was not delivered.');
   }
@@ -403,6 +413,9 @@ export async function sendBroadcastToDevices({ title, message, audience }) {
     title: title || 'The Wire',
     body: message || '',
     audience,
+    // null for a broadcast to everyone; a staff_accounts uuid for a targeted
+    // send, which the sender turns into `where staff_id = ...`.
+    targetStaffId,
     url: config.notificationTargetUrl || '/'
   });
 

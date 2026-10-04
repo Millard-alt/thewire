@@ -973,7 +973,16 @@ export async function createAssignment(input) {
     title: input.title?.trim() || 'Untitled pitch',
     reporter: input.reporter?.trim() || '',
     status: input.status || 'Open',
-    deadline: input.deadline || ''
+    deadline: input.deadline || '',
+    // Who owns the piece. Migration 021 added `assigned_to`; the hourly cron
+    // pushes deadline reminders to exactly this person's devices, so a row left
+    // NULL is simply never reminded about. `reporter` above is free text kept
+    // for the public board - it cannot identify a device.
+    assigned_to: input.assigned_to || null,
+    // The free-text deadline is what the board renders. `due_at` is the
+    // machine-readable copy the cron compares against now(); without it the
+    // assignment is invisible to the reminder pass.
+    due_at: input.due_at || null
   };
 
   if (!config.demoMode && db()) {
@@ -984,7 +993,9 @@ export async function createAssignment(input) {
           title: assignment.title,
           reporter: assignment.reporter,
           status: assignment.status,
-          deadline: assignment.deadline
+          deadline: assignment.deadline,
+          assigned_to: assignment.assigned_to,
+          due_at: assignment.due_at
         })
         .select()
         .single(),
@@ -1011,6 +1022,12 @@ export async function updateAssignment(id, patch) {
     if (patch.reporter !== undefined) row.reporter = patch.reporter;
     if (patch.status !== undefined) row.status = patch.status;
     if (patch.deadline !== undefined) row.deadline = patch.deadline;
+    // `assigned_to` and `due_at` are additive columns (migration 021). Sending
+    // them only when the caller actually supplies one keeps this UPDATE
+    // compatible with a deployment that has not run 021 yet: PostgREST rejects
+    // the whole request if it names a column the table does not have.
+    if (patch.assigned_to !== undefined) row.assigned_to = patch.assigned_to;
+    if (patch.due_at !== undefined) row.due_at = patch.due_at;
     if (Object.keys(row).length) {
       assertOk(
         await db()

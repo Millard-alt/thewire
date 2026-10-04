@@ -596,7 +596,7 @@ function renderBroadcastsTab() {
           <div>
             <label class="field-label" for="broadcast-audience">Audience</label>
             <select id="broadcast-audience" class="field">
-              ${['Everyone', 'Writers', 'Assignment Managers']
+              ${['Everyone', 'Writers', 'Assignment Managers', 'Specific User']
                 .map((option) => `<option value="${option}">${option}</option>`)
                 .join('')}
             </select>
@@ -607,6 +607,30 @@ function renderBroadcastsTab() {
               Send broadcast
             </button>
           </div>
+        </div>
+
+        <!-- Shown only while "Specific User" is selected. -->
+        <div id="broadcast-target-wrap" class="hidden">
+          <label class="field-label" for="broadcast-target">Send to</label>
+          <input
+            id="broadcast-target"
+            class="field"
+            type="text"
+            autocomplete="off"
+            placeholder="Start typing a name…"
+            aria-describedby="broadcast-target-help"
+          />
+          <p id="broadcast-target-help" class="ink-muted mt-1 text-xs">
+            Only the devices belonging to the person you pick will receive this.
+          </p>
+          <div
+            id="broadcast-target-results"
+            class="mt-2 max-h-56 overflow-y-auto rounded border border-line"
+            role="listbox"
+            aria-label="Staff members"
+          ></div>
+          <input id="broadcast-target-id" type="hidden" />
+          <p id="broadcast-target-chosen" class="ink-muted mt-2 text-xs"></p>
         </div>
       </form>
 
@@ -775,11 +799,15 @@ function renderStaffTab() {
                 <td class="px-4 py-3">
                   ${
                     safeUrl(member.portrait_url)
-                      ? `<img class="byline-sticker" src="${escapeHtml(
-                          safeUrl(member.portrait_url)
-                        )}" alt="" width="48" height="48" loading="lazy" decoding="async" />`
-                      : `<span class="byline-sticker byline-sticker-empty" aria-hidden="true">
-                           <i class="fa-solid fa-user"></i>
+                      ? `<span class="staff-portrait">
+                           <img class="byline-sticker" src="${escapeHtml(
+                            safeUrl(member.portrait_url)
+                          )}" alt="" width="48" height="48" loading="lazy" decoding="async" />
+                         </span>`
+                      : `<span class="staff-portrait">
+                           <span class="byline-sticker byline-sticker-empty" aria-hidden="true">
+                             <i class="fa-solid fa-user"></i>
+                           </span>
                          </span>`
                   }
                 </td>
@@ -1766,18 +1794,38 @@ function assignmentEditorDialog() {
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
             <div>
-              <label class="field-label" for="assignment-reporter">Assigned to</label>
+              <label class="field-label" for="assignment-assigned-to">Assigned to</label>
+              <select id="assignment-assigned-to" class="field">
+                <option value="">Nobody yet</option>
+              </select>
+              <p class="mt-1 text-xs ink-muted">
+                Links the piece to a staff account. That person&rsquo;s devices get
+                the automatic deadline reminder.
+              </p>
+            </div>
+            <div>
+              <label class="field-label" for="assignment-reporter">Shown as</label>
               <input
                 id="assignment-reporter"
                 class="field"
                 type="text"
                 placeholder="Leave blank to leave it open"
               />
+              <p class="mt-1 text-xs ink-muted">
+                Free text on the public board. It cannot identify a device.
+              </p>
             </div>
-            <div>
-              <label class="field-label" for="assignment-deadline">Deadline</label>
-              <input id="assignment-deadline" class="field" type="text" />
-            </div>
+          </div>
+          <div>
+            <label class="field-label" for="assignment-deadline">Deadline</label>
+            <input id="assignment-deadline" class="field" type="text" />
+            <label class="mt-1 flex items-start gap-2 text-xs ink-muted" for="assignment-due-at">
+              <input id="assignment-due-at" type="checkbox" class="mt-0.5" />
+              <span>
+                Treat the deadline above as a real date
+                (<code id="assignment-due-hint"></code>) and remind them a day ahead.
+              </span>
+            </label>
           </div>
           <div>
             <label class="field-label" for="assignment-status">Status</label>
@@ -3481,16 +3529,47 @@ async function saveGalleryCategoryFromForm(form) {
 
 /** CREATE or UPDATE an assignment from the editor dialog. */
 async function saveAssignmentFromForm(form) {
+  const deadlineText = byId('assignment-deadline').value.trim();
+
+  // The free-text deadline is what the public board renders. `due_at` is the
+  // machine-readable copy the reminder cron compares against now(), so it is
+  // parsed only when the Owner ticks the box - otherwise an unparseable string
+  // like "next week" would silently produce NaN and either never fire or fire
+  // immediately.
+  let dueAt = null;
+  if (byId('assignment-due-at')?.checked && deadlineText) {
+    const parsed = new Date(deadlineText);
+    dueAt = Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+    if (!dueAt) {
+      showToast(
+        `Could not read "${deadlineText}" as a date. Use something like "2026-04-18 17:00", or untick the reminder box to keep it as plain text.`,
+        { type: 'error' }
+      );
+      return;
+    }
+  }
+
   const payload = {
     title: byId('assignment-title').value,
     reporter: byId('assignment-reporter').value,
     status: byId('assignment-status').value,
-    deadline: byId('assignment-deadline').value
+    deadline: deadlineText,
+    assigned_to: byId('assignment-assigned-to')?.value || null,
+    due_at: dueAt
   };
 
   if (!payload.title.trim()) {
     showToast('Give the pitch a title before saving.', { type: 'error' });
     return;
+  }
+
+  // Warn rather than refuse: an owner may legitimately leave a piece unassigned.
+  // Without an assignee the deadline is still tracked, just never pushed.
+  if (!payload.assigned_to && payload.due_at) {
+    showToast(
+      'Saved, but nobody is assigned, so no deadline reminder will be sent.',
+      { type: 'info' }
+    );
   }
 
   if (editingAssignmentId) {
@@ -3760,15 +3839,152 @@ function copyRoleColour(sourceId, targetId) {
   showToast('Role colour copied.', { type: 'info' });
 }
 
+/* -------------------------------------------------------------------------- */
+/* Broadcast target picker — "Specific User" audience */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The staff roster used by the picker, fetched once and reused for both the
+ * search box and the "assigned to" dropdown.
+ *
+ * Suspended accounts are excluded: a targeted push to a suspended member is
+ * never what the Owner means, and their devices should not be woken.
+ */
+let staffDirectory = null;
+
+async function getStaffDirectory() {
+  if (staffDirectory) return staffDirectory;
+  const rows = await loadAccounts();
+  staffDirectory = (rows || [])
+    .filter((row) => String(row.status || '').toLowerCase() !== 'suspended')
+    .map((row) => ({
+      id: row.id,
+      name: row.display_name || row.username || 'Unnamed',
+      username: row.username || '',
+      role: row.role || 'Writer'
+    }));
+  return staffDirectory;
+}
+
+function staffLabel(person) {
+  return person.username && person.username !== person.name
+    ? `${person.name} (${person.username})`
+    : person.name;
+}
+
+/**
+ * Show or hide the "Specific User" picker to match the audience dropdown.
+ * Hiding it also clears the selection, so a broadcast cannot be aimed at
+ * someone the Owner has just switched away from.
+ */
+export function syncBroadcastTargetVisibility(audience) {
+  const wrap = byId('broadcast-target-wrap');
+  if (!wrap) return;
+  const specific = audience === 'Specific User';
+  wrap.classList.toggle('hidden', !specific);
+  if (!specific) {
+    const hidden = byId('broadcast-target-id');
+    if (hidden) hidden.value = '';
+    const results = byId('broadcast-target-results');
+    if (results) results.innerHTML = '';
+  }
+}
+
+/** Filter the roster against what has been typed. An empty box lists everyone. */
+export function renderBroadcastTargetResults(query = '') {
+  const results = byId('broadcast-target-results');
+  if (!results) return;
+
+  const needle = String(query || '').trim().toLowerCase();
+  const matches = staffDirectory
+    ? staffDirectory.filter(
+        (person) =>
+          !needle ||
+          person.name.toLowerCase().includes(needle) ||
+          person.username.toLowerCase().includes(needle)
+      )
+    : [];
+
+  if (!staffDirectory) {
+    results.innerHTML = `<p class="ink-muted p-3 text-xs">Loading the staff list…</p>`;
+    return;
+  }
+
+  if (matches.length === 0) {
+    results.innerHTML = `<p class="ink-muted p-3 text-xs">No one matches “${escapeHtml(query)}”.</p>`;
+    return;
+  }
+
+  // Cap the list so a large roster cannot render an unbounded menu.
+  const shown = matches.slice(0, 50);
+  results.innerHTML = shown
+    .map(
+      (person) => `
+      <button
+        type="button"
+        class="block w-full px-3 py-2 text-left text-sm hover:bg-surface-2"
+        role="option"
+        data-target-id="${escapeHtml(person.id)}"
+        data-target-label="${escapeHtml(staffLabel(person))}"
+      >
+        ${escapeHtml(staffLabel(person))}
+        <span class="ink-muted text-xs">· ${escapeHtml(person.role)}</span>
+      </button>`
+    )
+    .join('');
+
+  if (matches.length > shown.length) {
+    results.insertAdjacentHTML(
+      'beforeend',
+      `<p class="ink-muted border-t border-line p-3 text-xs">${
+        matches.length - shown.length
+      } more — keep typing to narrow it down.</p>`
+    );
+  }
+}
+
+/** Record the chosen member in the hidden field the submit handler reads. */
+export function chooseBroadcastTarget(id, label) {
+  const hidden = byId('broadcast-target-id');
+  if (hidden) hidden.value = id || '';
+  const chosen = byId('broadcast-target-chosen');
+  if (chosen) {
+    chosen.textContent = id ? `Will be sent to ${label} only.` : '';
+  }
+  const results = byId('broadcast-target-results');
+  if (results) results.innerHTML = '';
+}
+
+/** Warm the roster when the picker is first revealed. */
+async function prepareBroadcastTarget() {
+  await getStaffDirectory();
+  renderBroadcastTargetResults(byId('broadcast-target')?.value || '');
+}
+
 /**
  * Compose a broadcast and hand it to the delivery layer, which shows a real
  * notification popup on every opted-in device (and records the send in the
  * history table).
  */
-async function sendBroadcastFromForm(form) {
+export async function sendBroadcastFromForm(form) {
   const title = byId('broadcast-title')?.value.trim() || '';
   const message = byId('broadcast-message')?.value.trim() || '';
   const audience = byId('broadcast-audience')?.value || 'Everyone';
+
+  // Only meaningful for a targeted send. Null means "every device", which is the
+  // correct value for every other audience and must stay null rather than an
+  // empty string - the sender treats a non-empty string as a uuid and would
+  // reject the whole request.
+  const targetStaffId =
+    audience === 'Specific User' ? byId('broadcast-target-id')?.value.trim() || null : null;
+
+  if (audience === 'Specific User' && !targetStaffId) {
+    showToast('Pick who this broadcast is for, or change the audience.', {
+      type: 'error'
+    });
+    byId('broadcast-target')?.focus();
+    return;
+  }
 
   if (!title) {
     showToast('Give the broadcast a subject so it is recognisable in the tray.', {
@@ -3801,8 +4017,19 @@ async function sendBroadcastFromForm(form) {
       }
     }
 
-    const result = await sendBroadcastToDevices({ title, message, audience });
+    const result = await sendBroadcastToDevices({
+      title,
+      message,
+      audience,
+      targetStaffId
+    });
     form.reset();
+    // A form.reset() does not restore the hidden id input's value on every
+    // browser path, and a stale uuid left behind would silently re-target the
+    // NEXT broadcast the Owner sends. Clear it explicitly.
+    const targetId = byId('broadcast-target-id');
+    if (targetId) targetId.value = '';
+    syncBroadcastTargetVisibility('Everyone');
     paintActiveTab();
 
     // Report what actually happened, and nothing more.
@@ -3923,8 +4150,40 @@ function openStaffEditor(staffId) {
   openDialog('staff-editor', { initialFocus: '#staff-name' });
 }
 
+/**
+ * Offer every approved account in the "Assigned to" picker.
+ *
+ * `wire_list_accounts()` is owner-gated, which is exactly right here: only the
+ * Owner assigns work. Unapproved requests are excluded because you cannot
+ * meaningfully assign a deadline to an account that cannot sign in, and the
+ * reminder push would go nowhere.
+ *
+ * Safe to call repeatedly - the list is rebuilt, not appended to.
+ */
+async function populateAssignedTo(currentId) {
+  const select = byId('assignment-assigned-to');
+  if (!select) return;
+
+  const rows = await loadAccounts();
+  const eligible = rows.filter((row) => row.is_active !== false && !row.is_owner);
+
+  select.innerHTML =
+    '<option value="">Nobody yet</option>' +
+    eligible
+      .map((row) => {
+        const name = row.display_name || row.username || 'Unnamed';
+        const role = row.role ? ` (${row.role})` : '';
+        // The value is the staff account id: that is what `assigned_to` stores
+        // and what the reminder pass matches a device against.
+        return `<option value="${escapeHtml(String(row.id))}">${escapeHtml(name + role)}</option>`;
+      })
+      .join('');
+
+  if (currentId) select.value = String(currentId);
+}
+
 /** Open the assignment editor. */
-function openAssignmentEditor(assignmentId) {
+async function openAssignmentEditor(assignmentId) {
   const item = assignmentId
     ? store.listAssignments().find((entry) => entry.id === assignmentId)
     : null;
@@ -3938,7 +4197,23 @@ function openAssignmentEditor(assignmentId) {
   byId('assignment-status').value = item?.status ?? 'Open';
   byId('assignment-deadline').value = item?.deadline ?? '';
 
+  // Show the parsed instant so the Owner can see what the cron will actually
+  // compare against, rather than trusting that "Friday" resolved correctly.
+  const dueAt = item?.due_at || null;
+  const hint = byId('assignment-due-hint');
+  if (hint) hint.textContent = dueAt ? new Date(dueAt).toLocaleString() : '';
+  const dueBox = byId('assignment-due-at');
+  if (dueBox) dueBox.checked = Boolean(dueAt);
+
   openDialog('assignment-editor', { initialFocus: '#assignment-title' });
+
+  // Populate after the dialog is open so the select has a measurable width and
+  // the roster fetch does not delay the editor appearing.
+  try {
+    await populateAssignedTo(item?.assigned_to ?? null);
+  } catch (error) {
+    console.warn('[admin] could not load the roster for the picker', error);
+  }
 }
 
 /** The single delegated click/submit/change handler for the workspace. */

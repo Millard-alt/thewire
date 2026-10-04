@@ -98,6 +98,21 @@ async function isOwnerSession(req, db) {
   }
 }
 
+/**
+ * Accept a staff id only if it really is a UUID.
+ *
+ * Returns null for anything else, which the sender reads as "broadcast to
+ * everyone". That is the safe direction: a mangled id falls back to a normal
+ * broadcast rather than erroring or silently matching no rows and reporting
+ * success.
+ */
+function uuidOrNull(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text)
+    ? text
+    : null;
+}
+
 /** Parse a webhook envelope, a cron GET and a direct POST into one shape. */
 async function readRequest(req) {
   const url = new URL(req.url, 'http://localhost');
@@ -140,6 +155,10 @@ async function readRequest(req) {
     return {
       source: 'api',
       broadcastId: body.broadcastId ?? null,
+      // "Specific User" in the Audience picker. Validated as a UUID because it
+      // is interpolated into a PostgREST filter; a malformed value would
+      // otherwise surface as an opaque 502 from the database.
+      targetStaffId: uuidOrNull(body.targetStaffId ?? body.targetUserId),
       inline: {
         title: body.title,
         message: body.body ?? body.message ?? '',
@@ -235,6 +254,7 @@ export default async function handler(req, res) {
   }
 
   // ---------------------------------------------------------------- payload
+  const targetStaffId = request.targetStaffId ?? null;
   let broadcast = null;
   if (request.inline) {
     broadcast = {
@@ -273,10 +293,17 @@ export default async function handler(req, res) {
   });
 
   // ---------------------------------------------------------- subscriptions
-  const { data: rows, error: rowsError } = await db
+  // A targeted send goes only to the devices linked to one staff account.
+  // `targetStaffId` comes from the Owner's "Specific User" picker; when it is
+  // absent every subscription is a candidate, exactly as before.
+  let subQuery = db
     .from('push_subscriptions')
-    .select('endpoint, p256dh, auth, audience')
-    .limit(MAX_SENDS);
+    .select('endpoint, p256dh, auth, audience, staff_id');
+
+  if (targetStaffId) subQuery = subQuery.eq('staff_id', targetStaffId);
+  subQuery = subQuery.limit(MAX_SENDS);
+
+  const { data: rows, error: rowsError } = await subQuery;
 
   if (rowsError) return fail(res, 502, 'subscriptions_unreadable', rowsError.message);
 

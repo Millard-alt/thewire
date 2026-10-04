@@ -29,6 +29,10 @@
 
 import { config } from './config.js';
 import { getSupabase, getSessionToken } from './supabase.js';
+// Linking a device to the signed-in staff account is what makes a "Specific
+// User" broadcast and a deadline reminder able to reach it. auth.js does not
+// import this module, so there is no cycle.
+import { getSession } from './auth.js';
 // dom.js imports nothing, so this cannot become a cycle. Used to surface push
 // failures on screen: the browser collapses every cause of an AbortError into
 // one console line, and the reader has no console to look at.
@@ -862,20 +866,38 @@ export async function syncSubscription(subscription = getStoredSubscription()) {
     // The SQL function defaults both to null, so an older 004-only deployment
     // still accepts this call - it just ignores the two extra arguments.
     const keys = subscriptionKeys(subscription);
+
+    // Link this device to the signed-in staff account. Without it the row is
+    // anonymous and the sender can never target one person or remind them about
+    // their own assignment deadline.
+    //
+    // Read at call time rather than captured at import, because a reader may sign
+    // in after this module was loaded. Null for an anonymous reader, which is a
+    // legitimate state: the row still serves general broadcasts.
+    const staffId = getSession()?.user?.id ?? null;
+
     const { error } = await client.rpc('wire_register_device', {
       p_endpoint: endpoint,
       p_device: deviceLabel(),
       p_audience: 'Everyone',
       p_p256dh: keys.p256dh,
-      p_auth: keys.auth
+      p_auth: keys.auth,
+      // Migration 021 added p_staff_id and defaults it to null, so a deployment
+      // that has not run 021 yet still accepts this call and ignores the extra.
+      p_staff_id: staffId
     });
 
     if (error) throw error;
     console.log('[push] subscription synced', {
       endpoint: endpoint.slice(-48),
-      keysStored: Boolean(keys.p256dh && keys.auth)
+      keysStored: Boolean(keys.p256dh && keys.auth),
+      linkedToStaff: Boolean(staffId)
     });
-    return { stored: true, keysStored: Boolean(keys.p256dh && keys.auth) };
+    return {
+      stored: true,
+      keysStored: Boolean(keys.p256dh && keys.auth),
+      staffId
+    };
   } catch (error) {
     // A missing RPC means migration 004 has not been applied yet. Say so
     // plainly, because otherwise this looks like a permissions bug and sends
@@ -890,6 +912,47 @@ export async function syncSubscription(subscription = getStoredSubscription()) {
     }
     return { error: error.message };
   }
+}
+
+/**
+ * Re-link this device's subscription to whoever is signed in RIGHT NOW.
+ *
+ * The staff_id column is only populated by syncSubscription() at the moment
+ * permission is granted. That leaves a real gap: a device that granted alerts
+ * before it ever signed in - or that signed in afterwards - keeps a row with a
+ * NULL staff_id, so a "Specific User" broadcast silently skips it and the
+ * recipient never hears about a message aimed at them by name.
+ *
+ * Calling this on every authenticated visit closes that gap. It is a cheap
+ * upsert on an endpoint we already own, and it is a no-op when nobody is signed
+ * in, so it is safe to call unconditionally on boot.
+ *
+ * @returns {Promise<{linked: boolean, staffId?: string|null, reason?: string}>}
+ */
+export async function linkSubscriptionToSession() {
+  const staffId = getSession()?.user?.id || null;
+  if (!staffId) return { linked: false, reason: 'signed_out' };
+
+  const client = getSupabase();
+  if (!client) return { linked: false, reason: 'no_supabase' };
+
+  const subscription = getStoredSubscription();
+  if (!subscription) {
+    // Nothing to link yet. Once permission is granted the same value is written
+    // by syncSubscription(), so there is nothing to repair.
+    return { linked: false, staffId, reason: 'no_subscription' };
+  }
+
+  // Reuse the single write path so validation, the coalesce-on-conflict rule and
+  // the "keys must not be blanked by a keyless client" guard all still apply.
+  const result = await syncSubscription(subscription);
+  if (result?.error) return { linked: false, staffId, reason: result.error };
+
+  console.log('[push] device linked to the signed-in account', {
+    staffId,
+    endpoint: subscription.endpoint.slice(-40)
+  });
+  return { linked: true, staffId };
 }
 
 /**
@@ -1163,7 +1226,8 @@ export async function dispatchWebPush({
   title,
   body = '',
   audience = 'Everyone',
-  url = ''
+  url = '',
+  targetStaffId = null
 } = {}) {
   const text = String(title || '').trim();
   if (!text) return { ok: false, delivered: 0, reason: 'empty_title' };
@@ -1192,7 +1256,10 @@ export async function dispatchWebPush({
         title: text,
         body: String(body || ''),
         audience,
-        url: url || config.notificationTargetUrl || '/'
+        url: url || config.notificationTargetUrl || '/',
+        // Only present for a "Specific User" broadcast; the server treats an
+        // absent or malformed id as "everyone", which is the safe fallback.
+        ...(targetStaffId ? { targetStaffId } : {})
       })
     });
 

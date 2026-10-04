@@ -1328,6 +1328,37 @@ body.admin-active.dialog-locked {
   transform: rotate(0deg) scale(1.06);
 }
 
+/* Wrapper for a portrait inside the staff / user table.
+   `.byline-sticker` clips itself, but a table cell gives the <img> no bounded
+   parent, so a non-square or lazy-loading image could still paint outside the
+   ring. Owning the overflow here makes the circle a hard clip in both axes
+   regardless of what the child reports as its intrinsic size. It also gives the
+   image a real block box to size against, so `width: 100%` cannot resolve
+   against a stretched table column. */
+.staff-portrait {
+  display: inline-block;
+  width: 3rem;
+  height: 3rem;
+  flex-shrink: 0;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border-radius: 50%;
+  vertical-align: middle;
+  background: var(--panel-2, #f1f1ef);
+}
+
+.staff-portrait .byline-sticker {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  box-shadow: none;
+  transform: none;
+}
+
+.staff-portrait:hover .byline-sticker {
+  transform: none;
+}
+
 /* Live circular preview in the portrait cropper.
    This class is applied to a <canvas> in index.html and was never given a rule,
    so the preview inherited `.byline-sticker`'s 2.25rem byline size instead of
