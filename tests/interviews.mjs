@@ -793,6 +793,69 @@ report(
 );
 
 /* ======================================================================== *
+ * Editor wiring: the poster image picker
+ * ======================================================================== */
+
+section('interview editor â€” poster image picker is actually bound');
+
+report(
+  'the editor renders a poster file input',
+  /id="interview-image-file"/.test(adminSrc)
+);
+report(
+  'the poster file input is paired with its URL field in bindFilePickers',
+  /\['interview-image-file',\s*'interview-image'\]/.test(adminSrc)
+);
+
+/*
+ * The same dead-control class as the video Add button, one layer over.
+ *
+ * bindFilePickers() binds a file input by looking up an explicit
+ * [fileInputId, urlInputId] pair. A picker that is not in that array renders
+ * perfectly, passes a grep for its markup, and silently does nothing on change --
+ * there is no `case` to omit here, just an absent list entry. The interview
+ * poster shipped that way: picking a photo from the device did nothing, while
+ * the "paste an image URL" text box beside it saved fine, so the field read as
+ * half-broken.
+ *
+ * Assert the PAIRING rather than the markup, so adding a picker without
+ * registering it fails here.
+ */
+const boundPickerIds = new Set(
+  [...adminSrc.matchAll(/\['([a-z-]+-file)',\s*'([a-z-]+)'\]/g)].map((m) => m[1])
+);
+const renderedPickerIds = new Set(
+  [...adminSrc.matchAll(/id="([a-z-]+-file)"/g)].map((m) => m[1])
+);
+
+/*
+ * Pickers deliberately NOT driven by bindImagePicker, because its one-URL-into-
+ * one-text-input shape is wrong for them. Both are asserted as bound in their
+ * own right elsewhere in this file; they are listed here so the invariant stays
+ * honest rather than being quietly weakened with a looser pattern.
+ *
+ *   article-extra-file -- multiple files at once, feeding a thumbnail strip
+ *                         rather than a single URL field, so it is bound to its
+ *                         own change handler after the pairs loop.
+ *   staff-portrait-file -- read straight off .files at save time, because the
+ *                         portrait is uploaded as part of the staff save rather
+ *                         than staged into a URL box beforehand.
+ */
+const pickedUpElsewhere = new Set(['article-extra-file', 'staff-portrait-file']);
+const unboundPickers = [...renderedPickerIds].filter(
+  (id) => !boundPickerIds.has(id) && !pickedUpElsewhere.has(id)
+);
+report(
+  `every rendered file picker is paired in bindFilePickers (${renderedPickerIds.size} found)`,
+  renderedPickerIds.size >= 3 && unboundPickers.length === 0,
+  unboundPickers.length ? `unbound: ${unboundPickers.join(', ')}` : undefined
+);
+report(
+  'the poster URL field is what the form actually saves',
+  /image:\s*byId\('interview-image'\)\.value\.trim\(\)/.test(adminSrc)
+);
+
+/* ======================================================================== *
  * Result
  * ======================================================================== */
 console.log(

@@ -3144,7 +3144,13 @@ function paintActiveTab() {
 function bindFilePickers() {
   const pairs = [
     ['media-file', 'media-url'],
-    ['article-image-file', 'article-image']
+    ['article-image-file', 'article-image'],
+    // The interview poster picker. Without this pair the file input rendered but
+    // carried no listener, so choosing a photo from the device did nothing at
+    // all -- while the "paste an image URL" text box beside it saved normally,
+    // which makes the field look half-broken rather than missing. Same dead
+    // control class as the interview video Add button.
+    ['interview-image-file', 'interview-image']
   ];
 
   pairs.forEach(([fileId, urlId]) => {
