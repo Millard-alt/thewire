@@ -362,11 +362,25 @@ export async function sendBroadcastToDevices({ title, message, audience }) {
     throw new Error('The owner has paused broadcasts, so this send was not delivered.');
   }
 
+  console.log('[push] sendBroadcastToDevices called', { title, audience, hasMessage: Boolean(message) });
+
   const broadcast = await store.createBroadcast({
     title,
     message,
     audience
   });
+
+  // NO REAL WEB PUSH HAPPENS HERE. There is no server, no `web-push`
+  // dependency and no VAPID private key anywhere in this project - the
+  // broadcast is only a ROW in public.broadcasts. Every subscribed browser
+  // discovers it by POLLING that table and then raising the notification on
+  // its own device. `broadcast.delivered` is a row count of the subscriber
+  // table, not a count of notifications actually shown.
+  console.warn(
+    '[push] broadcast stored as row ' + broadcast.id +
+    ' - delivery is by client polling, not by web push.' +
+    ' `sent: ' + (broadcast.delivered ?? 0) + '` is a subscriber COUNT, not a delivery confirmation.'
+  );
 
   // Mark seen first: if delivery fails we do not want the poller retrying it
   // either, because the owner already has the error toast.
@@ -379,6 +393,8 @@ export async function sendBroadcastToDevices({ title, message, audience }) {
     url: config.notificationTargetUrl || '/',
     requireInteraction: audience === 'Emergency'
   });
+
+  console.log('[push] local notification on the OWNING device only:', { popped });
 
   return {
     sent: broadcast.delivered ?? 0,

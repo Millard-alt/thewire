@@ -463,10 +463,17 @@ export function markBroadcastSeen(id) {
  */
 export async function pollOnce() {
   const client = getSupabase();
-  if (!client) return [];
+  if (!client) {
+    console.warn('[push] poll skipped: no Supabase client (demo mode or unconfigured).');
+    return [];
+  }
 
   // A reader who has blocked notifications gets nothing; do not even poll.
-  if (getPermission() !== 'granted') return [];
+  const permission = getPermission();
+  if (permission !== 'granted') {
+    console.log('[push] poll skipped: permission is "' + permission + '", not "granted".');
+    return [];
+  }
 
   let rows = [];
   try {
@@ -478,12 +485,23 @@ export async function pollOnce() {
     if (error) throw error;
     rows = data || [];
   } catch (error) {
-    console.warn('[push] broadcast poll failed', error);
+    console.error('[push] broadcast poll FAILED - the broadcasts table is unreadable.', {
+      message: error && error.message,
+      hint: /does not exist|schema cache|42P01/i.test(error && error.message || '')
+        ? 'Table missing - run supabase/003_subscriptions_and_gallery.sql'
+        : 'Check the anon SELECT grant and RLS on public.broadcasts.'
+    });
     return [];
   }
 
   const seen = readSeen();
   const raised = [];
+
+  console.log('[push] poll pass', {
+    rows: rows.length,
+    alreadySeen: seen.size,
+    newest: rows[0] ? { id: rows[0].id, title: rows[0].title, at: rows[0].created_at } : null
+  });
 
   for (const row of rows) {
     const key = String(row.id);

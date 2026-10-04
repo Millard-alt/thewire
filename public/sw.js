@@ -110,13 +110,44 @@ async function display({ title, body, tag, url, requireInteraction }) {
     new Notification(title || 'The Wire', options);
 }
 
+/* Push diagnostics. These are deliberately chatty: when a broadcast "does
+ * nothing" the only place left to look is this worker, and by the time the
+ * failure is visible in the OS the browser console of the page that triggered it
+ * has long gone. Every line is prefixed [sw] so it can be filtered out of the
+ * worker's console noise.
+ */
+const SW_LOG_PREFIX = '[sw]';
+
 self.addEventListener('push', (event) => {
   let payload = {};
+  let raw = null;
+  let parseMode = 'empty';
+
   try {
-    payload = event.data ? event.data.json() : {};
-  } catch {
-    payload = { title: 'The Wire', body: event.data ? event.data.text() : '' };
+    raw = event.data ? event.data.text() : null;
+    if (raw) {
+      try {
+        payload = JSON.parse(raw);
+        parseMode = 'json';
+      } catch {
+        // Not JSON. Fall back to a plain-text body rather than showing nothing.
+        payload = { title: 'The Wire', body: raw };
+        parseMode = 'text';
+      }
+    }
+  } catch (err) {
+    console.warn(SW_LOG_PREFIX + 'push: could not read event.data', err);
+    parseMode = 'unreadable';
   }
+
+  console.log(SW_LOG_PREFIX + 'push: received', {
+    parseMode,
+    rawLength: raw ? raw.length : 0,
+    hasData: Boolean(event.data),
+    keys: Object.keys(payload || {}),
+    title: payload && payload.title,
+    bodyPreview: payload && payload.body ? String(payload.body).slice(0, 80) : undefined
+  });
 
   event.waitUntil(
     display({
@@ -126,6 +157,21 @@ self.addEventListener('push', (event) => {
       url: payload.url,
       requireInteraction: payload.requireInteraction !== false
     })
+      .then((result) => {
+        console.log(SW_LOG_PREFIX + 'push: showNotification resolved', {
+          ok: Boolean(result),
+          tag: payload.tag
+        });
+      })
+      .catch((error) => {
+        // Almost always one of: permission revoked, the device is in a
+        // battery-saver mode, or the OS refused the vibration pattern.
+        console.error(SW_LOG_PREFIX + 'push: showNotification FAILED', {
+          name: error && error.name,
+          message: error && error.message,
+          stack: error && error.stack
+        });
+      })
   );
 });
 
