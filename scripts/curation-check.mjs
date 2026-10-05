@@ -12,7 +12,9 @@
  *   1. the pick select shows the SAVED story (not the first option);
  *   2. clicking Save does NOT reload the page;
  *   3. Save confirms with its toast and the new pick survives the repaint;
- *   4. closing the panel re-sorts the front page — the chosen story leads.
+ *   4. closing the panel re-sorts the front page — the chosen story leads;
+ *   5. the "This Week In The Wire" band switch hides the whole section (plus
+ *      its nav links) and brings it back with the curation untouched.
  *
  * Demo mode only — this never touches the live database.
  *   node node_modules/vite/bin/vite.js --mode demo --port 5201
@@ -144,6 +146,105 @@ try {
       `lead "${lead}", wanted "${choice.text}"`
     );
   }
+
+  /* --- 5. the "This Week In The Wire" band toggle ------------------------- */
+  // The panel was closed in step 4, so the homepage is on screen and the band
+  // must be visible: the flag ships enabled and a fresh browser context starts
+  // from the seed.
+  check('the band is on the homepage by default', Boolean(await page.$('#weekly')));
+
+  const snapshot = await page.evaluate(async () => {
+    const state = (await import('/src/lib/store.js')).getState();
+    return {
+      slots: JSON.stringify(state.weeklySlots),
+      pick: state.todaysPickId,
+      flag: state.showThisWeek
+    };
+  });
+  check('the store starts with the band enabled', snapshot.flag !== false);
+
+  // Disable through the switch, then click Save — the payload path.
+  await openAdmin(page, 'curation');
+  check('the Curation tab carries the band switch', Boolean(await page.$('#curation-show-week')));
+  await page.uncheck('#curation-show-week');
+  await page.waitForTimeout(600); // autosave + repaint
+  await page.click('#curation-form button[type="submit"]');
+  await page.waitForTimeout(1000);
+  await page.click('[data-action="close-admin"]');
+  await page.waitForTimeout(1200);
+
+  check('disabling omits the #weekly container entirely', (await page.$('#weekly')) === null);
+
+  const navOff = await page.$$eval('a.nav-link[href="#weekly"]', (els) => els.map((l) => l.hidden));
+  check(
+    'the Weekly nav links hide with the band',
+    navOff.length > 0 && navOff.every(Boolean),
+    `${navOff.length} link(s)`
+  );
+
+  const afterOff = await page.evaluate(async () => {
+    const state = (await import('/src/lib/store.js')).getState();
+    return {
+      slots: JSON.stringify(state.weeklySlots),
+      pick: state.todaysPickId,
+      flag: state.showThisWeek
+    };
+  });
+  check(
+    'switching it off keeps the curation data intact',
+    afterOff.flag === false && afterOff.slots === snapshot.slots && afterOff.pick === snapshot.pick
+  );
+
+  // Re-enable: the same curated articles, layout and organization must return.
+  await openAdmin(page, 'curation');
+  const persistedOff = await page.$eval('#curation-show-week', (el) => el.checked);
+  check('the switch persisted its off state through the repaint', persistedOff === false);
+  await page.check('#curation-show-week');
+  await page.waitForTimeout(600);
+  await page.click('#curation-form button[type="submit"]');
+  await page.waitForTimeout(1000);
+  await page.click('[data-action="close-admin"]');
+  await page.waitForTimeout(1200);
+
+  const bandBack = await page.$('#weekly');
+  check('re-enabling restores the section', Boolean(bandBack));
+
+  if (bandBack) {
+    const cards = await page.$$eval('#weekly .grid > *', (els) => els.length);
+    check('all three curated cards are back', cards === 3, `${cards} card(s)`);
+
+    const heading = await page.$eval('#weekly-heading', (el) => el.textContent.trim());
+    check('the band heading is intact', heading.toLowerCase() === 'this week in the wire', heading);
+
+    const kicker = await page
+      .$eval('#weekly .accent-text', (el) => el.textContent.trim())
+      .catch(() => '');
+    check(
+      'the "curated by the owner" sub-header is intact',
+      kicker.toLowerCase() === 'curated by the owner',
+      kicker
+    );
+  }
+
+  const navBack = await page.$$eval('a.nav-link[href="#weekly"]', (els) => els.map((l) => l.hidden));
+  check(
+    'the Weekly nav links come back too',
+    navBack.length > 0 && navBack.every((h) => h === false),
+    `${navBack.length} link(s)`
+  );
+
+  const afterOn = await page.evaluate(async () => {
+    const state = (await import('/src/lib/store.js')).getState();
+    return {
+      slots: JSON.stringify(state.weeklySlots),
+      pick: state.todaysPickId,
+      flag: state.showThisWeek
+    };
+  });
+  check(
+    're-enabling changes nothing but the flag',
+    afterOn.flag === true && afterOn.slots === snapshot.slots && afterOn.pick === snapshot.pick
+  );
 
   await page.close();
 } finally {

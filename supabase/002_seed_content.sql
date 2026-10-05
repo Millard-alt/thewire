@@ -69,9 +69,9 @@ select v.name, v.username,
        v.username || '@users.thewire.press',
        v.email, v.role, v.status
 from (values
-  ('Chief Owner', 'owner', 'chief.owner@example.com', 'Owner', 'Active'),
-  ('Grace Wanjiku', 'gwanjiku', 'grace.wanjiku@example.com', 'Editor', 'Active'),
-  ('David Kiprop', 'dkiprop', 'david.kiprop@example.com', 'Assignment Manager', 'Active')
+  ('Chief Owner', 'owner', 'melvinjonespressclub@gmail.com', 'Owner', 'Active'),
+  ('Grace Wanjiku', 'gwanjiku', 'grace.wanjiku@example.com', 'Writer', 'Active'),
+  ('David Kiprop', 'dkiprop', 'david.kiprop@example.com', 'Board Manager', 'Active')
 ) as v(name, username, email, role, status)
 where not exists (
   select 1 from public.staff s where s.username = v.username
@@ -82,8 +82,8 @@ where not exists (
 insert into public.top_performers (name, role, articles_count)
 select v.name, v.role, v.articles_count
 from (values
-  ('Grace Wanjiku', 'Senior Investigative Editor', 42),
-  ('Amina Mohamed', 'Photojournalist', 28)
+  ('Grace Wanjiku', 'Writer', 42),
+  ('Amina Mohamed', 'Writer', 28)
 ) as v(name, role, articles_count)
 where not exists (
   select 1 from public.top_performers p where p.name = v.name
@@ -104,14 +104,7 @@ where not exists (
 
 
 -- BROADCASTS ------------------------------------------------------------------
-insert into public.broadcasts (title, message, audience, delivered_count)
-select v.title, v.message, v.audience, v.delivered
-from (values
-  ('Editorial suite is live', 'The Wire''s owner workspace is now active.', 'Everyone', 1420)
-) as v(title, message, audience, delivered)
-where not exists (
-  select 1 from public.broadcasts b where b.title = v.title
-);
+-- The seed carries no broadcast history, so there is nothing to insert.
 
 
 -- AUDIT LOG -------------------------------------------------------------------
@@ -134,12 +127,16 @@ where not exists (
 -- database are uuids generated at insert time rather than the seed's text ids,
 -- so the featured story is resolved by title. A miss stores null, which the UI
 -- treats as 'nothing curated' instead of rendering the text 'undefined'.
+--
+-- show_this_week rides the same statement so a freshly seeded database matches
+-- createSeedState() exactly, today's true default and all.
 update public.site_settings
    set title         = 'THE WIRE',
        subtitle      = 'MJLA PRESS CLUB   INDEPENDENT VERIFIED DISPATCHES',
        edition       = 'VOL. CXIV... NO. 32,841   NAKURU, KENYA',
        breaking_news = '{"enabled":true,"label":"BREAKING DISPATCH","headline":"MJLA Press Club Launches Sovereign Editorial Control Suite","subtext":"Full administrative controls are live across the newsroom.","severity":"Breaking","color":"Red","sticky":true,"dismissible":false,"linkText":"Read the announcement","linkUrl":"#"}'::jsonb,
        weekly_slots  = '{"article":"seed-article-1","event":"seed-article-2","picture":"seed-article-3"}'::jsonb,
+       show_this_week = true,
        todays_pick_id = (
          select id from public.articles
           where title = 'The Architecture of Civic Truth in Rift Valley Journalism'

@@ -876,6 +876,25 @@ function renderCurationTab() {
       )}
 
       <form id="curation-form" class="panel-raised space-y-4 p-5" novalidate>
+        <div class="flex flex-wrap items-center gap-4">
+          <label class="switch" for="curation-show-week">
+            <input id="curation-show-week" type="checkbox" ${
+              state.showThisWeek ? 'checked' : ''
+            } />
+            <span class="switch-track"></span>
+            <span class="switch-thumb"></span>
+          </label>
+          <label class="field-label mb-0" for="curation-show-week">
+            Show &quot;This Week in the Wire&quot; on Homepage
+          </label>
+        </div>
+
+        <p class="ink-muted text-xs">
+          Controls the three curated columns beneath Latest Coverage. The cards
+          themselves are kept either way, so switching it back on restores them
+          exactly as curated.
+        </p>
+
         <div>
           <label class="field-label" for="slot-todays-pick">Today's pick</label>
           <select id="slot-todays-pick" class="field" data-slot="todaysPick">
@@ -4122,11 +4141,20 @@ function handleChange(event) {
   }
 
   /* --- Curation ---------------------------------------------------------- */
-  // These branches used to key off `curate-todays-pick` / `curate-slot-*` ids
-  // that the renderer stopped emitting long ago, so NO change on this tab ever
-  // reached the store from here. `data-slot` is the attribute renderCurationTab
-  // actually stamps on every select; routing on it keeps the handler and the
-  // renderer from drifting apart again behind a silent id string.
+  if (target.id === 'curation-show-week') {
+    guard(async () => {
+      await store.saveCuration({ showThisWeek: target.checked });
+      paintActiveTab();
+    });
+    return;
+  }
+
+  // The select branches below used to key off `curate-todays-pick` /
+  // `curate-slot-*` ids that the renderer stopped emitting long ago, so NO
+  // change on this tab ever reached the store from here. `data-slot` is the
+  // attribute renderCurationTab actually stamps on every select; routing on it
+  // keeps the handler and the renderer from drifting apart again behind a
+  // silent id string.
   if (target instanceof HTMLSelectElement && target.dataset.slot) {
     const key = target.dataset.slot;
     guard(async () => {
@@ -4211,9 +4239,11 @@ async function saveBreakingFromForm() {
  *
  * The payload is read out of the DOM at submit time, which is the point: the
  * four selects hold the Owner's new arrangement and nothing else in the panel
- * writes them. An empty select is stored as null rather than '' — the column
- * behind `todays_pick_id` is a uuid, and Postgres rejects an empty string
- * after the form has already been stopped from reloading the page.
+ * writes them. The homepage-band checkbox rides the same Save so the button
+ * always writes the full arrangement the Owner is looking at. An empty select
+ * is stored as null rather than '' — the column behind `todays_pick_id` is a
+ * uuid, and Postgres rejects an empty string after the form has already been
+ * stopped from reloading the page.
  *
  * `store.saveCuration` commits and notifies subscribers, so the active tab
  * repaints showing the saved values and closeAdmin() re-renders the public
@@ -4222,6 +4252,7 @@ async function saveBreakingFromForm() {
 async function saveCurationFromForm(form) {
   const pickSelect = form.querySelector('#slot-todays-pick');
   const todaysPickId = pickSelect?.value || null;
+  const showToggle = form.querySelector('#curation-show-week');
 
   const weeklySlots = {};
   form.querySelectorAll('select[data-slot]').forEach((select) => {
@@ -4229,7 +4260,13 @@ async function saveCurationFromForm(form) {
     if (key !== 'todaysPick') weeklySlots[key] = select.value || null;
   });
 
-  await store.saveCuration({ todaysPickId, weeklySlots });
+  await store.saveCuration({
+    todaysPickId,
+    weeklySlots,
+    // Only sent when the form actually carries the switch, so a Save can never
+    // manufacture `showThisWeek: false` out of a missing element.
+    ...(showToggle ? { showThisWeek: showToggle.checked } : {})
+  });
 
   showToast('Front-page curation saved.', { type: 'success' });
   paintActiveTab();

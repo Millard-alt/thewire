@@ -233,7 +233,7 @@ export function renderPublication() {
    * a reader may open, and re-running it on every render is what makes a Save
    * on the Curation tab visibly re-sort the front page.
    */
-  const { todaysPickId, weeklySlots } = store.getState();
+  const { todaysPickId, weeklySlots, showThisWeek } = store.getState();
   const curated = (id) => published.find((article) => article.id === id) || null;
   const todaysPick = curated(todaysPickId) || published[0] || null;
   const week = {
@@ -270,7 +270,9 @@ export function renderPublication() {
     </section>
 
     <!-- ================= WEEKLY FEATURES ================= -->
-    <section id="weekly" aria-labelledby="weekly-heading" class="mb-12">
+    ${
+      showThisWeek !== false
+        ? `<section id="weekly" aria-labelledby="weekly-heading" class="mb-12">
       ${sectionHeading('weekly-heading', 'Curated by the owner', 'This Week In The Wire')}
       <div class="grid gap-6 md:grid-cols-3">
         ${[
@@ -281,7 +283,9 @@ export function renderPublication() {
           .map((entry) => renderWeeklySlot(entry))
           .join('')}
       </div>
-    </section>
+    </section>`
+        : ''
+    }
 
     <!-- ================= ASSIGNMENT BOARD ================= -->
     <section id="assignments" aria-labelledby="assignments-heading" class="mb-12">
@@ -289,6 +293,13 @@ export function renderPublication() {
       ${renderAssignmentBoard(assignments)}
     </section>
   `;
+
+  // The two "Weekly" nav links are static markup in index.html and do NOT come
+  // back with the innerHTML above. Hide them when the band is off, or the nav
+  // would offer readers an anchor to a section that is not on the page.
+  document.querySelectorAll('a.nav-link[href="#weekly"]').forEach((link) => {
+    link.hidden = showThisWeek === false;
+  });
 
   // The markup was just replaced wholesale, so the "read the full dispatch"
   // buttons are new nodes - bind them with a single delegated listener on the

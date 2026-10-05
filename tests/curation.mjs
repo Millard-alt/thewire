@@ -48,6 +48,9 @@ const read = (rel) => readFileSync(path.join(ROOT, rel), 'utf8');
 const adminSrc = read('src/views/admin.js');
 const publicSrc = read('src/views/public.js');
 const appSrc = read('src/app.js');
+const storeSrc = read('src/lib/store.js');
+const schemaSrc = read('supabase/schema.sql');
+const migrationSrc = read('supabase/migrations/023_show_this_week.sql');
 
 let pass = 0;
 let fail = 0;
@@ -125,6 +128,39 @@ report(
   `${notified} notification(s)`
 );
 
+section('store — the homepage band flag (showThisWeek)');
+
+report('the band is visible by default', store.getState().showThisWeek === true);
+
+const slotsSnapshot = JSON.stringify(store.getState().weeklySlots);
+const pickSnapshot = store.getState().todaysPickId;
+
+await store.saveCuration({ showThisWeek: false });
+report(
+  'switching the band off leaves the curation untouched',
+  store.getState().showThisWeek === false &&
+    JSON.stringify(store.getState().weeklySlots) === slotsSnapshot &&
+    store.getState().todaysPickId === pickSnapshot
+);
+
+await store.saveCuration({ showThisWeek: true });
+report(
+  're-enabling restores the flag with slots and pick intact',
+  store.getState().showThisWeek === true &&
+    JSON.stringify(store.getState().weeklySlots) === slotsSnapshot &&
+    store.getState().todaysPickId === pickSnapshot
+);
+
+await store.saveCuration({ todaysPickId: first.id });
+report('a save that omits the flag leaves it alone', store.getState().showThisWeek === true);
+
+await store.saveCuration({ showThisWeek: false });
+await store.resetAllSettings();
+report(
+  'resetting settings restores the shipped default (visible)',
+  store.getState().showThisWeek === true
+);
+
 /* ==========================================================================
    2. admin.js — the Save button and the form that feeds it
    ======================================================================== */
@@ -174,6 +210,25 @@ report(
   !/target\.id === 'curate-todays-pick'|target\.id\.startsWith\('curate-slot-'\)/.test(adminSrc)
 );
 
+section('admin.js — the homepage band switch');
+
+report('the Curation form carries the band switch', /id="curation-show-week"/.test(adminSrc));
+report(
+  'the switch label matches the required wording',
+  adminSrc.includes('Show &quot;This Week in the Wire&quot; on Homepage')
+);
+report(
+  'toggling the switch autosaves through saveCuration',
+  /target\.id === 'curation-show-week'\)[\s\S]{0,200}?saveCuration\(\{ showThisWeek: target\.checked \}\)/.test(
+    adminSrc
+  )
+);
+report('the Save button payload includes the switch', /showToggle\.checked/.test(adminSrc));
+report(
+  'the switch state is rendered back from the store on each paint',
+  /type="checkbox" \$\{\s*state\.showThisWeek \? 'checked' : ''/.test(adminSrc)
+);
+
 /* ==========================================================================
    3. public.js / app.js — resolution + repaint chain
    ======================================================================== */
@@ -210,6 +265,44 @@ report(
 report(
   'store commits repaint the feed whenever the panel is closed',
   /store\.subscribe\([\s\S]{0,800}?renderPublic\(\)/.test(appSrc)
+);
+
+section('public.js — the band is gated, not merely styled away');
+
+report(
+  'the weekly section only renders when the flag is not false',
+  /showThisWeek !== false\s+\? `<section id="weekly"/.test(publicSrc)
+);
+report(
+  'there is no unconditional #weekly section left in the template',
+  (publicSrc.match(/<section id="weekly"/g) || []).length === 1
+);
+report(
+  'the Weekly nav links are hidden together with the band',
+  /querySelectorAll\('a\.nav-link\[href="#weekly"\]'\)/.test(publicSrc)
+);
+
+section('persistence — schema + migration 023');
+
+report(
+  'schema.sql declares show_this_week defaulted to true',
+  /show_this_week\s+boolean not null default true/.test(schemaSrc)
+);
+report(
+  'migration 023 adds the column idempotently, default true',
+  /add column if not exists show_this_week boolean not null default true/.test(migrationSrc)
+);
+report(
+  'migration 023 asks PostgREST to reload its schema cache',
+  /notify pgrst, 'reload schema'/.test(migrationSrc)
+);
+report(
+  'persistSettings writes show_this_week, treating undefined as enabled',
+  /show_this_week: current\.showThisWeek !== false/.test(storeSrc)
+);
+report(
+  'hydrate defaults a missing column to visible, not hidden',
+  /settingsRow\.show_this_week \?\? true/.test(storeSrc)
 );
 
 /* ========================================================================== */

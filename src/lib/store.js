@@ -749,7 +749,12 @@ export async function hydrate() {
         // `seed-article-N` text ids, which point at rows that have never existed
         // in the database. An unset pointer is simply unset.
         todaysPickId: settingsRow.todays_pick_id ?? null,
-        weeklySlots: settingsRow.weekly_slots || {}
+        weeklySlots: settingsRow.weekly_slots || {},
+        // Migration 023 may not be applied yet, in which case PostgREST omits
+        // the key entirely. Default to enabled rather than to undefined: an
+        // undefined flag is falsy and would hide the band for every reader on
+        // a database that never asked for it.
+        showThisWeek: settingsRow.show_this_week ?? true
       },
       { remote: true }
     );
@@ -2301,6 +2306,9 @@ async function persistSettings(overrides = {}) {
     breaking_news: current.breakingNews,
     todays_pick_id: current.todaysPickId,
     weekly_slots: current.weeklySlots,
+    // Whether the "This Week In The Wire" band appears on the homepage.
+    // `undefined` must never write false — an unset flag means enabled.
+    show_this_week: current.showThisWeek !== false,
     forced_notifications: current.notifications.forced,
     ...overrides
   };
@@ -2334,16 +2342,28 @@ export async function saveBreakingNews(next) {
   return current.breakingNews;
 }
 
-/** UPDATE today's pick + the three weekly feature slots in one call. */
-export async function saveCuration({ todaysPickId, weeklySlots }) {
+/**
+ * UPDATE today's pick, the three weekly slots and the homepage band flag.
+ *
+ * The visibility flag rides the same call as the slots it governs, so one Save
+ * button on the Curation tab still writes a single coherent payload. Omitting
+ * a key leaves that piece untouched: a re-roll of the pick or a one-slot edit
+ * can never hide the band by accident.
+ */
+export async function saveCuration({ todaysPickId, weeklySlots, showThisWeek }) {
   const current = getState();
   if (todaysPickId !== undefined) current.todaysPickId = todaysPickId;
   if (weeklySlots !== undefined) {
     current.weeklySlots = { ...current.weeklySlots, ...weeklySlots };
   }
+  if (showThisWeek !== undefined) current.showThisWeek = showThisWeek === true;
   await persistSettings();
   commit();
-  return { todaysPickId: current.todaysPickId, weeklySlots: current.weeklySlots };
+  return {
+    todaysPickId: current.todaysPickId,
+    weeklySlots: current.weeklySlots,
+    showThisWeek: current.showThisWeek
+  };
 }
 
 /** Pick a random published article as today's pick. */
@@ -2422,6 +2442,7 @@ export async function resetAllSettings() {
   current.breakingNews = { ...seed.breakingNews };
   current.todaysPickId = seed.todaysPickId;
   current.weeklySlots = { ...seed.weeklySlots };
+  current.showThisWeek = seed.showThisWeek;
   // Only the setting, not activeSubscriberCount: that figure is read from
   // `push_subscriptions` at runtime and must stay honest.
   current.notifications.forced = seed.notifications.forced;
@@ -2436,6 +2457,7 @@ export async function resetAllSettings() {
     breakingNews: current.breakingNews,
     todaysPickId: current.todaysPickId,
     weeklySlots: current.weeklySlots,
+    showThisWeek: current.showThisWeek,
     forced: current.notifications.forced
   };
 }

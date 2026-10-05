@@ -45,6 +45,12 @@ export function createSeedState() {
       picture: 'seed-article-3'
     },
 
+    // The "This Week In The Wire" band is on the front page unless the Owner
+    // switches it off from the Curation tab. True is the default so a fresh
+    // install — or a settings reset — looks exactly as it did before the
+    // toggle existed.
+    showThisWeek: true,
+
     articles: [
       {
         id: 'seed-article-1',

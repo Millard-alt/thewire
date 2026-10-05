@@ -107,6 +107,9 @@ create table if not exists public.site_settings (
   edition              text not null default 'Nakuru Edition',
   breaking_news        jsonb not null default '{}'::jsonb,
   weekly_slots         jsonb not null default '{}'::jsonb,
+  -- Homepage visibility of the "This Week In The Wire" band. Default true so
+  -- every existing install behaves exactly as it did before the toggle existed.
+  show_this_week       boolean not null default true,
   todays_pick_id       uuid references public.articles (id) on delete set null,
   forced_notifications boolean not null default false,
   updated_at           timestamptz not null default now()

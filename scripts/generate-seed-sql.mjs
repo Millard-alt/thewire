@@ -4,7 +4,7 @@
  * Run:  node generate-seed-sql.mjs
  */
 import { writeFileSync } from 'node:fs';
-import { createSeedState } from './src/lib/seed.js';
+import { createSeedState } from '../src/lib/seed.js';
 
 const state = createSeedState();
 
@@ -140,7 +140,11 @@ where not exists (
 );
 `);
 
-parts.push(`
+// An empty list would emit `from (values\n\n)`, which is not valid SQL and
+// would abort the seed mid-transaction. The seed's broadcast history is
+// currently empty, so skip the insert and leave an explanatory marker instead.
+if (state.notifications.history.length) {
+  parts.push(`
 -- BROADCASTS ------------------------------------------------------------------
 insert into public.broadcasts (title, message, audience, delivered_count)
 select v.title, v.message, v.audience, v.delivered
@@ -151,6 +155,12 @@ where not exists (
   select 1 from public.broadcasts b where b.title = v.title
 );
 `);
+} else {
+  parts.push(`
+-- BROADCASTS ------------------------------------------------------------------
+-- The seed carries no broadcast history, so there is nothing to insert.
+`);
+}
 
 parts.push(`
 -- AUDIT LOG -------------------------------------------------------------------
@@ -176,12 +186,16 @@ parts.push(`
 -- database are uuids generated at insert time rather than the seed's text ids,
 -- so the featured story is resolved by title. A miss stores null, which the UI
 -- treats as 'nothing curated' instead of rendering the text 'undefined'.
+--
+-- show_this_week rides the same statement so a freshly seeded database matches
+-- createSeedState() exactly, today's true default and all.
 update public.site_settings
    set title         = ${lit(state.branding.title)},
        subtitle      = ${lit(state.branding.subtitle)},
        edition       = ${lit(state.branding.edition)},
        breaking_news = ${jsonLit(state.breakingNews)},
        weekly_slots  = ${jsonLit(state.weeklySlots)},
+       show_this_week = ${state.showThisWeek === false ? 'false' : 'true'},
        todays_pick_id = (
          select id from public.articles
           where title = ${lit(todaysPick ? todaysPick.title : '')}
