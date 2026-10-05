@@ -222,11 +222,26 @@ export function renderPublication() {
   if (!view) return;
 
   const published = store.listPublishedArticles();
-  const todaysPick = store.getTodaysPick();
+
+  /*
+   * Curation pointers are ids into `articles`, but a pointer can outlive its
+   * story's Published status (unpublish keeps the row), and reconcileCuration()
+   * can clear a pointer altogether. The store's read helpers resolve against
+   * EVERY article and fall back to `articles[0]` of any status — which is how a
+   * draft or a pulled story kept leading this page after the newsroom took it
+   * down. Resolve against `published` instead: this is the only set of stories
+   * a reader may open, and re-running it on every render is what makes a Save
+   * on the Curation tab visibly re-sort the front page.
+   */
+  const { todaysPickId, weeklySlots } = store.getState();
+  const curated = (id) => published.find((article) => article.id === id) || null;
+  const todaysPick = curated(todaysPickId) || published[0] || null;
   const week = {
-    article: store.getWeeklySlot('article'),
-    event: store.getWeeklySlot('event'),
-    picture: store.getWeeklySlot('picture')
+    // A weekly slot with no published story behind it stays empty and shows
+    // its own "No story curated" line rather than borrowing `articles[0]`.
+    article: curated(weeklySlots.article),
+    event: curated(weeklySlots.event),
+    picture: curated(weeklySlots.picture)
   };
   const assignments = store.listAssignments();
 

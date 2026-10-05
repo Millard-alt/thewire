@@ -839,18 +839,30 @@ function renderBroadcastsTab() {
 function renderCurationTab() {
   const state = store.getState();
   const published = store.listPublishedArticles();
-  const options = published
-    .map(
-      (article) =>
-        `<option value="${escapeHtml(article.id)}">${escapeHtml(article.title)}</option>`
-    )
-    .join('');
+  /*
+   * The `<option>` list for ONE slot, with the article the store has saved for
+   * that slot marked `selected`.
+   *
+   * The mark matters twice over: without it every select reset to the FIRST
+   * published story on each repaint, so the form never showed what was actually
+   * saved — and a Save then overwrote the real pick with whatever the dropdown
+   * happened to be displaying.
+   */
+  const optionsFor = (savedId) =>
+    published
+      .map((article) => {
+        const isSelected = savedId != null && article.id === savedId;
+        return `<option value="${escapeHtml(article.id)}"${
+          isSelected ? ' selected' : ''
+        }>${escapeHtml(article.title)}</option>`;
+      })
+      .join('');
 
   const slot = (key, label) => `
     <div>
       <label class="field-label" for="slot-${key}">${escapeHtml(label)}</label>
       <select id="slot-${key}" class="field" data-slot="${key}">
-        ${options}
+        ${optionsFor(state.weeklySlots[key])}
       </select>
     </div>`;
 
@@ -867,7 +879,7 @@ function renderCurationTab() {
         <div>
           <label class="field-label" for="slot-todays-pick">Today's pick</label>
           <select id="slot-todays-pick" class="field" data-slot="todaysPick">
-            ${options}
+            ${optionsFor(state.todaysPickId)}
           </select>
         </div>
 
@@ -3470,6 +3482,13 @@ function attachAdminListeners() {
       // discarded the input. The handler existed; nothing routed to it.
       event.preventDefault();
       guard(() => saveGalleryCategoryFromForm(form));
+    } else if (form.id === 'curation-form') {
+      // The Curation tab's Save button. With no branch here the click fell
+      // through to the browser's native GET submit: the page reloaded before
+      // any save promise could resolve, the Owner's new arrangement was
+      // discarded, and the front page never re-sorted.
+      event.preventDefault();
+      guard(() => saveCurationFromForm(form));
     }
   });
 
@@ -4103,19 +4122,19 @@ function handleChange(event) {
   }
 
   /* --- Curation ---------------------------------------------------------- */
-  if (target.id === 'curate-todays-pick') {
+  // These branches used to key off `curate-todays-pick` / `curate-slot-*` ids
+  // that the renderer stopped emitting long ago, so NO change on this tab ever
+  // reached the store from here. `data-slot` is the attribute renderCurationTab
+  // actually stamps on every select; routing on it keeps the handler and the
+  // renderer from drifting apart again behind a silent id string.
+  if (target instanceof HTMLSelectElement && target.dataset.slot) {
+    const key = target.dataset.slot;
     guard(async () => {
-      await store.saveCuration({ todaysPickId: target.value });
-      paintActiveTab();
-    });
-    return;
-  }
-  if (target.id.startsWith('curate-slot-')) {
-    const slot = target.id.replace('curate-slot-', '');
-    guard(async () => {
-      await store.saveCuration({
-        weeklySlots: { [slot]: target.value }
-      });
+      if (key === 'todaysPick') {
+        await store.saveCuration({ todaysPickId: target.value || null });
+      } else {
+        await store.saveCuration({ weeklySlots: { [key]: target.value || null } });
+      }
       paintActiveTab();
     });
     return;
@@ -4184,6 +4203,35 @@ async function saveBreakingFromForm() {
     enabled ? 'Banner saved and live on the public site.' : 'Banner saved but hidden.',
     { type: 'success' }
   );
+  paintActiveTab();
+}
+
+/**
+ * Persist every slot on the Curation tab in one write.
+ *
+ * The payload is read out of the DOM at submit time, which is the point: the
+ * four selects hold the Owner's new arrangement and nothing else in the panel
+ * writes them. An empty select is stored as null rather than '' — the column
+ * behind `todays_pick_id` is a uuid, and Postgres rejects an empty string
+ * after the form has already been stopped from reloading the page.
+ *
+ * `store.saveCuration` commits and notifies subscribers, so the active tab
+ * repaints showing the saved values and closeAdmin() re-renders the public
+ * feed from the same state — the front page re-sorts on the way out.
+ */
+async function saveCurationFromForm(form) {
+  const pickSelect = form.querySelector('#slot-todays-pick');
+  const todaysPickId = pickSelect?.value || null;
+
+  const weeklySlots = {};
+  form.querySelectorAll('select[data-slot]').forEach((select) => {
+    const key = select.dataset.slot;
+    if (key !== 'todaysPick') weeklySlots[key] = select.value || null;
+  });
+
+  await store.saveCuration({ todaysPickId, weeklySlots });
+
+  showToast('Front-page curation saved.', { type: 'success' });
   paintActiveTab();
 }
 
