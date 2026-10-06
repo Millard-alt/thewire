@@ -1557,38 +1557,216 @@ export function initPublicInteractions() {
   const searchInput = byId('search-input');
   searchInput?.addEventListener('input', (event) => runSearch(event.target.value));
 
-  // Mobile navigation disclosure.
+  // Navigation: one link list, rendered three ways.
   //
-  // The list ships in the markup with `flex`, so before this ran it was visible
-  // on a phone from first paint — the menu "auto-opened" on every page load and
-  // the toggle only reacted to the *next* click. State is therefore applied on
-  // init, and re-applied when the viewport crosses the desktop breakpoint so a
-  // rotate/resize can never leave the links stranded in the wrong mode.
-  const mobileToggle = byId('mobile-nav-toggle');
-  const links = byId('primary-links');
-  if (mobileToggle && links) {
-    const desktop = window.matchMedia('(min-width: 48rem)');
+  // Inline row, overflow menu and mobile drawer all read from NAV_LINKS below.
+  // They were three separate hardcoded <ul>s at one point, and they drifted:
+  // a section added to the masthead row never reached the drawer, so it was
+  // simply unreachable on a phone. One source, three renderings.
+  initNavigation();
+}
 
-    const setOpen = (open) => {
-      mobileToggle.setAttribute('aria-expanded', String(open));
-      links.classList.toggle('hidden', !open);
-      links.classList.toggle('flex', open);
+/**
+ * Every primary destination, in reading order.
+ *
+ * `page` values are the reader views the router knows; `anchor` values are
+ * in-page sections of the publication. Split because the two navigate
+ * differently -- an anchor scrolls, a page swaps the view -- and because the
+ * footer and the drawer both need the split to decide what markup to emit.
+ */
+const NAV_LINKS = [
+  { label: 'Latest', anchor: '#latest' },
+  { label: "Today's Pick", anchor: '#today' },
+  { label: 'Weekly', anchor: '#weekly' },
+  { label: 'Assignments', anchor: '#assignments' },
+  { label: 'Interviews', page: 'interviews' },
+  { label: 'Podcasts', page: 'podcasts' },
+  { label: 'Photo Gallery', page: 'gallery' },
+  { label: 'Credits', page: 'credits' },
+  { label: 'About Us', page: 'about' }
+];
+
+function initNavigation() {
+  const bar = document.querySelector('.nav-bar');
+  const list = byId('primary-links');
+  const burger = byId('mobile-nav-toggle');
+  const drawer = byId('nav-drawer');
+  const drawerList = drawer?.querySelector('[data-nav-drawer-list]');
+  const moreWrap = document.querySelector('[data-nav-more]');
+  const moreToggle = byId('nav-more-toggle');
+  const moreMenu = byId('nav-more-menu');
+
+  if (!bar || !list) return;
+
+  /* --- the drawer ------------------------------------------------------- */
+  // A <dialog> rather than a styled <ul>: on a phone the links cover the
+  // viewport, and something that covers the page has to trap focus, take Escape,
+  // return focus to the control that opened it, and stop the page behind it
+  // scrolling. showModal() provides all four; a hidden <ul> provides none.
+  if (drawer && drawerList) {
+    drawerList.innerHTML = NAV_LINKS.map((link) => {
+      const inner = link.page
+        ? `<button type="button" data-nav="${escapeHtml(link.page)}">${escapeHtml(link.label)}</button>`
+        : `<a href="${escapeHtml(link.anchor)}">${escapeHtml(link.label)}</a>`;
+      return `<li class="nav-drawer__item">${inner}</li>`;
+    }).join('');
+
+    const openDrawer = () => {
+      if (drawer.open) return;
+      drawer.showModal();
+      burger?.setAttribute('aria-expanded', 'true');
+      // The page behind a modal dialog must not scroll under the reader's thumb.
+      document.body.style.overflow = 'hidden';
     };
 
-    // Collapsed on phones, always visible from the `md` breakpoint up.
-    const sync = () => setOpen(desktop.matches);
-    sync();
+    const closeDrawer = () => {
+      if (!drawer.open) return;
+      drawer.close();
+      burger?.setAttribute('aria-expanded', 'false');
+      document.body.style.removeProperty('overflow');
+    };
 
-    mobileToggle.addEventListener('click', () => {
-      setOpen(mobileToggle.getAttribute('aria-expanded') !== 'true');
+    burger?.addEventListener('click', openDrawer);
+    drawer.querySelector('#nav-drawer-close')?.addEventListener('click', closeDrawer);
+
+    // Escape closes a modal dialog natively, but `close` does not fire our
+    // handler, so the burger's aria-expanded and the body scroll lock would be
+    // left behind. This is the one event that has to be listened for explicitly.
+    drawer.addEventListener('close', () => {
+      burger?.setAttribute('aria-expanded', 'false');
+      document.body.style.removeProperty('overflow');
     });
 
-    // Tapping a link should dismiss the sheet rather than leave it covering
-    // the article the reader just asked to see.
-    links.addEventListener('click', (event) => {
-      if (event.target.closest('a, button') && !desktop.matches) setOpen(false);
+    // Choosing a destination should dismiss the sheet rather than leave it
+    // covering the page the reader just asked for.
+    drawerList.addEventListener('click', (event) => {
+      if (event.target.closest('a, button')) closeDrawer();
     });
-
-    desktop.addEventListener('change', sync);
   }
+
+  /* --- the overflow menu ------------------------------------------------ */
+  const closeMore = () => {
+    if (!moreMenu || moreMenu.hidden) return;
+    moreMenu.hidden = true;
+    moreToggle?.setAttribute('aria-expanded', 'false');
+  };
+
+  moreToggle?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const open = moreMenu.hidden;
+    moreMenu.hidden = !open;
+    moreToggle.setAttribute('aria-expanded', String(open));
+  });
+
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('[data-nav-more]')) return;
+    closeMore();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeMore();
+  });
+
+  /* --- measure, do not guess -------------------------------------------- */
+  // A media query would need hand-tuning against a wordmark whose width depends
+  // on the theme's font, and it is wrong the moment a label changes length.
+  // Measuring the row's natural width against the space available is exact and
+  // self-correcting: links move into "More" until the row fits, and back out
+  // when it does.
+  const overflowItems = [...list.querySelectorAll('[data-nav-overflow]')];
+
+  /**
+   * The width the inline row needs.
+   *
+   * NOT `list.scrollWidth`. The <ul> is itself a shrinkable flex item inside a
+   * `justify-content: space-between` row, so the browser compresses IT before
+   * anything overflows -- which means its scrollWidth reads back as the width it
+   * was squeezed to, and the check reports "fits" while labels are wrapping
+   * inside their own boxes. That is the bug this bar had twice.
+   *
+   * Summing the items and adding the gaps measures what the row actually wants,
+   * which is the only number that can be compared against the space available.
+   */
+  const neededWidth = () => {
+    const shown = overflowItems.filter((item) => !item.hidden);
+    const widths = shown.map((item) => item.offsetWidth);
+    if (!widths.length) return 0;
+    const gap = Number.parseFloat(getComputedStyle(list).columnGap) || 0;
+    return widths.reduce((sum, w) => sum + w, 0) + gap * (widths.length - 1);
+  };
+
+  const placeOverflow = () => {
+    if (!overflowItems.length || !moreWrap) return;
+
+    // Start from everything inline, in a state that does not disturb layout.
+    for (const item of overflowItems) item.hidden = false;
+    moreWrap.hidden = true;
+
+    // Below the drawer breakpoint every item measures 0 (the list is display:none)
+    // and "More" stays hidden -- the drawer is the answer there, not a menu.
+    const toolsWidth = bar.querySelector('.nav-bar__tools')?.offsetWidth || 0;
+    const available = bar.clientWidth - toolsWidth - 32; // 32 = bar padding
+
+    if (neededWidth() <= available) {
+      // Everything fits. Hide "More" entirely rather than offering a menu with
+      // nothing in it.
+      moreWrap.hidden = true;
+      closeMore();
+      return;
+    }
+
+    // Otherwise move links out until the row fits. Longest labels go first, so
+    // the ones that stay visible are the ones that read worst in a menu.
+    const moved = [];
+    for (const item of overflowItems) {
+      if (neededWidth() <= available) break;
+      // Move the TALLEST remaining item, measured, rather than assuming order.
+      const tallest = overflowItems
+        .filter((candidate) => !candidate.hidden)
+        .sort((a, b) => b.offsetWidth - a.offsetWidth)[0];
+      if (!tallest || tallest === item) {
+        item.hidden = true;
+        moved.push(item);
+        continue;
+      }
+      tallest.hidden = true;
+      moved.push(tallest);
+      item.hidden = true;
+      moved.push(item);
+    }
+
+    moreWrap.hidden = moved.length === 0;
+    if (moved.length === 0) return;
+
+    moreMenu.innerHTML = moved
+      .map((item) => {
+        const button = item.querySelector('button');
+        if (!button) return '';
+        const page = button.dataset.nav;
+        return `<li><button type="button" data-nav="${escapeHtml(page)}">${escapeHtml(
+          button.textContent.trim()
+        )}</button></li>`;
+      })
+      .join('');
+  };
+
+  placeOverflow();
+
+  // Re-measure on resize and on the theme change, since the wordmark width moves
+  // with the font. Debounced: a drag of the window edge fires this constantly.
+  let resizeTimer = null;
+  const remeasure = () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(placeOverflow, 120);
+  };
+
+  window.addEventListener('resize', remeasure);
+  document.addEventListener('wire:theme-changed', remeasure);
+
+  // The auth slot is filled after boot and changes the width of the tools area.
+  byId('auth-slot') &&
+    new MutationObserver(remeasure).observe(byId('auth-slot'), {
+      childList: true,
+      subtree: true
+    });
 }

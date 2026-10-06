@@ -408,9 +408,16 @@ create trigger podcasts_touch_updated_at_trg
 -- Idempotent: `if not exists` on the bucket, and the policies are dropped and
 -- recreated so a re-paste repairs them.
 -- -----------------------------------------------------------------------------
-insert into storage.buckets (id, name, public)
-values ('podcasts', 'podcasts', true)
-on conflict (id) do update set public = true;
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('podcasts', 'podcasts', true, 26214400)
+on conflict (id) do update
+  set public          = true,
+      file_size_limit = excluded.file_size_limit;
+
+-- file_size_limit is the REAL server-side cap, and the reason the policy below
+-- carries no size expression: a policy cannot see the payload, so `octet_length(name)`
+-- there would measure the OBJECT NAME and cap nothing while looking like a guard.
+-- 25 MB, matching the client's ceiling.
 
 drop policy if exists podcasts_read on storage.objects;
 create policy podcasts_read on storage.objects
@@ -425,8 +432,17 @@ create policy podcasts_upload on storage.objects
   with check (
     bucket_id = 'podcasts'
     and public.is_staff()
+    -- `octet_length(name)` is the length of the OBJECT NAME, not of the file.
+    -- It was written here as if it capped the upload and silently capped
+    -- nothing; a 200 MB MP3 passed it. The real ceiling is the 25 MB one the
+    -- client enforces and the table's own validation, and Supabase enforces its
+    -- own per-object limit server-side regardless -- so the honest thing here is
+    -- to drop the pretend check rather than keep a comment that lies.
+    --
+    -- What IS worth constraining is the path: audio only lands under
+    -- `episodes/`, so nothing can be written to the bucket root and a stray
+    -- upload cannot sit next to the bucket's public URL space unmanaged.
     and coalesce((storage.foldername(name))[1], '') = 'episodes'
-    and octet_length(name) < 26214400
   );
 
 -- Deletion is Owner-only. A writer withdrawing a submission removes the ROW

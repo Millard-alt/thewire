@@ -532,11 +532,16 @@ function renderContent() {
 
   return `
     <div class="space-y-5">
-      ${panelHeader(
-        'Content desk',
-        `${all.length} record${all.length === 1 ? '' : 's'} in the publication archive`,
-        NEW_ARTICLE_BUTTON
-      )}
+    ${panelHeader(
+      'Content desk',
+      `${all.length} record${all.length === 1 ? '' : 's'} in the publication archive`,
+      `<div class="flex flex-wrap gap-2">
+         <button class="btn btn-ghost" data-action="podcast-new">
+           <i class="fa-solid fa-microphone-lines" aria-hidden="true"></i> Submit a podcast
+         </button>
+         ${NEW_ARTICLE_BUTTON}
+       </div>`
+    )}
 
       <div class="flex flex-wrap gap-2" role="group" aria-label="Filter articles by status">
         ${filters
@@ -655,14 +660,9 @@ function renderInterviewsTab() {
       `${all.length} interview${all.length === 1 ? '' : 's'} on file - ${
         pending.length
       } awaiting approval`,
-      `<div class="flex flex-wrap gap-2">
-         <button class="btn btn-ghost" data-action="podcast-new">
-           <i class="fa-solid fa-microphone-lines" aria-hidden="true"></i> Submit a podcast
-         </button>
-         <button class="btn btn-accent" data-action="interview-new">
-           <i class="fa-solid fa-plus" aria-hidden="true"></i> New interview
-         </button>
-       </div>`
+      `<button class="btn btn-accent" data-action="interview-new">
+         <i class="fa-solid fa-plus" aria-hidden="true"></i> New interview
+       </button>`
     )}
 
       <div class="flex flex-wrap gap-2" role="group" aria-label="Filter interviews by status">
@@ -3550,12 +3550,13 @@ function inlineMarkdown(text) {
 let podcastQueue = null;
 
 /**
- * The Owner's podcast approval queue.
+ * The Owner's podcast manager: upload, review, edit, delete.
  *
- * Each row carries a real <audio> player rather than a filename, because the
- * whole point of the decision is whether the audio is right: right episode, right
- * take, not truncated. A title and a duration cannot tell the Owner that, and a
- * silent approve-and-listen-later is how a broken episode reaches readers.
+ * This tab is the ONLY place podcasts are managed. It used to be reachable only
+ * as a submission form sitting on the Interviews tab, which read as though
+ * uploading an episode filed it as an interview -- the two are separate tables
+ * with separate approval flows, and the Owner's own upload belongs here beside
+ * the queue it skips.
  */
 function renderPodcastsTab() {
   const body = byId('admin-tab-body');
@@ -3567,47 +3568,83 @@ function renderPodcastsTab() {
 
   if (podcastQueue) return podcastQueuePanel(podcastQueue);
 
-  listPendingPodcasts().then((episodes) => {
-    podcastQueue = episodes;
-    if (!body.isConnected || body.dataset.tab !== 'podcasts') return;
-    body.innerHTML = podcastQueuePanel(episodes);
-  });
+  // Two reads, run together: the approval queue and everything already
+  // published. An Owner needs to see both at once -- approving something while
+  // unable to find the episode they published last week is the failure mode of
+  // two separate screens.
+  Promise.all([listPendingPodcasts(), listPodcasts()])
+    .then(([pending, published]) => {
+      podcastQueue = { pending, published };
+      if (!body.isConnected || body.dataset.tab !== 'podcasts') return;
+      body.innerHTML = podcastQueuePanel(podcastQueue);
+    })
+    .catch((error) => {
+      console.warn('[admin] podcasts tab failed to load', error);
+      if (!body.isConnected) return;
+      body.innerHTML = `
+        <div class="panel-raised p-6 text-sm">
+          <p class="flex items-center gap-2 font-bold">
+            <i class="fa-solid fa-triangle-exclamation ink-muted" aria-hidden="true"></i>
+            The podcast list could not be loaded
+          </p>
+          <p class="ink-muted mt-2">
+            Run <code>supabase/migrations/024_about_podcasts_and_layout.sql</code> in the
+            Supabase SQL Editor, then reopen this tab.
+          </p>
+        </div>`;
+    });
 
   return `<div class="panel-sunken p-10 text-center">
     <i class="fa-solid fa-circle-notch spin-slow ink-muted text-xl" aria-hidden="true"></i>
-    <p class="ink-muted mt-3 text-sm">Loading the podcast queue…</p>
+    <p class="ink-muted mt-3 text-sm">Loading podcasts…</p>
   </div>`;
 }
 
-function podcastQueuePanel(episodes) {
+function podcastQueuePanel({ pending, published }) {
   return `
-    <div class="space-y-5">
+    <div class="space-y-6">
       ${panelHeader(
-        'Podcast approvals',
-        episodes.length
-          ? `${episodes.length} submission${episodes.length === 1 ? '' : 's'} waiting on you`
-          : 'Nothing waiting',
-        `<a class="btn btn-ghost" href="#podcasts" data-nav="podcasts">
-           <i class="fa-solid fa-eye" aria-hidden="true"></i> Preview page
-         </a>`
+        'Podcasts',
+        `${pending.length} waiting on you · ${published.length} published`,
+        `<div class="flex flex-wrap gap-2">
+           <button class="btn btn-accent" data-action="podcast-upload">
+             <i class="fa-solid fa-upload" aria-hidden="true"></i> Upload an episode
+           </button>
+           <a class="btn btn-ghost" href="#podcasts" data-nav="podcasts">
+             <i class="fa-solid fa-eye" aria-hidden="true"></i> Preview page
+           </a>
+         </div>`
       )}
 
       <p class="panel-sunken p-4 text-xs ink-muted">
         <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
-        Writers file an episode and it waits here. Nothing a writer submits is
-        ever public until you press <strong>Approve</strong>. <strong>Refuse</strong>
-        deletes the record <em>and</em> purges the MP3 from storage, so a refused
-        episode leaves nothing behind.
+        An episode you upload here is <strong>published immediately</strong> — you are
+        the Owner, so there is nobody left to approve it. Episodes a
+        <strong>writer</strong> files arrive in the queue below and stay off the public
+        page until you approve them. Refusing or deleting purges the MP3 from storage.
       </p>
 
-      ${
-        episodes.length
-          ? `<ul class="space-y-4">${episodes.map(podcastQueueRow).join('')}</ul>`
-          : emptyState(
-              'No podcast is waiting for approval.',
-              'fa-headphones'
-            )
-      }
+      <section aria-labelledby="podcast-upload-heading">
+        <h3 id="podcast-upload-heading" class="mb-3 text-sm font-black tracking-tight">
+          Waiting for approval
+        </h3>
+        ${
+          pending.length
+            ? `<ul class="space-y-4">${pending.map(podcastQueueRow).join('')}</ul>`
+            : emptyState('No episode is waiting for approval.', 'fa-headphones')
+        }
+      </section>
+
+      <section aria-labelledby="podcast-live-heading">
+        <h3 id="podcast-live-heading" class="mb-3 text-sm font-black tracking-tight">
+          Published episodes
+        </h3>
+        ${
+          published.length
+            ? `<ul class="space-y-4">${published.map(podcastLiveRow).join('')}</ul>`
+            : emptyState('Nothing published yet. Upload the first episode above.', 'fa-circle-play')
+        }
+      </section>
     </div>
   `;
 }
@@ -3680,6 +3717,228 @@ function podcastDuration(seconds) {
 }
 
 /**
+ * A published episode, with its text editable in place.
+ *
+ * The form is per-row rather than behind an "edit" click so the Owner can fix a
+ * typo without a modal round trip, and Save is disabled until something actually
+ * changed -- the same reason the layout Save is: a button that is always live
+ * teaches people to ignore it.
+ *
+ * The AUDIO is deliberately not editable here. Swapping the file would orphan the
+ * old object in the bucket, and the row cannot tell which object is live
+ * without a second write. Replacing audio means publishing a new episode.
+ */
+function podcastLiveRow(episode) {
+  const id = escapeHtml(episode.id || '');
+  const title = escapeHtml(episode.title || 'Untitled episode');
+  const description = escapeHtml(episode.description || '');
+  const published = episode.created_at
+    ? new Date(episode.created_at).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      })
+    : 'recently';
+
+  return `
+    <li class="panel-raised p-4" data-podcast-row="${id}">
+      <form class="space-y-3" data-podcast-edit-form="${id}" novalidate>
+        <div class="flex flex-wrap items-start gap-3">
+          <div class="min-w-0 flex-1">
+            <label class="field-label" for="podcast-edit-title-${id}">Title</label>
+            <input id="podcast-edit-title-${id}" class="field" type="text"
+              maxlength="120" data-podcast-edit-title value="${title}" />
+          </div>
+          <div class="min-w-0 flex-1">
+            <label class="field-label" for="podcast-edit-author-${id}">Author</label>
+            <input id="podcast-edit-author-${id}" class="field" type="text"
+              maxlength="80" data-podcast-edit-author
+              value="${escapeHtml(episode.author_name || 'The Pulse Staff')}" />
+          </div>
+        </div>
+
+        <div>
+          <label class="field-label" for="podcast-edit-desc-${id}">Description</label>
+          <textarea id="podcast-edit-desc-${id}" class="field" rows="2"
+            maxlength="${PODCAST_DESCRIPTION_LIMIT}"
+            data-podcast-edit-desc>${description}</textarea>
+        </div>
+
+        <p class="ink-muted text-xs">
+          ${escapeHtml(episode.author_name || 'The Pulse Staff')} &#8226;
+          published ${escapeHtml(published)}
+          ${
+            Number.isFinite(episode.duration_seconds)
+              ? `&#8226; ${escapeHtml(podcastDuration(episode.duration_seconds))}`
+              : ''
+          }
+        </p>
+
+        ${
+          episode.audio_url
+            ? `<audio class="podcast-card__audio" controls preload="metadata"
+                src="${escapeHtml(episode.audio_url)}"></audio>`
+            : ''
+        }
+
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="submit" class="btn btn-accent" data-action="podcast-save-edit">
+            <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save changes
+          </button>
+          <button type="button" class="btn btn-ghost text-rose-600"
+            data-action="podcast-delete" data-id="${id}" data-title="${title}">
+            <i class="fa-solid fa-trash" aria-hidden="true"></i> Delete
+          </button>
+          <span class="ink-muted text-[0.7rem]">
+            Deleting also purges the MP3 from storage.
+          </span>
+        </div>
+      </form>
+    </li>
+  `;
+}
+
+/** The Owner's direct-upload dialog. Publishes on submit; never queues. */
+function podcastUploadDialog() {
+  return `
+    <div
+      id="podcast-upload"
+      class="modal-backdrop hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="podcast-upload-title"
+    >
+      <div class="modal-card relative w-full max-w-lg p-6">
+        <button
+          type="button"
+          class="btn-quiet absolute top-4 right-4"
+          data-close-dialog="podcast-upload"
+          aria-label="Close"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+
+        <h3 id="podcast-upload-title" class="font-headline text-xl font-black tracking-wide uppercase">
+          Upload an episode
+        </h3>
+        <p class="ink-muted mt-2 text-xs">
+          This publishes immediately. Writers' submissions arrive in the queue below
+          instead.
+        </p>
+
+        <form id="podcast-upload-form" class="mt-4 space-y-3" novalidate>
+          <div>
+            <label class="field-label" for="podcast-up-title">Episode title</label>
+            <input id="podcast-up-title" class="field" type="text" maxlength="120" required />
+          </div>
+
+          <div>
+            <label class="field-label" for="podcast-up-description">
+              One-line description
+            </label>
+            <textarea id="podcast-up-description" class="field" rows="2"
+              maxlength="${PODCAST_DESCRIPTION_LIMIT}"></textarea>
+            <p class="mt-1 text-[0.6875rem] ink-muted">
+              <span data-podcast-up-count>0</span>/${PODCAST_DESCRIPTION_LIMIT} characters.
+            </p>
+          </div>
+
+          <div>
+            <label class="field-label" for="podcast-up-file">MP3 file</label>
+            <input id="podcast-up-file" class="field" type="file" accept=".mp3,audio/mpeg" />
+            <p class="mt-1 text-[0.6875rem] ink-muted" data-podcast-up-note>
+              MP3 only, up to 25 MB. The length is worked out from the file.
+            </p>
+          </div>
+
+          <div class="flex justify-end gap-2 pt-2">
+            <button type="button" class="btn btn-ghost" data-close-dialog="podcast-upload">
+              Cancel
+            </button>
+            <button type="submit" class="btn btn-accent">
+              <i class="fa-solid fa-upload" aria-hidden="true"></i> Publish
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+async function openPodcastUpload() {
+  // Pre-flight the bucket before the dialog opens, so a misconfigured bucket is
+  // reported here rather than after the Owner has picked a 25 MB file.
+  const ready = await checkPodcastStorage();
+  if (!ready.ok) {
+    showToast(ready.message, { type: 'error', duration: 12000 });
+    return;
+  }
+
+  byId('podcast-up-title').value = '';
+  byId('podcast-up-description').value = '';
+  byId('podcast-up-file').value = '';
+  const note = byId('podcast-upload')?.querySelector('[data-podcast-up-note]');
+  if (note) {
+    note.classList.remove('text-rose-600');
+    note.textContent = 'MP3 only, up to 25 MB. The length is worked out from the file.';
+  }
+  openDialog('podcast-upload', { initialFocus: '#podcast-up-title' });
+}
+
+async function savePodcastUploadFromForm() {
+  const title = byId('podcast-up-title')?.value.trim() || '';
+  const description = byId('podcast-up-description')?.value.trim() || '';
+  const file = byId('podcast-up-file')?.files?.[0];
+
+  if (!title) {
+    showToast('Give the episode a title.', { type: 'error' });
+    return;
+  }
+  if (!file) {
+    showToast('Choose an MP3 to upload.', { type: 'error' });
+    return;
+  }
+
+  const busy = showToast('Uploading the episode…', { type: 'info', duration: 0 });
+  try {
+    const durationSeconds = await readAudioDuration(file);
+    const result = await publishPodcast({ title, description, file, durationSeconds });
+
+    if (!result.ok) {
+      showToast(result.message, { type: 'error', duration: 12000 });
+      return;
+    }
+
+    closeDialog('podcast-upload');
+    podcastQueue = null;
+    showToast(`"${title}" is published.`, { type: 'success' });
+    paintActiveTab();
+  } finally {
+    busy.remove();
+  }
+}
+
+async function savePodcastEditFromForm(form) {
+  const id = form.dataset.podcastEditForm;
+  if (!id) return;
+
+  const result = await updatePodcastText(id, {
+    title: form.querySelector('[data-podcast-edit-title]')?.value.trim() ?? '',
+    authorName: form.querySelector('[data-podcast-edit-author]')?.value.trim() ?? '',
+    description: form.querySelector('[data-podcast-edit-desc]')?.value.trim() ?? ''
+  });
+
+  if (!result.ok) {
+    showToast(result.message, { type: 'error' });
+    return;
+  }
+
+  podcastQueue = null;
+  showToast('Episode updated.', { type: 'success' });
+  paintActiveTab();
+}
+
+/**
  * Read an MP3's duration with the browser's own decoder.
  *
  * No library, and no frame parsing: an off-DOM <audio> pointed at an object URL
@@ -3720,7 +3979,14 @@ function readAudioDuration(file) {
   });
 }
 
-/** The writer's submission dialog. */
+/**
+ * The writer's submission dialog.
+ *
+ * Reachable from the Content tab, which every staffer can open. It is NOT on the
+ * Podcasts tab: that tab is Owner-only, so a writer would have no door at all --
+ * and putting the form on the Interviews tab, as it briefly was, made an episode
+ * look like it was filing as an interview. Neither table is the other.
+ */
 function podcastEditorDialog() {
   return `
     <div
@@ -3843,8 +4109,14 @@ async function savePodcastFromForm(form) {
 
 import {
   listPendingPodcasts,
+  listPodcasts,
   decidePodcast,
   submitPodcast,
+  publishPodcast,
+  updatePodcastText,
+  deletePodcast,
+  checkPodcastStorage,
+  describeStorageError,
   validateAudioFile,
   MAX_DESCRIPTION
 } from '../lib/podcasts.js';
@@ -3862,7 +4134,7 @@ const TABS = [
   // The submission queue is open to any staffer, but the DECISION is not: a tab a
   // writer can open but not act in is a dead end, so the gate is the Owner seat
   // and not a role ranking.
-  { id: 'podcasts', label: 'Podcast Approvals', icon: 'fa-headphones', render: renderPodcastsTab, ownerOnly: true },
+  { id: 'podcasts', label: 'Podcasts', icon: 'fa-headphones', render: renderPodcastsTab, ownerOnly: true },
   { id: 'accounts', label: 'Accounts', icon: 'fa-user-check', render: renderAccountsTab, ownerOnly: true },
   { id: 'assignments', label: 'Assignments', icon: 'fa-clipboard-list', render: renderAssignmentsTab, minRole: 'Writer' },
   { id: 'breaking', label: 'Breaking', icon: 'fa-bolt', render: renderBreakingTab, minRole: 'Board Manager' },
@@ -4064,6 +4336,7 @@ function shellMarkup() {
       ${interviewEditorDialog()}
       ${staffEditorDialog()}
       ${podcastEditorDialog()}
+      ${podcastUploadDialog()}
       ${assignmentEditorDialog()}
       ${passwordResetDialog()}
       ${galleryCategoryPickerDialog()}
@@ -4238,6 +4511,12 @@ function attachAdminListeners() {
     } else if (form.id === 'podcast-form') {
       event.preventDefault();
       guard(() => savePodcastFromForm(form));
+    } else if (form.id === 'podcast-upload-form') {
+      event.preventDefault();
+      guard(() => savePodcastUploadFromForm());
+    } else if (form.dataset.podcastEditForm) {
+      event.preventDefault();
+      guard(() => savePodcastEditFromForm(form));
     } else if (form.id === 'assignment-form') {
       event.preventDefault();
       guard(() => saveAssignmentFromForm(form));
@@ -4960,8 +5239,9 @@ function handleChange(event) {
   // submit. Validating a 30 MB file after the writer has typed a title and a
   // description and pressed the button is the worst moment to tell them the
   // format is wrong.
-  if (target.id === 'podcast-file') {
-    const note = byId('podcast-editor')?.querySelector('[data-podcast-duration]');
+  if (target.id === 'podcast-file' || target.id === 'podcast-up-file') {
+    const dialog = target.closest('[role="dialog"]');
+    const note = dialog?.querySelector('[data-podcast-duration], [data-podcast-up-note]');
     if (!note) return;
 
     const file = target.files?.[0];
@@ -4990,6 +5270,11 @@ function handleChange(event) {
 
   if (target.id === 'podcast-description') {
     const counter = byId('podcast-editor')?.querySelector('[data-podcast-count]');
+    if (counter) counter.textContent = String(target.value.length);
+  }
+
+  if (target.id === 'podcast-up-description') {
+    const counter = byId('podcast-upload')?.querySelector('[data-podcast-up-count]');
     if (counter) counter.textContent = String(target.value.length);
   }
 
@@ -5993,9 +6278,11 @@ function handleClick(event) {
       openInterviewEditor(null);
       break;
 
-    // The writer's door into the podcast feature. It lives on this tab, which
-    // every staffer can open, rather than on the approvals tab, which only the
-    // Owner can -- otherwise a writer has no way to submit at all.
+    // The writer's door into the podcast feature. On the Content tab, which every
+    // staffer can open -- the Owner-only Podcasts tab has no writer door at all,
+    // and the Interviews tab is where this briefly lived, which made an episode
+    // look as though it filed as an interview. Interviews and podcasts are
+    // separate tables with separate approval flows.
     case 'podcast-new':
       openPodcastEditor();
       break;
@@ -6190,6 +6477,14 @@ function handleClick(event) {
     }
 
     /* --- podcasts --- */
+    // The Owner's own upload. A different function from submitPodcast rather than
+    // a flag on it, because submitPodcast always writes 'pending' and the INSERT
+    // policy pins that -- the one path a writer can reach must not be widenable
+    // by adding a parameter.
+    case 'podcast-upload':
+      guard(() => openPodcastUpload());
+      break;
+
     case 'podcast-approve':
       guard(async () => {
         const result = await decidePodcast(id, 'approved');
@@ -6201,19 +6496,27 @@ function handleClick(event) {
       break;
 
     case 'podcast-reject':
-      // Named in the prompt because it is irreversible and it deletes storage:
-      // there is no second confirmation dialog in the panel to appeal to, so the
-      // browser confirm is the last thing standing between a mis-click and a
-      // deleted recording.
+    case 'podcast-delete':
+      // Named in the brief because it is irreversible and it deletes storage:
+      // there is no second confirmation in the panel to appeal to, so the
+      // browser confirm is the last thing between a mis-click and a deleted
+      // recording. Both actions are the SAME act on different rows -- refuse a
+      // pending one, delete a published one -- and share one function so the
+      // object purge can never be forgotten on one path.
       if (
         !window.confirm(
-          `Refuse "${name}"?\n\nThe record is deleted and the MP3 is purged from storage. This cannot be undone.`
+          action === 'podcast-reject'
+            ? `Refuse "${name}"?\n\nThe record is deleted and the MP3 is purged from storage. This cannot be undone.`
+            : `Delete "${name}"?\n\nReaders lose it immediately, and the MP3 is purged from storage. This cannot be undone.`
         )
       ) {
         break;
       }
       guard(async () => {
-        const result = await decidePodcast(id, 'rejected');
+        const result =
+          action === 'podcast-reject'
+            ? await decidePodcast(id, 'rejected')
+            : await deletePodcast(id);
         showToast(result.message, { type: result.ok ? 'success' : 'error', duration: 6000 });
         if (!result.ok) return;
         podcastQueue = null;

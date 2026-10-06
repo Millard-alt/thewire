@@ -88,6 +88,93 @@ function objectName(file) {
   return `episodes/${stamp}-${rand}.mp3`;
 }
 
+/**
+ * Turn a Storage failure into something the Owner can act on.
+ *
+ * The browser logs "Failed to load resource" for any response whose body it
+ * cannot read, so a 404 from Storage and a CORS rejection look identical in the
+ * console. Supabase's own message is the only thing that distinguishes them, and
+ * the previous version of this code threw it away and showed a generic sentence
+ * -- which is how a missing bucket gets reported as "the upload is broken".
+ *
+ * The four causes this distinguishes, in the order they actually occur:
+ *
+ *   • the bucket does not exist          -> run the repair migration
+ *   • the bucket exists but is not public-> readers get a 400 on <audio src>
+ *   • RLS refused the insert             -> the signed-in account is not staff
+ *   • the object is too large           -> lower the client ceiling
+ *
+ * @param {object} error  the Supabase error object
+ * @param {string} what   what was being attempted, for the message
+ * @returns {string}
+ */
+export function describeStorageError(error, what = 'the episode') {
+  const message = String(error?.message || error || 'no message').trim();
+  const status = Number(error?.statusCode || error?.status || 0);
+  const code = String(error?.errorCode || error?.code || '');
+  const lower = message.toLowerCase();
+
+  if (/bucket not found|not_found|404/.test(lower) || (status === 404 && !code)) {
+    return (
+      `The "podcasts" storage bucket does not exist, so ${what} could not be saved. ` +
+      'Run supabase/migrations/025_podcasts_storage_repair.sql in the Supabase SQL editor. ' +
+      `(Storage said: ${message})`
+    );
+  }
+
+  if (/row-level security|violates row-level|new row/.test(lower) || code === '42501') {
+    return (
+      'Supabase Storage refused the upload: the signed-in account is not allowed to write ' +
+      `to the "podcasts" bucket. (Storage said: ${message})`
+    );
+  }
+
+  if (/exceeded the maximum allowed size|payload too large|413/.test(lower) || status === 413) {
+    return (
+      `That episode is too large for Supabase Storage (${message}). ` +
+      `The ceiling is ${Math.round(MAX_BYTES / (1024 * 1024))} MB -- try a lower bitrate.`
+    );
+  }
+
+  if (status === 401 || /jwt|token|not authenticated|authorization/i.test(lower)) {
+    return (
+      `Supabase Storage rejected the request as unauthenticated (${message}). ` +
+      'The upload needs a signed-in staffer session; sign out and back in and retry.'
+    );
+  }
+
+  if (status === 400) {
+    return `Supabase Storage refused ${what} (400: ${message}).`;
+  }
+
+  return `Supabase Storage could not save ${what} (${status || 'no status'}: ${message}).`;
+}
+
+/**
+ * Does the `podcasts` bucket exist and is it writable by this session?
+ *
+ * Runs BEFORE an upload so a misconfigured bucket costs one cheap read instead
+ * of a wasted multi-megabyte POST, and so the writer is told what is wrong while
+ * the file is still on their device.
+ *
+ * @returns {Promise<{ok: boolean, message?: string}>}
+ */
+export async function checkPodcastStorage() {
+  if (config.demoMode) return { ok: true };
+  const client = getSupabase();
+  if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
+
+  try {
+    // A one-item list is the cheapest call that still exercises the bucket AND
+    // this session's read access. It reads no object data.
+    const { error } = await client.storage.from(BUCKET).list('', { limit: 1 });
+    if (error) return { ok: false, message: describeStorageError(error, 'the podcast bucket') };
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: describeStorageError(error, 'the podcast bucket') };
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /* Demo store                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -272,10 +359,22 @@ export async function submitPodcast({ title, description = '', file, durationSec
   const client = getSupabase();
   if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
 
+  // Pre-flight the bucket. Uploading 25 MB to discover the bucket is missing
+  // wastes the writer's data allowance and their time, and the failure they see
+  // is a bare "Failed to load resource" in a console they may never open.
+  const ready = await checkPodcastStorage();
+  if (!ready.ok) return { ok: false, message: ready.message };
+
   const path = objectName(file);
 
   const { error: uploadError } = await client.storage
     .from(BUCKET)
+    // `contentType` is set explicitly rather than left to the browser's guess:
+    // the object is served back to an <audio> tag, and some browsers report an
+    // mp3 as `application/octet-stream`, which makes the response download
+    // rather than play. There is no multipart form here -- a supabase-js upload
+    // is a single binary PUT -- so nothing about this is a CORS preflight beyond
+    // the Authorization header the client always sends.
     .upload(path, file, { cacheControl: '31536000', upsert: false, contentType: MP3_MIME });
 
   if (uploadError) {
@@ -284,8 +383,7 @@ export async function submitPodcast({ title, description = '', file, durationSec
     // so plainly and leave the writer's file untouched on their device.
     return {
       ok: false,
-      message:
-        'The audio could not be uploaded, so nothing was submitted and your file is still on your device. Check your connection and try again.'
+      message: `${describeStorageError(uploadError, 'the episode')} Your file is still on this device.`
     };
   }
 
@@ -393,4 +491,230 @@ export async function decidePodcast(id, decision) {
 /** Can the signed-in session approve? The tab is owner-only; this is the copy. */
 export function canDecidePodcasts() {
   return isOwner();
+}
+
+/* -------------------------------------------------------------------------- */
+/* Owner: direct publication                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Publish an episode as the Owner, skipping the queue.
+ *
+ * The Owner's own upload is not a submission, so it lands 'approved'. This is a
+ * DIFFERENT function from `submitPodcast` on purpose rather than a flag on it:
+ * `submitPodcast` always writes 'pending', and the INSERT policy pins that, so
+ * the one path a writer can reach cannot be widened by adding a parameter to it.
+ *
+ * @param {{title: string, description?: string, file?: File, audioUrl?: string,
+ *          durationSeconds?: number}} input
+ */
+export async function publishPodcast({
+  title,
+  description = '',
+  file = null,
+  audioUrl = '',
+  durationSeconds = null
+} = {}) {
+  const cleanTitle = String(title || '').trim();
+  if (!cleanTitle) return { ok: false, message: 'Give the episode a title.' };
+
+  const cleanDescription = String(description || '').trim();
+  if (cleanDescription.length > MAX_DESCRIPTION) {
+    return {
+      ok: false,
+      message: `The description is ${cleanDescription.length} characters. The limit is ${MAX_DESCRIPTION}.`
+    };
+  }
+
+  const who = displayName();
+
+  // A pasted URL is accepted as well as an upload, matching every other media
+  // field in this panel. It is validated with safeUrl by the caller-facing form;
+  // here it only has to be a non-empty string.
+  if (!file && !String(audioUrl).trim()) {
+    return { ok: false, message: 'Upload an MP3, or paste a link to one.' };
+  }
+
+  if (config.demoMode) {
+    const path = file ? objectName(file) : '';
+    const row = {
+      id: `demo-pod-${Date.now().toString(36)}`,
+      title: cleanTitle,
+      description: cleanDescription || null,
+      author_name: who,
+      duration_seconds: Number.isFinite(Number(durationSeconds))
+        ? Math.round(Number(durationSeconds))
+        : null,
+      status: 'approved',
+      audio_url: file ? URL.createObjectURL(file) : String(audioUrl).trim(),
+      storage_path: path,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    writeDemo([row, ...demoRows()]);
+    return { ok: true, message: 'Episode published.', podcast: row };
+  }
+
+  const client = getSupabase();
+  if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
+
+  let path = '';
+  let url = String(audioUrl).trim();
+
+  if (file) {
+    const ready = await checkPodcastStorage();
+    if (!ready.ok) return { ok: false, message: ready.message };
+
+    const problem = validateAudioFile(file);
+    if (problem) return { ok: false, message: problem };
+
+    path = objectName(file);
+    const { error } = await client.storage
+      .from(BUCKET)
+      .upload(path, file, {
+        cacheControl: '31536000',
+        upsert: false,
+        contentType: MP3_MIME
+      });
+    if (error) {
+      return {
+        ok: false,
+        message: `${describeStorageError(error, 'the episode')} Your file is still on this device.`
+      };
+    }
+    url = client.storage.from(BUCKET).getPublicUrl(path).data?.publicUrl || '';
+  }
+
+  const { data, error } = await client
+    .from('podcasts')
+    .insert({
+      title: cleanTitle,
+      description: cleanDescription || null,
+      audio_url: url || null,
+      storage_path: path || null,
+      duration_seconds: Number.isFinite(Number(durationSeconds))
+        ? Math.round(Number(durationSeconds))
+        : null,
+      status: 'approved',
+      author_name: who
+    })
+    .select()
+    .single();
+
+  if (error) {
+    if (path) await client.storage.from(BUCKET).remove([path]).catch(() => {});
+    return { ok: false, message: `The episode could not be saved: ${error.message}` };
+  }
+
+  return { ok: true, message: 'Episode published.', podcast: data };
+}
+
+/**
+ * Edit an episode's text. Deliberately NOT audio: swapping the file would orphan
+ * the old object in the bucket, and the row cannot tell which object is live
+ * without a second write. Replacing audio is "upload a new one and delete this".
+ *
+ * @param {string} id
+ * @param {{title?: string, description?: string, authorName?: string}} patch
+ */
+export async function updatePodcastText(id, patch) {
+  const title = patch.title === undefined ? undefined : String(patch.title).trim();
+  if (title === '') return { ok: false, message: 'An episode needs a title.' };
+
+  const description =
+    patch.description === undefined ? undefined : String(patch.description).trim();
+  if (description !== undefined && description.length > MAX_DESCRIPTION) {
+    return {
+      ok: false,
+      message: `The description is ${description.length} characters. The limit is ${MAX_DESCRIPTION}.`
+    };
+  }
+
+  if (config.demoMode) {
+    const rows = demoRows();
+    const next = rows.map((row) =>
+      row.id === id
+        ? {
+            ...row,
+            ...(title === undefined ? {} : { title }),
+            ...(description === undefined ? {} : { description: description || null }),
+            ...(patch.authorName === undefined
+              ? {}
+              : { author_name: String(patch.authorName).trim() || row.author_name })
+          }
+        : row
+    );
+    if (!next.some((row) => row.id === id)) {
+      return { ok: false, message: 'That episode is no longer listed.' };
+    }
+    writeDemo(next);
+    return { ok: true, message: 'Episode updated.' };
+  }
+
+  const client = getSupabase();
+  if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
+
+  const row = {};
+  if (title !== undefined) row.title = title;
+  if (description !== undefined) row.description = description || null;
+  if (patch.authorName !== undefined) {
+    row.author_name = String(patch.authorName).trim() || 'The Pulse Staff';
+  }
+  if (!Object.keys(row).length) return { ok: true, message: 'Nothing to change.' };
+
+  const { data, error } = await client
+    .from('podcasts')
+    .update(row)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) return { ok: false, message: `The episode could not be updated: ${error.message}` };
+  return { ok: true, message: 'Episode updated.', podcast: data };
+}
+
+/**
+ * Delete an episode and purge its audio.
+ *
+ * Used by BOTH "remove" and "refuse": they are the same act on different rows,
+ * and having two paths was how the first version ended up orphaning objects.
+ *
+ * @param {string} id
+ */
+export async function deletePodcast(id) {
+  if (config.demoMode) {
+    const rows = demoRows();
+    const row = rows.find((entry) => entry.id === id);
+    if (!row) return { ok: false, message: 'That episode is no longer listed.' };
+    if (row.audio_url?.startsWith('blob:')) URL.revokeObjectURL(row.audio_url);
+    writeDemo(rows.filter((entry) => entry.id !== id));
+    return { ok: true, message: 'Episode deleted and its audio purged.' };
+  }
+
+  const client = getSupabase();
+  if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
+
+  const { data: existing } = await client
+    .from('podcasts')
+    .select('storage_path')
+    .eq('id', id)
+    .maybeSingle();
+
+  const { error } = await client.from('podcasts').delete().eq('id', id);
+  if (error) return { ok: false, message: `The episode could not be deleted: ${error.message}` };
+
+  if (existing?.storage_path) {
+    const { error: purgeError } = await client.storage
+      .from(BUCKET)
+      .remove([existing.storage_path]);
+    if (purgeError) {
+      console.warn('[podcasts] could not purge the deleted audio', purgeError);
+      return {
+        ok: true,
+        message: 'Episode deleted. Its audio could not be purged from storage.'
+      };
+    }
+  }
+
+  return { ok: true, message: 'Episode deleted and its audio purged.' };
 }

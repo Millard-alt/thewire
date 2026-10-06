@@ -538,13 +538,17 @@
      --nav-underline carries the accent so light and dark stay in step from one
      declaration instead of a `.dark .nav-link::after` override. */
   .nav-link {
-    display: inline-flex;
-    align-items: center;
-    /* Uniform horizontal padding on every link, so the gap between two items is
-       the same whether the label is "Weekly" or "Photo Gallery". */
-    padding-block: 0.25rem;
-    padding-inline: 0.5rem;
-    color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  /* Uniform horizontal padding on every link, so the gap between two items is
+     the same whether the label is "Weekly" or "Photo Gallery". */
+  padding-block: 0.25rem;
+  padding-inline: 0.5rem;
+  /* Never wrap a label. See the note on .nav-bar__links: a squeezed flex item
+     wraps its own text rather than overflowing, which is what made this bar look
+     like two uneven lines. */
+  white-space: nowrap;
+  color: var(--text);
     background-image: linear-gradient(var(--nav-underline), var(--nav-underline));
     background-repeat: no-repeat;
     background-position: 0 100%;
@@ -2422,6 +2426,313 @@ class because the ratio is the whole point.
   }
 
   .layout-row__rank {
+    display: none;
+  }
+}
+
+/* =============================================================================
+   NAVIGATION BAR
+   -----------------------------------------------------------------------------
+   One line on desktop, a drawer on mobile, and a measured overflow menu in
+   between. Every rule here exists because the bar broke in a specific way:
+
+   • It wrapped onto two uneven lines, because the list was `flex-wrap: wrap`
+     with `justify-content`. A centred wrapped row puts the remainder off one
+     end. Now: nowrap, space-between, fixed gap.
+   • Every item's hit area was a different width, because `.nav-link` was an
+     inline-block hugging its glyphs. Now a flex box with uniform padding.
+   • On a phone it stacked into the masthead. Now the links live in a drawer and
+     the bar holds a burger, a wordmark, search and the theme toggle.
+
+   The overflow menu is MEASURED, not breakpoint-guessed: navOverflow() compares
+   the natural width of the inline row against the space available and moves
+   links into "More" until it fits. A media query would have to be tuned by hand
+   against a font that changes with the theme.
+   ========================================================================== */
+.nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 1rem;
+  margin-inline: auto;
+  max-width: 80rem;
+  padding-inline: 1rem;
+  padding-block: 0.5rem;
+}
+
+.nav-bar__links {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: nowrap;
+  min-width: 0;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/*
+ * THE TWO RULES THAT ACTUALLY FIX THE WRAPPING.
+ *
+ * Both are load-bearing, and the bug they prevent is the one this bar reported
+ * twice. A flex item's default is `flex-shrink: 1`, so when the row is slightly
+ * too wide the browser does not overflow -- it COMPRESSES the items, and the text
+ * inside each one wraps to a second line. Measured, "Today's Pick" came out 41px
+ * tall next to "Weekly" at 24.5px: same bar, same font, two heights.
+ *
+ * That is invisible to an overflow check, because nothing overflows; and it makes
+ * the row look "uneven" rather than broken, which is why it survived a wrapping
+ * fix. `flex-shrink: 0` plus `white-space: nowrap` mean the row is either
+ * genuinely too wide -- which navOverflow() detects via scrollWidth and answers
+ * by moving links into "More" -- or it fits. There is no third state.
+ */
+.nav-bar__links > li {
+  display: flex;
+  flex-shrink: 0;
+}
+
+/* Hidden below the drawer breakpoint. The links are not lost: navDrawer() renders
+   the same list into the drawer, so a phone has every destination. */
+.nav-bar__links,
+.nav-bar__more {
+  display: none;
+}
+
+/* Below the drawer breakpoint the burger and the wordmark are the whole left
+   side of the bar. The wordmark is there because a hamburger with nothing beside
+   it is a mystery button; the masthead block above carries the full title, so
+   this is the compact repeat of it, not a second brand statement. */
+@media (width < 48rem) {
+  .nav-bar__burger,
+  .nav-bar__wordmark {
+    display: inline-flex;
+  }
+}
+
+.nav-bar__tools {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.nav-bar__burger {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 0.375rem;
+  cursor: pointer;
+}
+
+.nav-bar__burger:hover {
+  background: var(--surface-sunken);
+}
+
+.nav-bar__wordmark {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  font-family: var(--font-headline, Georgia, serif);
+  font-size: 0.9375rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.nav-bar__more {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.nav-more-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.5rem);
+  z-index: 50;
+  min-width: 12rem;
+  padding-block: 0.375rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule);
+  border-radius: 0.5rem;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.16);
+}
+
+.nav-more-menu a,
+.nav-more-menu button {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--text);
+  text-decoration: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.nav-more-menu a:hover,
+.nav-more-menu a:focus-visible,
+.nav-more-menu button:hover,
+.nav-more-menu button:focus-visible {
+  background: var(--surface-sunken);
+  color: var(--color-newsred);
+}
+
+.dark .nav-more-menu a:hover,
+.dark .nav-more-menu button:hover {
+  color: var(--color-newsgold-bright);
+}
+
+/* --- The drawer ------------------------------------------------------------ */
+.nav-drawer {
+  width: min(20rem, 84vw);
+  max-width: none;
+  height: 100dvh;
+  max-height: 100dvh;
+  margin: 0 0 0 auto;
+  padding: 0;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 0;
+  border-left: 1px solid var(--rule);
+}
+
+.nav-drawer::backdrop {
+  background: rgb(0 0 0 / 0.5);
+}
+
+.nav-drawer[open] {
+  display: flex;
+  flex-direction: column;
+  animation: nav-drawer-in 200ms var(--ease-out-expo);
+}
+
+@keyframes nav-drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-drawer[open] {
+    animation: none;
+  }
+}
+
+.nav-drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.125rem;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.nav-drawer__wordmark {
+  font-family: var(--font-headline, Georgia, serif);
+  font-size: 1rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.nav-drawer__list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem 0;
+}
+
+/* 3rem minimum per row: the 44px touch-target guidance is about the row, not
+   the glyph, and a 0.6875rem uppercase label is far too small a target on its
+   own. */
+.nav-drawer__item a,
+.nav-drawer__item button {
+  display: flex;
+  align-items: center;
+  min-height: 3rem;
+  width: 100%;
+  padding: 0.75rem 1.125rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--text);
+  text-decoration: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.nav-drawer__item a[aria-current='page'],
+.nav-drawer__item button[aria-current='page'] {
+  color: var(--color-newsred);
+  box-shadow: inset 3px 0 0 currentColor;
+}
+
+.dark .nav-drawer__item a[aria-current='page'],
+.dark .nav-drawer__item button[aria-current='page'] {
+  color: var(--color-newsgold-bright);
+}
+
+.nav-drawer__foot {
+  padding: 0.75rem 0 1.125rem;
+  border-top: 1px solid var(--rule-soft);
+}
+
+.nav-drawer__link {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0.625rem 1.125rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+/* --------------------------------------------------------------------------
+   Breakpoints. Above 64rem the full row fits and nothing overflows; below 48rem
+   everything moves into the drawer. Between the two, navOverflow() decides.
+   -------------------------------------------------------------------------- */
+@media (width >= 64rem) {
+  .nav-bar__links,
+  .nav-bar__more {
+    display: flex;
+  }
+  .nav-bar__links > li {
+    display: flex;
+  }
+  .nav-bar__burger,
+  .nav-bar__wordmark {
+    display: none;
+  }
+}
+
+@media (width >= 48rem) and (width < 64rem) {
+  .nav-bar__links,
+  .nav-bar__more {
+    display: flex;
+  }
+  .nav-bar__links > li {
+    display: flex;
+  }
+  .nav-bar__burger,
+  .nav-bar__wordmark {
     display: none;
   }
 }

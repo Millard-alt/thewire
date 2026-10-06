@@ -61,6 +61,7 @@ const podcastsSrc = read('src/lib/podcasts.js');
 const storeSrc = read('src/lib/store.js');
 const stylesSrc = read('src/styles.css');
 const migration = read('supabase/migrations/024_about_podcasts_and_layout.sql');
+const repairSql = read('supabase/migrations/025_podcasts_storage_repair.sql');
 
 let pass = 0;
 let fail = 0;
@@ -158,8 +159,26 @@ const navBlock = (() => {
  */
 const css = stylesSrc.replace(/\/\*[\s\S]*?\*\//g, '');
 
-report('the primary link list centres its items', /justify-center/.test(navBlock));
-report('the gap is 1.5rem on both axes', /gap-x-6/.test(navBlock) && /gap-y-2/.test(navBlock));
+report(
+  'nav items cannot be squeezed',
+  /\.nav-bar__links > li\s*\{[^}]*flex-shrink:\s*0/.test(css),
+  'flex items default to flex-shrink:1, so a too-wide row COMPRESSES them and the label wraps inside its own box -- two heights in one bar, and no overflow for a check to find'
+);
+report(
+  'a nav label never wraps',
+  /\.nav-link\s*\{[\s\S]*?white-space:\s*nowrap/.test(css)
+);
+report('the bar is a single line, never a wrapped one', /\.nav-bar\s*\{[\s\S]*?flex-wrap:\s*nowrap/.test(css));
+report(
+  'it distributes with space-between, as specified',
+  /\.nav-bar\s*\{[\s\S]*?justify-content:\s*space-between/.test(css) &&
+    /\.nav-bar\s*\{[\s\S]*?align-items:\s*center/.test(css)
+);
+report(
+  'the inline row uses the specified 1.25rem gap',
+  /\.nav-bar__links\s*\{[\s\S]*?gap:\s*1\.25rem/.test(css),
+  '1.5rem was the previous value and it is what pushed the ninth link onto a second line'
+);
 report(
   '.nav-link no longer positions itself or hugs its glyphs',
   /\.nav-link\s*\{[\s\S]*?display:\s*inline-flex/.test(css) &&
@@ -181,6 +200,80 @@ report(
   /--nav-underline:\s*var\(--color-newsred\)/.test(css) &&
     /--nav-underline:\s*var\(--color-newsgold-bright\)/.test(css) &&
     !/\.dark \.nav-link::after\s*\{/.test(css)
+);
+
+/* --- mobile drawer + overflow ------------------------------------------- */
+report('inline links are hidden below the drawer breakpoint', /\.nav-bar__links,\s*\.nav-bar__more\s*\{\s*display:\s*none/.test(css));
+report('the burger is a real control, not a label', /\.nav-bar__burger\s*\{[\s\S]*?width:\s*2\.5rem/.test(css));
+report('the drawer is a dialog, so focus and Escape come for free', /<dialog id="nav-drawer"/.test(indexHtml));
+report(
+  'drawer rows have a touch-sized target',
+  /\.nav-drawer__item a,[\s\S]*?min-height:\s*3rem/.test(css),
+  'a 0.6875rem uppercase label is far too small a tap target on its own'
+);
+report(
+  'the drawer respects reduced-motion',
+  /@media \(prefers-reduced-motion: reduce\)[\s\S]*?nav-drawer/.test(css)
+);
+report(
+  'the overflow menu is MEASURED, not breakpoint-guessed',
+  /const placeOverflow = \(\) => \{/.test(publicSrc) && /const neededWidth = \(\) => \{/.test(publicSrc),
+  'a media query has to be hand-tuned against a wordmark whose width moves with the theme'
+);
+report(
+  'the width measured is the sum of the items, NOT the list scrollWidth',
+  /widths\.reduce\(\(sum, w\) => sum \+ w, 0\)/.test(publicSrc) &&
+    !/const needed = list\.scrollWidth/.test(publicSrc),
+  'the <ul> is itself a shrinkable flex item, so its scrollWidth reads back the width it was squeezed to and the check reports "fits" while labels wrap'
+);
+report(
+  'the wordmark sits beside the burger on a phone',
+  /@media \(width < 48rem\)[\s\S]*?\.nav-bar__burger,\s*\n?\s*\.nav-bar__wordmark\s*\{[\s\S]*?display:\s*inline-flex/.test(css),
+  'a hamburger with nothing beside it is a mystery button'
+);
+report(
+  '"More" is hidden entirely when nothing overflows',
+  /moreWrap\.hidden = true;/.test(publicSrc)
+);
+report(
+  'the drawer re-measures on resize and on a theme change',
+  /addEventListener\('resize', remeasure\)/.test(publicSrc) &&
+    /wire:theme-changed/.test(publicSrc)
+);
+
+/*
+ * One link list, three renderings. They were three hardcoded <ul>s and they
+ * drifted: a section added to the masthead row never reached the drawer, so it
+ * was unreachable on a phone entirely.
+ */
+report(
+  'the drawer is populated from the shared NAV_LINKS list',
+  /const NAV_LINKS = \[/.test(publicSrc) &&
+    /NAV_LINKS\.map/.test(publicSrc) &&
+    /<ul class="nav-drawer__list" data-nav-drawer-list><\/ul>/.test(indexHtml),
+  'an empty container filled at runtime, not a fourth copy of the markup'
+);
+report(
+  'every NAV_LINKS destination is reachable from the drawer',
+  (() => {
+    const block = publicSrc.slice(
+      publicSrc.indexOf('const NAV_LINKS = ['),
+      publicSrc.indexOf('function initNavigation()')
+    );
+    const pages = [...block.matchAll(/page:\s*'([a-z]+)'/g)].map((m) => m[1]);
+    const anchors = [...block.matchAll(/anchor:\s*'(#[a-z-]+)'/g)].map((m) => m[1]);
+    // Views live in index.html as empty mounts; the ANCHORS are rendered at
+    // runtime by public.js, so they can only be checked against that file. A nav
+    // link pointing at a section that no longer exists is a dead row, and the
+    // front page is assembled in JS rather than declared in the shell.
+    return (
+      pages.length > 0 &&
+      anchors.length > 0 &&
+      pages.every((page) => indexHtml.includes(`id="${page}-view"`)) &&
+      anchors.every((anchor) => publicSrc.includes(`id="${anchor.slice(1)}"`))
+    );
+  })(),
+  'a link pointing at a view or anchor that does not exist is a dead drawer row'
 );
 
 console.log('\nSECTION 3 — the About page\n');
@@ -363,11 +456,47 @@ report(
     !/const BUCKET = 'wire-media/.test(podcastsSrc),
   'sharing a bucket makes a delete bug in one feature a data loss in another'
 );
+/*
+ * SQL comments are stripped before the size-cap assertions, for the same reason
+ * the CSS ones are: both migrations explain at length WHY the pretend cap was
+ * removed, and a naive grep for it matches the explanation of its removal and
+ * reports the bug as still present.
+ */
+const sqlLive = (text) => text.replace(/--[^\n]*/g, '');
+
 report(
-  'the upload policy is audio-only, size-capped and path-scoped',
-  /bucket_id = 'podcasts'/.test(migration) &&
-    /'episodes'/.test(migration) &&
-    /octet_length\(name\) < 26214400/.test(migration)
+  'the upload policy is audio-only and path-scoped',
+  /bucket_id = 'podcasts'/.test(sqlLive(migration)) && /'episodes'/.test(sqlLive(migration))
+);
+report(
+  'no policy pretends to cap the upload size',
+  !/octet_length\(name\)/.test(sqlLive(migration)) &&
+    !/octet_length\(name\)/.test(sqlLive(repairSql)),
+  'octet_length(name) is the length of the FILENAME, so it capped nothing while reading as a cap'
+);
+report(
+  'the real size cap is the bucket file_size_limit',
+  /insert into storage\.buckets \([^)]*file_size_limit\)/.test(sqlLive(migration)) &&
+    /values\s*\(\s*'podcasts',\s*'podcasts',\s*true,\s*26214400\s*\)/.test(sqlLive(migration)) &&
+    /file_size_limit\s*=\s*excluded\.file_size_limit/.test(sqlLive(repairSql)),
+  'a real server-side ceiling, matching the client 25 MB'
+);
+report(
+  'the client refuses an oversized file before uploading it',
+  /const MAX_BYTES = 25 \* 1024 \* 1024/.test(podcastsSrc) && /The limit is 25 MB/.test(podcastsSrc)
+);
+report(
+  'the bucket is pre-flighted so a missing bucket costs one cheap read',
+  /export async function checkPodcastStorage/.test(podcastsSrc) &&
+    /await checkPodcastStorage\(\)/.test(podcastsSrc)
+);
+report(
+  "the real Storage error reaches the user, not a generic sentence",
+  /export function describeStorageError/.test(podcastsSrc) &&
+    /Storage said:/.test(podcastsSrc) &&
+    /row-level security/.test(podcastsSrc) &&
+    /bucket not found/.test(podcastsSrc),
+  '"Failed to load resource" is the browser message for any unreadable response; only Supabase\'s own text separates a missing bucket from an RLS refusal'
 );
 report(
   'there is deliberately NO data-URL fallback for audio',
@@ -402,9 +531,56 @@ report(
 );
 report(
   'the approval queue is Owner-gated and shows a real player',
-  /id: 'podcasts', label: 'Podcast Approvals'[\s\S]*?ownerOnly: true/.test(adminSrc) &&
+  /id: 'podcasts', label: 'Podcasts'[\s\S]*?ownerOnly: true/.test(adminSrc) &&
     /<audio class="podcast-card__audio mt-3" controls/.test(adminSrc),
   'the decision needs to be "is this the right audio", which a title cannot answer'
+);
+report(
+  'the Owner can publish directly, skipping the queue',
+  /export async function publishPodcast/.test(podcastsSrc) &&
+    /status: 'approved'/.test(podcastsSrc) &&
+    /data-action="podcast-upload"/.test(adminSrc)
+);
+report(
+  'direct publish is a SEPARATE function from the writer submission',
+  /export async function publishPodcast/.test(podcastsSrc) &&
+    /export async function submitPodcast/.test(podcastsSrc) &&
+    adminSrc.indexOf("case 'podcast-upload'") !== adminSrc.indexOf("case 'podcast-new'"),
+  'submitPodcast always writes pending and the INSERT policy pins it; adding a flag to it would widen the path a writer can reach'
+);
+report(
+  'the Owner can edit an episode in place',
+  /export async function updatePodcastText/.test(podcastsSrc) &&
+    /data-podcast-edit-form/.test(adminSrc) &&
+    /data-action="podcast-save-edit"/.test(adminSrc)
+);
+report(
+  'editing text does NOT offer to swap the audio',
+  /Replacing audio means publishing a new episode|replacing the file would orphan/i.test(adminSrc),
+  'swapping the file would orphan the old object and the row cannot tell which is live'
+);
+report(
+  'the Owner can delete a published episode',
+  /export async function deletePodcast/.test(podcastsSrc) &&
+    /data-action="podcast-delete"/.test(adminSrc)
+);
+report(
+  'refuse and delete share one function, so neither can forget the purge',
+  /action === 'podcast-reject'[\s\S]{0,260}: await deletePodcast\(id\)/.test(adminSrc),
+  'two paths is how the first version ended up orphaning objects on one of them'
+);
+report(
+  'the writer submit door is NOT on the Interviews tab',
+  !/data-action="podcast-new"[\s\S]{0,400}Interviews desk/.test(adminSrc),
+  'an episode filed from the Interviews desk reads as though it files as an interview'
+);
+report(
+  'the writer door is on a tab every staffer can reach',
+  /data-action="podcast-new"/.test(adminSrc) &&
+    !adminSrc
+      .slice(adminSrc.indexOf('function renderPodcastsTab'), adminSrc.indexOf('function podcastQueuePanel'))
+      .includes('podcast-new'),
+  'the Podcasts tab is Owner-only, so a writer has no door at all if the form lives there'
 );
 report(
   'refusing asks for confirmation and says it purges',

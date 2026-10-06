@@ -143,51 +143,92 @@
         </div>
       </div>
 
-      <!-- Navigation -->
+      <!-- Navigation
+           -----------------------------------------------------------------------------
+           Layout rules, because this bar broke twice before:
+
+           • DESKTOP is one line, never two. `flex-wrap: nowrap` plus a fixed gap
+             means links cannot reflow onto a second row; anything that does not
+             fit moves into the "More" menu instead. The previous
+             `flex-wrap: wrap` + `justify-center` produced two uneven lines the
+             moment a ninth link was added, because centring a wrapped row leaves
+             the remainder hanging off one end.
+
+           • The primary five are always inline. They are the sections a reader
+             actually navigates by, and they are short enough to survive down to
+             about 60rem.
+
+           • MOBILE shows no inline text links at all -- just the hamburger, the
+             wordmark, search and the theme toggle -- and the links live in a
+             slide-out drawer. A wrapped two-line nav bar on a phone costs more
+             vertical space than the masthead it sits under.
+          -->
       <nav
         class="surface-raised rule-soft sticky top-0 z-40 border-b shadow-sm backdrop-blur"
         aria-label="Primary"
       >
-        <div
-          class="mx-auto flex max-w-7xl flex-wrap items-center gap-2 px-4 py-2.5"
-        >
+        <div class="nav-bar">
           <button
             id="mobile-nav-toggle"
-            class="btn btn-ghost md:hidden"
+            class="nav-bar__burger"
             aria-expanded="false"
             aria-controls="primary-links"
           >
             <i class="fa-solid fa-bars" aria-hidden="true"></i>
-            <span>Menu</span>
+            <span class="sr-only">Menu</span>
           </button>
+
+          <!-- Compact wordmark. The masthead above already carries the full
+               title, so this appears only where that masthead is not in view --
+               i.e. on a phone, where the hamburger needs something to sit beside. -->
+          <a href="#masthead-title" class="nav-bar__wordmark" data-nav="publication">
+            The Pulse
+          </a>
 
           <ul
             id="primary-links"
-            class="flex flex-1 flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[0.6875rem] font-bold tracking-[0.12em] uppercase"
+            class="nav-bar__links"
           >
             <li><a class="nav-link" href="#latest">Latest</a></li>
             <li><a class="nav-link" href="#today">Today's Pick</a></li>
             <li><a class="nav-link" href="#weekly">Weekly</a></li>
             <li><a class="nav-link" href="#assignments">Assignments</a></li>
             <li><a class="nav-link" href="#masthead-foot">Masthead</a></li>
-            <li>
-              <button class="nav-link" type="button" data-nav="interviews">INTERVIEWS</button>
+            <li data-nav-overflow>
+              <button class="nav-link" type="button" data-nav="interviews">Interviews</button>
             </li>
-            <li>
-              <button class="nav-link" type="button" data-nav="podcasts">PODCASTS</button>
+            <li data-nav-overflow>
+              <button class="nav-link" type="button" data-nav="podcasts">Podcasts</button>
             </li>
-            <li>
-              <button class="nav-link" type="button" data-nav="gallery">PHOTO GALLERY</button>
+            <li data-nav-overflow>
+              <button class="nav-link" type="button" data-nav="gallery">Photo Gallery</button>
             </li>
-            <li>
-              <button class="nav-link" type="button" data-nav="credits">CREDITS</button>
+            <li data-nav-overflow>
+              <button class="nav-link" type="button" data-nav="credits">Credits</button>
             </li>
-            <li>
-              <button class="nav-link" type="button" data-nav="about">ABOUT US</button>
+            <li data-nav-overflow>
+              <button class="nav-link" type="button" data-nav="about">About Us</button>
             </li>
           </ul>
 
-          <div class="flex items-center gap-2">
+          <!-- Overflow. Populated and shown by navOverflow() in public.js only
+               when the inline row would not fit; with room to spare it is hidden
+               entirely, so a wide screen never shows a "More" menu with nothing
+               worth putting in it. -->
+          <div class="nav-bar__more" data-nav-more hidden>
+            <button
+              type="button"
+              class="nav-link"
+              id="nav-more-toggle"
+              aria-expanded="false"
+              aria-controls="nav-more-menu"
+            >
+              More <i class="fa-solid fa-chevron-down text-[0.5rem]" aria-hidden="true"></i>
+            </button>
+            <ul id="nav-more-menu" class="nav-more-menu" hidden></ul>
+          </div>
+
+          <div class="nav-bar__tools">
             <!-- Search -->
             <button
               id="open-search"
@@ -227,6 +268,38 @@
           </div>
         </div>
       </nav>
+
+      <!-- Mobile navigation drawer.
+           A dialog, not a styled <ul>: on a phone the links cover the whole
+           viewport, and a disclosure that covers the page has to trap focus, take
+           Escape, restore focus to the button that opened it, and stop the page
+           behind it scrolling. `showModal()` gives all of that for free, and the
+           existing focus-trapped dialog helpers in views/admin.js were written
+           for exactly this shape.
+
+           It is EMPTY in the markup and filled by navDrawer() in
+           views/public.js, because the same list is rendered three ways --
+           inline, in the overflow menu, and here -- and duplicating the markup a
+           third time is how the three copies drift. -->
+      <dialog id="nav-drawer" class="nav-drawer" aria-label="Menu">
+        <div class="nav-drawer__head">
+          <span class="nav-drawer__wordmark">The Pulse</span>
+          <button
+            type="button"
+            class="btn btn-quiet"
+            id="nav-drawer-close"
+            aria-label="Close menu"
+          >
+            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+          </button>
+        </div>
+        <ul class="nav-drawer__list" data-nav-drawer-list></ul>
+        <div class="nav-drawer__foot">
+          <a class="nav-drawer__link" href="#masthead-foot">Masthead</a>
+          <a class="nav-drawer__link" href="#latest">Latest Coverage</a>
+          <a class="nav-drawer__link" href="#assignments">Assignment Board</a>
+        </div>
+      </dialog>
 
       <!-- Breaking news ticker (rendered from the store) -->
       <div id="breaking-banner-slot"></div>
