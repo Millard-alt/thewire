@@ -1369,6 +1369,9 @@ body.admin-active.dialog-locked {
   height: 100%;
   border: 0;
   box-shadow: none;
+  object-fit: cover;
+  object-position: center;
+  transition: none;
   transform: none;
 }
 
@@ -1445,6 +1448,44 @@ button.byline-sticker {
     transition: none;
     transform: none;
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Staff / Accounts table cell alignment                                       */
+/* -------------------------------------------------------------------------- */
+/*
+ * Every cell in the Staff Directory and Approved Accounts tables used to be
+ * left-aligned, so the portraits sat on the top edge of their row while the
+ * names, e-mails and badges floated at the baseline. The columns therefore
+ * never lined up as a grid.
+ *
+ * Vertical alignment is the whole fix. The portrait cell also pins its sticker
+ * to a fixed box (`width/height` + `flex-shrink: 0`) so a non-square upload
+ * cannot stretch the column or drift off centre; the image itself is covered
+ * by `.staff-portrait .byline-sticker` above, so `object-fit: cover` is
+ * applied there rather than on the raw `<img>`.
+ */
+.staff-table tbody td,
+.accounts-table tbody td {
+  vertical-align: middle;
+}
+
+.staff-table thead th,
+.accounts-table thead th {
+  vertical-align: middle;
+}
+
+.staff-table .staff-portrait,
+.accounts-table .staff-portrait {
+  width: 3rem;
+  height: 3rem;
+  flex-shrink: 0;
+}
+
+.staff-table td,
+.accounts-table td {
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
 }
 /* =============================================================================
    GALLERY PAGE + ARTICLE PHOTO STRIP

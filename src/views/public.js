@@ -16,9 +16,31 @@ import {
   openDialog,
   closeDialog,
   showToast,
-  formatEditionDate
+  formatEditionDate,
+  imageFallbackAttr
 } from '../lib/dom.js';
-import { bylineSticker } from '../lib/credits.js';
+import { bylineSticker, portraitForArticle } from '../lib/credits.js';
+
+/**
+ * A story byline, with the author's portrait resolved from the article's
+ * FOREIGN KEY (author_account_id) before its byline text.
+ *
+ * Name matching used to be the only path, which is what let a byline typed with
+ * a small variation borrow a different staffer's face. `portraitForArticle`
+ * tries the immutable id first and only falls back to the name for rows written
+ * before migration 007 or by contributors with no account at all.
+ *
+ * Every byline on the site goes through here -- the cards, the Weekly slots,
+ * Today's Pick, the article modal and both search strips -- so a byline is
+ * rendered one way or not at all.
+ *
+ * @param {{author?: string, authorAccountId?: string|null}} article
+ * @param {{tag?: string, cls?: string, suffix?: string}} [opts]
+ */
+function renderByline(article, opts = {}) {
+  const name = article?.author || 'The Wire staff';
+  return bylineSticker(name, { ...opts, portrait: portraitForArticle(article) });
+}
 
 /** A neutral placeholder for stories with no lead image. */
 const BLANK_IMAGE =
@@ -144,6 +166,7 @@ function articleCard(article, { showBody = false, size = 'md' } = {}) {
       <a href="${href}" class="block overflow-hidden" tabindex="-1" aria-hidden="true">
         <img
           src="${escapeHtml(image)}"
+          ${imageFallbackAttr(BLANK_IMAGE)}
           alt=""
           loading="lazy"
           decoding="async"
@@ -160,7 +183,7 @@ function articleCard(article, { showBody = false, size = 'md' } = {}) {
         <h3 class="mt-2 font-headline text-lg leading-tight font-black">
           <a href="${href}" class="text-link">${escapeHtml(article.title)}</a>
         </h3>
-        ${bylineSticker(article.author, { cls: 'mt-1 text-[0.6875rem] ink-muted' })}
+        ${renderByline(article, { cls: 'mt-1 text-[0.6875rem] ink-muted' })}
         ${
           showBody
             ? `<p class="mt-2 text-sm leading-relaxed ink-muted">${escapeHtml(
@@ -373,6 +396,7 @@ function renderGalleryCard(group) {
       >
         <img
           src="${escapeHtml(cover)}"
+          ${imageFallbackAttr(BLANK_IMAGE)}
           alt=""
           aria-hidden="true"
           loading="lazy"
@@ -432,6 +456,7 @@ function renderGalleryCategoryPage(group) {
                   >
                     <img
                       src="${escapeHtml(safeUrl(shot.url) || BLANK_IMAGE)}"
+                      ${imageFallbackAttr(BLANK_IMAGE)}
                       alt="${escapeHtml(shot.caption || '')}"
                       loading="lazy"
                       decoding="async"
@@ -627,6 +652,7 @@ function interviewCard(interview) {
       <div class="relative">
         <img
           src="${escapeHtml(poster)}"
+          ${imageFallbackAttr(BLANK_IMAGE)}
           alt=""
           loading="lazy"
           decoding="async"
@@ -854,6 +880,7 @@ export function openInterview(id) {
           ? `<figure>
                <img
                  src="${escapeHtml(poster)}"
+                 ${imageFallbackAttr(BLANK_IMAGE)}
                  alt="${escapeHtml(label)}"
                  class="h-52 w-full object-cover md:h-72"
                />
@@ -945,6 +972,7 @@ function renderTodaysPick(todaysPick) {
       <a href="${href}" class="md:col-span-3" tabindex="-1" aria-hidden="true">
         <img
           src="${escapeHtml(safeUrl(todaysPick.image) || BLANK_IMAGE)}"
+          ${imageFallbackAttr(BLANK_IMAGE)}
           alt=""
           decoding="async"
           class="h-64 w-full object-cover md:h-96"
@@ -955,7 +983,7 @@ function renderTodaysPick(todaysPick) {
         <h3 class="mt-3 font-headline text-2xl leading-tight font-black md:text-3xl">
           <a href="${href}" class="text-link">${escapeHtml(todaysPick.title)}</a>
         </h3>
-        ${bylineSticker(todaysPick.author, {
+        ${renderByline(todaysPick, {
           cls: 'mt-2 text-[0.6875rem] ink-muted',
           suffix: ` · ${todaysPick.date}`
         })}
@@ -976,11 +1004,11 @@ function renderWeeklySlot({ label, item }) {
       <p class="accent-text text-[0.625rem] font-bold tracking-[0.2em] uppercase">${escapeHtml(label)}</p>
       ${
         item
-          ? `<img src="${escapeHtml(safeUrl(item.image) || BLANK_IMAGE)}" alt="" loading="lazy" decoding="async" class="mt-3 h-40 w-full object-cover" />
+          ? `<img src="${escapeHtml(safeUrl(item.image) || BLANK_IMAGE)}" ${imageFallbackAttr(BLANK_IMAGE)} alt="" loading="lazy" decoding="async" class="mt-3 h-40 w-full object-cover" />
              <h3 class="mt-3 font-headline text-lg leading-snug font-black">
                <a href="#article-${escapeHtml(item.id)}" class="text-link">${escapeHtml(item.title)}</a>
              </h3>
-             ${bylineSticker(item.author, { cls: 'mt-1 text-[0.6875rem] ink-muted' })}
+             ${renderByline(item, { cls: 'mt-1 text-[0.6875rem] ink-muted' })}
              <button type="button" class="btn btn-quiet mt-2 px-0" data-read="${escapeHtml(item.id)}">
                Open <i class="fa-solid fa-arrow-right text-[0.5rem]" aria-hidden="true"></i>
              </button>`
@@ -1060,7 +1088,7 @@ export async function openArticle(id) {
       ${
         image
           ? `<figure>
-              <img src="${escapeHtml(image)}" alt="${escapeHtml(article.caption || '')}" class="h-56 w-full object-cover md:h-72" />
+              <img src="${escapeHtml(image)}" ${imageFallbackAttr(BLANK_IMAGE)} alt="${escapeHtml(article.caption || '')}" class="h-56 w-full object-cover md:h-72" />
               ${
                 article.caption
                   ? `<figcaption class="surface-sunken px-5 py-2 text-xs italic ink-muted">${escapeHtml(article.caption)}</figcaption>`
@@ -1077,7 +1105,7 @@ export async function openArticle(id) {
         <h2 id="article-modal-title" class="mt-3 font-headline text-2xl leading-tight font-black md:text-4xl">
           ${escapeHtml(article.title)}
         </h2>
-        ${bylineSticker(article.author, {
+        ${renderByline(article, {
           cls: 'mt-2 text-xs font-semibold tracking-wide uppercase ink-muted'
         })}
         <div class="first-letter-cap mt-2">${paragraphs || '<p class="mt-4">This dispatch has no body copy yet.</p>'}</div>
@@ -1136,7 +1164,7 @@ function renderArticlePhotoStrip(urls) {
           ${urls
             .map(
               (url) =>
-                `<img src="${escapeHtml(safeUrl(url) || BLANK_IMAGE)}" alt="" loading="lazy" decoding="async" />`
+                `<img src="${escapeHtml(safeUrl(url) || BLANK_IMAGE)}" ${imageFallbackAttr(BLANK_IMAGE)} alt="" loading="lazy" decoding="async" />`
             )
             .join('')}
         </span>
@@ -1153,6 +1181,7 @@ function renderArticlePhotoStrip(urls) {
             <figure class="article-photos__item">
               <img
                 src="${escapeHtml(safeUrl(url) || BLANK_IMAGE)}"
+                ${imageFallbackAttr(BLANK_IMAGE)}
                 alt="Supporting photograph ${index + 1} for this story"
                 loading="lazy"
                 decoding="async"
@@ -1188,7 +1217,7 @@ export function runSearch(query) {
         <button type="button" class="panel-sunken w-full p-3 text-left hover:opacity-80" data-search-id="${escapeHtml(article.id)}">
           <span class="accent-text block text-[0.625rem] font-bold tracking-[0.14em] uppercase">${escapeHtml(article.category)}</span>
           <span class="mt-1 block font-headline text-base font-bold">${escapeHtml(article.title)}</span>
-          ${bylineSticker(article.author, {
+          ${renderByline(article, {
             tag: 'span',
             cls: 'mt-0.5 block text-[0.6875rem] ink-muted',
             suffix: ` · ${article.date}`
@@ -1211,7 +1240,7 @@ export function runSearch(query) {
         <button type="button" class="panel-sunken w-full p-3 text-left hover:opacity-80" data-search-id="${escapeHtml(article.id)}">
           <span class="accent-text block text-[0.625rem] font-bold tracking-[0.14em] uppercase">${escapeHtml(article.category)}</span>
           <span class="mt-1 block font-headline text-base font-bold">${escapeHtml(article.title)}</span>
-          ${bylineSticker(article.author, {
+          ${renderByline(article, {
             tag: 'span',
             cls: 'mt-0.5 block text-[0.6875rem] ink-muted',
             suffix: ` · ${article.date}`

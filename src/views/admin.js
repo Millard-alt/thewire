@@ -27,6 +27,7 @@ import {
   listAccounts,
   approveAccount,
   rejectAccount,
+  setAccountRole,
   setAccountPassword
 } from '../lib/auth.js';
 import { getReleases, pendingCount, sectionIcon } from '../lib/changelog.js';
@@ -49,6 +50,7 @@ import {
   setPortraitStatus,
   resetPortrait,
   primePortraits,
+  indexStaffPortraits,
   isCreditsMigrationMissing,
   normaliseColour,
   readableOn,
@@ -64,7 +66,8 @@ import {
   isOpen,
   releaseDialogLocks,
   showToast,
-  formatEditionDate
+  formatEditionDate,
+  imageFallbackAttr
 } from '../lib/dom.js';
 
 /** Which article statuses the Content Desk is filtered to. */
@@ -339,6 +342,7 @@ function renderContent() {
             <img
               class="h-36 w-full object-cover"
               src="${escapeHtml(artFor(article.image))}"
+              ${imageFallbackAttr(BLANK_IMAGE)}
               alt="${escapeHtml(article.caption || article.title)}"
               loading="lazy"
             />
@@ -475,6 +479,7 @@ function interviewAdminCard(interview) {
       <img
         class="h-32 w-full object-cover"
         src="${escapeHtml(artFor(interview.image))}"
+        ${imageFallbackAttr(BLANK_IMAGE)}
         alt="${escapeHtml(interview.title || interview.guest || '')}"
         loading="lazy"
       />
@@ -959,8 +964,104 @@ function renderCurationTab() {
  */
 export const STAFF_ROLES = ['Owner', 'Writer', 'Board Manager'];
 
+/**
+ * The roster's account-status vocabulary, and the only two values the Staff
+ * editor may write. Defined once because two things must agree on it: the
+ * <select> in staffEditorDialog() and the save in saveStaffFromForm(). A status
+ * the dropdown cannot represent is a status the save must never invent.
+ */
+export const STAFF_STATUSES = ['Active', 'Suspended'];
+
+/**
+ * Fold a stored status onto one the editor's dropdown can represent, or ''.
+ *
+ * The roster is read straight from Postgres and the column has no CHECK
+ * constraint, so a row can carry 'active', 'Active' or nothing at all. A
+ * <select> assigned a value that matches none of its <option>s reports '' -- and
+ * that empty string then went straight into the save, blanking the status the
+ * Owner had set. Anything this function cannot recognise must be left alone by
+ * the caller, never written back.
+ *
+ * @param {unknown} value
+ * @returns {string} one of STAFF_STATUSES, or '' when unrecognised
+ */
+function normaliseStaffStatus(value) {
+  const status = String(value || '').trim().toLowerCase();
+  return STAFF_STATUSES.find((option) => option.toLowerCase() === status) || '';
+}
+
+/**
+ * Fill the account-id half of the portrait index.
+ *
+ * Only the Staff tab holds both sides of the join, which is why this lives here
+ * and not in `primePortraits()`:
+ *
+ *   • `staff` carries the portrait and its review state.
+ *   • `staff_accounts` carries the id that `articles.author_account_id` points
+ *     at. The two tables share exactly one column -- username -- so the Staff
+ *     tab is the only place that can produce the mapping.
+ *
+ * Until it runs, a byline resolves by name alone, which is exactly the path that
+ * lets "Grace Wanjiku" and "Grace W. Wanjiku" borrow each other's face. The
+ * join is skipped silently when the roster is empty or unreadable: an empty ID
+ * index makes `portraitForArticle` fall back to the name, which is the
+ * behaviour that already shipped.
+ *
+ * The roster is hashed into `staffPortraitIndexKey` so the owner-gated account
+ * read happens once per roster change rather than on every repaint of the tab.
+ * The key is only committed once a read has SUCCEEDED, so a dropped connection
+ * costs one retry on the next repaint rather than pinning the index empty for the
+ * rest of the session.
+ *
+ * It mirrors the roster exactly as the store holds it, which is the same limit
+ * `primePortraits()` has always had: a portrait decided through the review
+ * buttons lands in Postgres and the name cache is re-read, but the in-memory
+ * staff row keeps its old `portrait_status` until the next hydrate. So a freshly
+ * approved portrait reaches readers through the name cache, and joins the FK
+ * cache on the next page load.
+ */
+let staffPortraitIndexKey = '';
+let staffPortraitIndexPending = false;
+
+async function primeStaffPortraits(staff) {
+  const key = staff
+    .map((member) => `${member.username}|${member.portrait_status}|${member.portrait_url}`)
+    .join('\n');
+  if (key === staffPortraitIndexKey || staffPortraitIndexPending) return;
+  staffPortraitIndexPending = true;
+
+  try {
+    const accounts = await loadAccounts();
+    if (!accounts) return;
+
+    const accountIdByUsername = new Map(
+      accounts
+        .map((account) => [
+          String(account?.username || '').trim().toLowerCase(),
+          account?.id
+        ])
+        .filter(([username, id]) => username && id)
+    );
+
+    indexStaffPortraits(
+      staff.map((member) => ({
+        // The ACCOUNT id, not staff.id -- see the note above.
+        id: accountIdByUsername.get(String(member.username || '').trim().toLowerCase()),
+        portrait_url: member.portrait_url,
+        portrait_status: member.portrait_status
+      }))
+    );
+
+    staffPortraitIndexKey = key;
+  } finally {
+    staffPortraitIndexPending = false;
+  }
+}
+
 function renderStaffTab() {
   const staff = store.listStaff();
+
+  primeStaffPortraits(staff);
 
   return `
     <div class="space-y-5">
@@ -973,7 +1074,7 @@ function renderStaffTab() {
       )}
 
       <div class="panel-raised overflow-x-auto">
-        <table class="w-full text-left text-sm">
+        <table class="staff-table w-full text-left text-sm">
           <thead class="rule-soft border-b">
             <tr class="ink-muted text-[0.65rem] tracking-[0.12em] uppercase">
               <th scope="col" class="px-4 py-3">Portrait</th>
@@ -997,7 +1098,7 @@ function renderStaffTab() {
                       ? `<span class="staff-portrait">
                            <img class="byline-sticker" src="${escapeHtml(
                             safeUrl(member.portrait_url)
-                          )}" alt="" width="48" height="48" loading="lazy" decoding="async" />
+                          )}" ${imageFallbackAttr()} alt="" width="48" height="48" loading="lazy" decoding="async" />
                          </span>`
                       : `<span class="staff-portrait">
                            <span class="byline-sticker byline-sticker-empty" aria-hidden="true">
@@ -1218,7 +1319,7 @@ function renderMediaTab() {
           <figure class="panel-raised overflow-hidden">
             <img class="h-40 w-full object-cover" src="${escapeHtml(
               artFor(item.url)
-            )}" alt="${escapeHtml(item.caption)}" loading="lazy" />
+            )}" ${imageFallbackAttr(BLANK_IMAGE)} alt="${escapeHtml(item.caption)}" loading="lazy" />
             <figcaption class="space-y-2 p-3">
               <span class="block min-w-0 truncate text-xs">${escapeHtml(item.caption)}</span>
               ${
@@ -2037,12 +2138,10 @@ function staffEditorDialog() {
             <div>
               <label class="field-label" for="staff-status">Status</label>
               <select id="staff-status" class="field">
-                ${['Active', 'Suspended']
-                  .map(
-                    (status) =>
-                      `<option value="${status}">${status}</option>`
-                  )
-                  .join('')}
+                ${STAFF_STATUSES.map(
+                  (status) =>
+                    `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`
+                ).join('')}
               </select>
             </div>
           </div>
@@ -2349,7 +2448,7 @@ function accountsPanel(rows) {
       ${
         approved.length
           ? `<div class="panel-raised overflow-x-auto">
-               <table class="w-full text-left text-sm">
+               <table class="accounts-table w-full text-left text-sm">
                  <thead class="rule-soft border-b">
                    <tr class="ink-muted text-[0.65rem] tracking-[0.12em] uppercase">
                      <th scope="col" class="px-4 py-3">Name</th>
@@ -2875,7 +2974,13 @@ function avatar(person, size) {
   const style = `width:${size}px;height:${size}px`;
 
   if (url) {
-    return `<img src="${url}" alt="${escapeHtml(person.name || '')}" loading="lazy"
+    // escapeHtml on the URL too: safeUrl() accepts any root-relative path, and
+    // a stored value like `/x" onerror="…` would otherwise break out of the
+    // attribute. The initials branch below is what a MISSING url renders; this
+    // branch is what a url that 404s falls back to.
+    return `<img src="${escapeHtml(url)}" ${imageFallbackAttr()} alt="${escapeHtml(
+      person.name || ''
+    )}" loading="lazy"
       class="shrink-0 rounded-full object-cover" style="${style}" />`;
   }
 
@@ -3585,6 +3690,7 @@ function renderArticleExtraPreview() {
       <span class="relative inline-block">
         <img
           src="${escapeHtml(url)}"
+          ${imageFallbackAttr(BLANK_IMAGE)}
           alt="Supporting photo ${i + 1}"
           class="h-16 w-16 rounded border border-ink object-cover"
           loading="lazy"
@@ -3778,9 +3884,23 @@ async function saveStaffFromForm(form) {
     name: byId('staff-name').value,
     username: byId('staff-username').value,
     email: byId('staff-email').value,
-    role: byId('staff-role').value,
-    status: byId('staff-status').value
+    role: byId('staff-role').value
   };
+
+  // The status is the one field a save must never invent. This dialog is opened
+  // and saved constantly -- to attach a portrait, to fix a typo in a name -- and
+  // `status` was read straight off the <select>. A select assigned a value that
+  // matches none of its options reports '', so any row whose stored status was
+  // not exactly 'Active' or 'Suspended' (the column has no CHECK constraint, so
+  // 'active' survives happily) had its status BLANKED by an unrelated save: the
+  // row stopped being 'Active', which is what staff_credits_page() and every
+  // byline filter on, so the staffer vanished from the public roster.
+  //
+  // So: write the dropdown's value only when it is one of STAFF_STATUSES, and
+  // otherwise leave the key out of the patch entirely. `updateStaff` only writes
+  // the columns it is given, so an absent key preserves whatever is stored.
+  const chosenStatus = normaliseStaffStatus(byId('staff-status').value);
+  if (chosenStatus) payload.status = chosenStatus;
 
   if (!payload.name.trim() || !payload.username.trim()) {
     showToast('A staffer needs at least a name and a username.', {
@@ -4172,11 +4292,19 @@ function handleChange(event) {
   // Only a *saved* row (an approved account) writes immediately. On a pending
   // request the role is just the value to be used by the Approve button, so
   // changing it must not persist anything.
+  //
+  // `setAccountRole`, NOT `approveAccount`. Reusing the approval function here
+  // meant every role edit re-ran the whole approval pipeline: it wrote
+  // status='active' and a fresh approved_at on an account that was already
+  // approved, and upserted the staffer's profile row with status='Active'. An
+  // account the Owner had suspended re-activated itself the moment its role was
+  // edited. A role edit writes the role and nothing else.
   if (target instanceof HTMLSelectElement && target.dataset.accountSaved) {
     const id = target.dataset.accountSaved;
+    const role = target.value;
     guard(async () => {
-      await approveAccount(id, target.value);
-      showToast(`Role updated to ${target.value}.`, { type: 'success' });
+      await setAccountRole(id, role);
+      showToast(`Role updated to ${role}.`, { type: 'success' });
       await reloadAccounts();
     });
   }
@@ -4888,7 +5016,15 @@ function openStaffEditor(staffId) {
   byId('staff-username').value = member?.username ?? '';
   byId('staff-email').value = member?.email ?? '';
   byId('staff-role').value = member?.role ?? 'Writer';
-  byId('staff-status').value = member?.status ?? 'Active';
+
+  // Only pre-select a status the dropdown can actually hold. Assigning an
+  // unrecognised value ('active' in the wrong case, or a blank column) leaves
+  // the select reporting '', and that '' was then saved back over the stored
+  // status -- so opening and saving the dialog silently un-suspended a suspended
+  // staffer. An unrecognised value leaves the dropdown on its first option and
+  // the save below preserves whatever was actually stored.
+  const storedStatus = normaliseStaffStatus(member?.status);
+  byId('staff-status').value = storedStatus || STAFF_STATUSES[0];
 
   // Always start from a blank portrait field. The file input keeps its value
   // across dialog openings, so without this the photo picked for one staffer

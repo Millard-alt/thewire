@@ -26,7 +26,7 @@
 
 import { getSupabase } from './supabase.js';
 import { config } from './config.js';
-import { escapeHtml, safeUrl } from './dom.js';
+import { escapeHtml, safeUrl, imageFallbackAttr } from './dom.js';
 // Only for the demo-mode branch of resetPortrait(). store.js does not import
 // this module, so there is no cycle.
 import { updateStaff } from './store.js';
@@ -550,14 +550,24 @@ function nextDemoOrder(rows) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * name -> approved portrait, for the sticker bylines under each story.
+ * Approved portraits, keyed by EXACT normalised name for legacy text bylines.
  *
- * Articles record their author as a free-text name, not a foreign key, so the
- * match is by name. It is deliberately forgiving — case, punctuation and
- * surrounding whitespace are ignored — because "Amara K." on a story and
- * "amara k" on the roster must still resolve to the same person.
+ * The name index exists ONLY for rows written before migration 007, which have
+ * no author_account_id, and for outside contributors with no account at all.
+ * Every current article resolves by foreign key instead (see below), so a typo
+ * in a byline can never borrow another staffer's face.
  */
 let portraitIndex = new Map();
+
+/**
+ * The ID-keyed half of the portrait index.
+ *
+ * Separated from `portraitIndex` because the two are populated from different
+ * sources: the Staff tab returns rows that carry `staff.id`, while the
+ * Credits roster does not. Only the Staff tab can fill this one, so it stays
+ * empty rather than wrong when only the credits page has been loaded.
+ */
+let portraitIndexById = new Map();
 
 /** Reduce a name to its comparable form. */
 function normaliseName(name) {
@@ -639,6 +649,82 @@ export function portraitFor(name) {
 }
 
 /**
+ * Resolve a byline to a portrait by FOREIGN KEY rather than by name.
+ *
+ * The roster is keyed on `staff.id`, and articles carry `author_account_id`
+ * (migration 007) pointing at `staff_accounts.id`. The two are joined on
+ * username, so the article's pointer and the portrait's owner are the same
+ * person only when the join is exact -- which is what this function does.
+ *
+ * Name matching is the FALLBACK, not the primary path. It used to be the only
+ * path, and it is what let a byline typed with a typo or a minor variation
+ * ("Grace Wanjiku" vs "Grace W. Wanjiku", "Lilian W." vs "Lilian Wanjiku")
+ * silently borrow a different staffer's photo -- or, worse, attach nobody's
+ * photo to a name that is one character off from a real one. A reader sees a
+ * sticker with the wrong face and nothing indicates it.
+ *
+ * @param {string|null|undefined} authorId  the article's author_account_id
+ * @returns {string|null}
+ */
+export function portraitForAccountId(authorId) {
+  if (!authorId) return null;
+  const hit = portraitIndexById.get(String(authorId));
+  return hit || null;
+}
+
+/**
+ * The approved portrait for an article, preferring the foreign key.
+ *
+ * Order of resolution:
+ *   1. `authorAccountId` -> the staffer who actually filed the story (exact).
+ *   2. The byline name, as a fallback for rows written before migration 007
+ *      or by contributors who have no account at all.
+ *
+ * @param {{author?: string, authorAccountId?: string|null}} article
+ * @returns {string|null}
+ */
+export function portraitForArticle(article) {
+  if (!article) return null;
+  const byId = portraitForAccountId(article.authorAccountId);
+  if (byId) return byId;
+  return portraitFor(article.author);
+}
+
+/**
+ * Rebuild the ID-keyed index alongside the name-keyed one.
+ *
+ * `indexPortraits` is called from two places with two different shapes:
+ * `listCredits()` returns `credits_people` rows (no account id), while the
+ * Staff tab returns `staff` rows that DO carry one. Only the Staff tab can
+ * populate the ID index, so this is a separate function called from
+ * `indexStaffPortraits` -- and the ID index is empty rather than wrong when
+ * only the credits roster has been loaded.
+ *
+ * `id` is the ACCOUNT id, not `staff.id`: an article points at
+ * `staff_accounts.id` through `author_account_id`, and the two tables share only
+ * a username, so the Staff tab has to do that join before calling this.
+ *
+ * ONLY approved portraits are indexed. This index feeds the byline stickers, and
+ * the whole point of the Owner's review gate is that an unreviewed photo never
+ * reaches a reader's screen -- a staff row with `portrait_status = 'pending'`
+ * would otherwise be published by this path while the Credits roster correctly
+ * hides it.
+ *
+ * @param {Array<{id: string, portrait_url?: string, portrait_status?: string}>} people
+ */
+export function indexStaffPortraits(people) {
+  const next = new Map();
+  for (const person of people || []) {
+    const url = safeUrl(person.portrait_url);
+    if (String(person.portrait_status || '').toLowerCase() !== 'approved') continue;
+    if (person.id && url && !next.has(String(person.id))) {
+      next.set(String(person.id), url);
+    }
+  }
+  portraitIndexById = next;
+}
+
+/**
  * Populate the portrait cache from the public roster.
  *
  * This MUST run before the first paint of the publication. Bylines are rendered
@@ -663,15 +749,21 @@ export async function primePortraits() {
  * which is always the case until the Owner approves one — so the front page
  * never breaks and never leaks an unreviewed photo.
  *
+ * `portrait` overrides the name lookup. The publication passes the URL it has
+ * already resolved from the article's foreign key (see `portraitForArticle`),
+ * because a byline whose text is one character off from the real name resolves
+ * to the WRONG person's face by name — or to nobody's. Callers that only have a
+ * name can omit it and the cached index is used as before.
+ *
  * @param {string} name
- * @param {{tag?: string, cls?: string, suffix?: string}} [opts]
+ * @param {{tag?: string, cls?: string, suffix?: string, portrait?: string|null}} [opts]
  */
-export function bylineSticker(name, { tag = 'p', cls = '', suffix = '' } = {}) {
-  const portrait = portraitFor(name);
+export function bylineSticker(name, { tag = 'p', cls = '', suffix = '', portrait } = {}) {
+  const face = safeUrl(portrait) || portraitFor(name);
   const label = escapeHtml(name || 'The Wire staff');
   const tail = suffix ? escapeHtml(suffix) : '';
 
-  if (!portrait) {
+  if (!face) {
     return `<${tag} class="${cls}">By ${label}${tail}</${tag}>`;
   }
 
@@ -679,7 +771,8 @@ export function bylineSticker(name, { tag = 'p', cls = '', suffix = '' } = {}) {
     <${tag} class="byline-sticker-row ${cls}">
       <img
         class="byline-sticker"
-        src="${escapeHtml(portrait)}"
+        src="${escapeHtml(face)}"
+        ${imageFallbackAttr()}
         alt=""
         width="128"
         height="128"
@@ -941,6 +1034,7 @@ function card(person) {
           ? `<img
               class="credits-card__avatar"
               src="${escapeHtml(portrait)}"
+              ${imageFallbackAttr()}
               alt=""
               width="48"
               height="48"

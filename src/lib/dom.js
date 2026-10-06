@@ -85,6 +85,42 @@ export function safeUrl(value, { allowedHosts } = {}) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Broken-image fallback                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A neutral portrait glyph, used when a stored image URL turns out to be dead.
+ *
+ * A DATA URI on purpose. `safeUrl()` deliberately rejects `data:` for anything
+ * that came out of the database, and this value never did -- but the reason for
+ * inlining it rather than shipping `public/assets/default-avatar.png` is the
+ * failure mode: pointing `onerror` at a file on disk means the fallback can
+ * itself 404, `onerror` fires again, and the browser retries the same broken
+ * request until it gives up. A data URI cannot fail, so it cannot loop.
+ */
+export const AVATAR_FALLBACK =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">' +
+      '<rect width="128" height="128" fill="#e7e1d3"/>' +
+      '<circle cx="64" cy="48" r="22" fill="#8c1d11" opacity="0.35"/>' +
+      '<path d="M22 122a42 42 0 0 1 84 0z" fill="#8c1d11" opacity="0.35"/></svg>'
+  );
+
+/**
+ * The `onerror` attribute for a rendered `<img>`.
+ *
+ * `this.onerror = null` first, so the swap happens exactly once: without it a
+ * fallback that itself fails re-enters the handler forever.
+ *
+ * @param {string} [fallback] any URL the browser can always fetch
+ * @returns {string} an attribute fragment, safe to interpolate into a template
+ */
+export function imageFallbackAttr(fallback = AVATAR_FALLBACK) {
+  return `onerror="this.onerror=null;this.src='${escapeAttr(fallback)}'"`;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Toasts                                                                     */
 /* -------------------------------------------------------------------------- */
 

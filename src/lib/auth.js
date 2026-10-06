@@ -496,12 +496,34 @@ export async function listAccounts() {
 
 /**
  * Approve a pending request. Owner-only, enforced in the database.
+ *
+ * APPROVAL ONLY. This is a pipeline, not a setter: it sets status='active',
+ * restamps approved_at and upserts the staffer's profile row. Never call it to
+ * edit somebody who is already approved -- use `setAccountRole`, which is the
+ * only path that writes a role and leaves status alone.
+ *
  * @param {string} id
  * @param {string} [role]
  */
 export async function approveAccount(id, role = 'Writer') {
   if (config.demoMode || !getSupabase()) return null;
   return rpc('wire_approve_account', { p_id: id, p_role: role });
+}
+
+/**
+ * Change an ALREADY APPROVED account's role. Owner-only.
+ *
+ * Distinct from `approveAccount` on purpose: approving somebody who is already
+ * approved silently re-activated any suspension and restamped their approval
+ * date, so the account's status was overwritten by an edit that had no business
+ * touching it. This writes `role` and nothing else.
+ *
+ * @param {string} id
+ * @param {string} [role]
+ */
+export async function setAccountRole(id, role = 'Writer') {
+  if (config.demoMode || !getSupabase()) return null;
+  return rpc('wire_set_account_role', { p_id: id, p_role: role });
 }
 
 /**
