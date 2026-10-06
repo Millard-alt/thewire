@@ -550,24 +550,46 @@ function nextDemoOrder(rows) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Approved portraits, keyed by EXACT normalised name for legacy text bylines.
+ * Approved portraits from the CREDITS page, keyed by normalised name.
  *
- * The name index exists ONLY for rows written before migration 007, which have
- * no author_account_id, and for outside contributors with no account at all.
- * Every current article resolves by foreign key instead (see below), so a typo
- * in a byline can never borrow another staffer's face.
+ * This is the roster of people the Owner hand-picked for the public Credits
+ * page. It legitimately includes contributors who have no staff profile and no
+ * account at all, which is why it stays -- but it is the LOWER-precedence of the
+ * two name sources (see `staffPortraitByName` below).
  */
 let portraitIndex = new Map();
 
 /**
- * The ID-keyed half of the portrait index.
+ * Approved portraits from the STAFF roster, keyed by account id.
  *
- * Separated from `portraitIndex` because the two are populated from different
- * sources: the Staff tab returns rows that carry `staff.id`, while the
- * Credits roster does not. Only the Staff tab can fill this one, so it stays
- * empty rather than wrong when only the credits page has been loaded.
+ * The `articles.author_account_id` -> `staff_accounts.id` path. Only the Staff
+ * tab can fill it, because it is the only place that holds both sides of the
+ * join: `staff` carries the photo and its review state, `staff_accounts`
+ * carries the id an article points at, and the two tables share one column.
  */
 let portraitIndexById = new Map();
+
+/**
+ * The same staff portraits, keyed by name.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * A byline could resolve two different ways -- by foreign key, or by name -- and
+ * they consulted two different tables. `portraitForArticle` tries the FK first
+ * and falls back to the name, while the name itself was answered by
+ * `credits_people`. So the SAME person produced a different face depending on
+ * which path a given card took: an article carrying `author_account_id` showed
+ * the photo from `staff`, and an article without one -- a row written before
+ * migration 007, a contributor with no account, a hand-inserted row, or any
+ * article in demo mode -- fell through to whatever `credits_people` happened to
+ * hold under that name. One author, two avatars across two cards.
+ *
+ * Indexing the staff roster by name as well, and consulting it FIRST, collapses
+ * that to a single answer per person: the current approved photo from the
+ * profile table, whichever route the byline arrives by. The Credits roster then
+ * only supplies names the staff roster does not know at all.
+ */
+let staffPortraitByName = new Map();
 
 /** Reduce a name to its comparable form. */
 function normaliseName(name) {
@@ -639,11 +661,28 @@ export function indexPortraits(people) {
   portraitIndex = next;
 }
 
-/** The approved portrait for a byline name, or null. */
+/**
+ * The approved portrait for a byline name, or null.
+ *
+ * The staff roster is consulted before the Credits roster, and the two are
+ * deliberately NOT merged into one map: merging would make the answer depend on
+ * which page happened to load last, which is how one author came to show two
+ * different faces. `staffPortraitByName` wins outright; `portraitIndex` is only
+ * reached for a name no staff profile claims.
+ *
+ * Note the asymmetry with `portraitForArticle`, which is the reverse and is
+ * correct as written: the foreign key is the precise answer and the name is the
+ * guess, so the FK is tried first there. Here both keys are guesses, so the
+ * authoritative source (the profile table) is tried first.
+ */
 export function portraitFor(name) {
   for (const key of candidateKeys(name)) {
-    const hit = portraitIndex.get(key);
-    if (hit) return hit;
+    const onStaff = staffPortraitByName.get(key);
+    if (onStaff) return onStaff;
+  }
+  for (const key of candidateKeys(name)) {
+    const onCredits = portraitIndex.get(key);
+    if (onCredits) return onCredits;
   }
   return null;
 }
@@ -710,18 +749,53 @@ export function portraitForArticle(article) {
  * would otherwise be published by this path while the Credits roster correctly
  * hides it.
  *
- * @param {Array<{id: string, portrait_url?: string, portrait_status?: string}>} people
+ * A name key claimed by MORE THAN ONE staffer is dropped rather than resolved.
+ * `candidateKeys` is deliberately forgiving (a bare surname has to find
+ * "Grace Wanjiku"), and that forgiveness is only safe while the key is unique:
+ * with two Amaras on the roster, "Amara" would otherwise resolve to whichever
+ * row was indexed first, and the wrong staffer's photo would print beside
+ * somebody else's byline. No match is the correct failure -- `portraitFor` then
+ * falls through to the Credits roster and, failing that, to the plain text
+ * byline. The full name is unaffected: it is distinct per person, so an
+ * ambiguous surname never costs the exact match its photo.
+ *
+ * @param {Array<{id: string, name?: string, portrait_url?: string,
+ *                 portrait_status?: string}>} people
  */
 export function indexStaffPortraits(people) {
-  const next = new Map();
+  const byId = new Map();
+  const byName = new Map();
+  // How many distinct people claim each key. Anything above one is ambiguous.
+  const claims = new Map();
+
   for (const person of people || []) {
-    const url = safeUrl(person.portrait_url);
     if (String(person.portrait_status || '').toLowerCase() !== 'approved') continue;
-    if (person.id && url && !next.has(String(person.id))) {
-      next.set(String(person.id), url);
+    const url = safeUrl(person.portrait_url);
+    if (!url) continue;
+
+    if (person.id && !byId.has(String(person.id))) {
+      byId.set(String(person.id), url);
+    }
+
+    // The person's own name, so the claim count is per human rather than per
+    // alias: two rows for the same staffer must not make their own name look
+    // ambiguous.
+    const owner = String(person.id || person.name || url);
+    for (const key of candidateKeys(person.name)) {
+      if (!key) continue;
+      const seen = claims.get(key);
+      if (seen === undefined) claims.set(key, owner);
+      else if (seen !== owner) claims.set(key, false); // ambiguous from here on
+      if (!byName.has(key)) byName.set(key, url);
     }
   }
-  portraitIndexById = next;
+
+  for (const [key, owner] of claims) {
+    if (owner === false) byName.delete(key);
+  }
+
+  portraitIndexById = byId;
+  staffPortraitByName = byName;
 }
 
 /**

@@ -1047,6 +1047,13 @@ async function primeStaffPortraits(staff) {
       staff.map((member) => ({
         // The ACCOUNT id, not staff.id -- see the note above.
         id: accountIdByUsername.get(String(member.username || '').trim().toLowerCase()),
+        // The name goes in too: the same call also builds the by-name half of the
+        // index, so a card whose article has no author_account_id (a pre-007 row,
+        // a contributor with no account, anything in demo mode) resolves to the
+        // SAME photo as a card that does have one. Without the name that card
+        // falls through to the Credits roster and the same author can be seen
+        // wearing two different faces.
+        name: member.name,
         portrait_url: member.portrait_url,
         portrait_status: member.portrait_status
       }))

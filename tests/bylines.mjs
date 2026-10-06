@@ -180,13 +180,13 @@ report(
   /this\.onerror=null;/.test(read('src/lib/dom.js'))
 );
 
-console.log("\ncredits.js — only APPROVED portraits reach a byline\n");
+console.log('\ncredits.js — only APPROVED portraits reach a byline\n');
 
 credits.indexStaffPortraits([
-  { id: 'acct-approved', portrait_url: 'https://cdn.test/ok.jpg', portrait_status: 'approved' },
-  { id: 'acct-pending', portrait_url: 'https://cdn.test/new.jpg', portrait_status: 'pending' },
-  { id: 'acct-rejected', portrait_url: 'https://cdn.test/bad.jpg', portrait_status: 'rejected' },
-  { id: 'acct-none', portrait_url: 'https://cdn.test/none.jpg' }
+  { id: 'acct-approved', name: 'Grace Wanjiku', portrait_url: 'https://cdn.test/ok.jpg', portrait_status: 'approved' },
+  { id: 'acct-pending', name: 'Pending Person', portrait_url: 'https://cdn.test/new.jpg', portrait_status: 'pending' },
+  { id: 'acct-rejected', name: 'Rejected Person', portrait_url: 'https://cdn.test/bad.jpg', portrait_status: 'rejected' },
+  { id: 'acct-none', name: 'Unreviewed Person', portrait_url: 'https://cdn.test/none.jpg' }
 ]);
 
 report(
@@ -211,6 +211,71 @@ report(
   credits.portraitForArticle({ author: 'Nobody At All', authorAccountId: 'acct-missing' }) === null
 );
 
+console.log('\none person, one face — whichever way the byline resolves\n');
+
+/* THE BUG THIS EXISTS FOR
+   -----------------------
+   A byline resolved two ways: by foreign key (from `staff`) or by name (from
+   `credits_people`). Both were consulted, both answered, and they disagreed --
+   so the same author wore a different photo on different cards depending on
+   whether that article happened to carry an author_account_id. */
+const STAFF_FACE = 'https://cdn.test/staff-grace.jpg';
+const CREDITS_FACE = 'https://cdn.test/credits-grace.jpg';
+
+credits.indexStaffPortraits([
+  { id: 'acct-grace', name: 'Grace Wanjiku', portrait_url: STAFF_FACE, portrait_status: 'approved' }
+]);
+credits.indexPortraits([
+  { name: 'Grace Wanjiku', portrait_url: CREDITS_FACE },
+  { name: 'Amara K.', portrait_url: 'https://cdn.test/amara.jpg' }
+]);
+
+report(
+  'a card WITH a foreign key and a card WITHOUT one show the same photo',
+  credits.portraitForArticle({ author: 'Grace Wanjiku', authorAccountId: 'acct-grace' }) ===
+    credits.portraitForArticle({ author: 'Grace Wanjiku', authorAccountId: null }),
+  'the FK path and the name path disagreeing for one person is the reported symptom'
+);
+report(
+  'the staff profile outranks the Credits page for a name both carry',
+  credits.portraitFor('Grace Wanjiku') === STAFF_FACE,
+  'the Credits roster is the fallback for contributors, not the authority on staff'
+);
+report(
+  'the Credits roster still answers for a contributor with no staff profile',
+  credits.portraitFor('Amara K.') === 'https://cdn.test/amara.jpg'
+);
+
+/* Loading one roster must not be able to un-answer the other: the two used to
+   share a single map, so whichever page loaded last decided every byline. */
+credits.indexPortraits([{ name: 'Amara K.', portrait_url: 'https://cdn.test/amara.jpg' }]);
+report(
+  'reloading the Credits roster does not drop a staff portrait',
+  credits.portraitFor('Grace Wanjiku') === STAFF_FACE,
+  'one shared map means the answer depends on which page loaded last'
+);
+
+/* A shared surname must resolve to nobody rather than to the wrong person. */
+credits.indexStaffPortraits([
+  { id: 'acct-a', name: 'Amara K.', portrait_url: 'https://cdn.test/amara-k.jpg', portrait_status: 'approved' },
+  { id: 'acct-b', name: 'Amara Z.', portrait_url: 'https://cdn.test/amara-z.jpg', portrait_status: 'approved' }
+]);
+report(
+  'an ambiguous bare surname resolves to nobody, not to the wrong staffer',
+  credits.portraitFor('Amara') === null
+);
+report(
+  'the same ambiguous roster still resolves each full name exactly',
+  credits.portraitFor('Amara K.') === 'https://cdn.test/amara-k.jpg' &&
+    credits.portraitFor('Amara Z.') === 'https://cdn.test/amara-z.jpg'
+);
+
+// Put a known roster back for the assertions below.
+credits.indexStaffPortraits([
+  { id: 'acct-approved', name: 'Grace Wanjiku', portrait_url: STAFF_FACE, portrait_status: 'approved' }
+]);
+credits.indexPortraits([]);
+
 console.log('\nadmin.js — the Staff tab feeds the foreign-key index\n');
 
 report(
@@ -225,6 +290,11 @@ report(
   'the join is on username, the only column the two tables share',
   /accountIdByUsername\.get\(/.test(adminSrc) &&
     /indexStaffPortraits\(/.test(adminSrc)
+);
+report(
+  "the join passes each staffer's NAME, not just the id",
+  /name: member\.name,/.test(adminSrc),
+  'indexStaffPortraits also builds the by-name index; without the name a byline with no author_account_id still resolves from the Credits roster and the two disagree again'
 );
 
 console.log('\nrendered images — a dead URL must not leave a broken icon\n');
