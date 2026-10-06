@@ -1,5 +1,5 @@
 -- ============================================================================
---  THE WIRE - SUPABASE SCHEMA
+--  THE PULSE - SUPABASE SCHEMA
 -- ----------------------------------------------------------------------------
 --  Run this once in the Supabase SQL Editor (Dashboard -> SQL Editor -> New).
 --  It is idempotent, so re-running is safe.
@@ -19,7 +19,7 @@ create extension if not exists "pgcrypto";
 create table if not exists public.articles (
   id           uuid primary key default gen_random_uuid(),
   title        text        not null,
-  author       text        not null default 'The Wire Staff',
+  author       text        not null default 'The Pulse Staff',
   category     text        not null default 'Civic Dispatch',
   published_at text,
   image_url    text,
@@ -99,7 +99,7 @@ create index if not exists audit_logs_created_idx on public.audit_logs (created_
 -- Single-row table holding masthead branding, the breaking banner and curation.
 create table if not exists public.site_settings (
   id                   integer primary key default 1 check (id = 1),
-  title                text not null default 'THE WIRE',
+  title                text not null default 'THE PULSE',
   subtitle             text not null default 'MJLA PRESS CLUB - INDEPENDENT VERIFIED DISPATCHES',
   -- Every text column needs a non-null default. The masthead renders these
   -- values directly, so a NULL here shows up on the page as the literal text
@@ -107,7 +107,7 @@ create table if not exists public.site_settings (
   edition              text not null default 'Nakuru Edition',
   breaking_news        jsonb not null default '{}'::jsonb,
   weekly_slots         jsonb not null default '{}'::jsonb,
-  -- Homepage visibility of the "This Week In The Wire" band. Default true so
+  -- Homepage visibility of the "This Week In The Pulse" band. Default true so
   -- every existing install behaves exactly as it did before the toggle existed.
   show_this_week       boolean not null default true,
   todays_pick_id       uuid references public.articles (id) on delete set null,

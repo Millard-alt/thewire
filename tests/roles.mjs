@@ -57,6 +57,7 @@ const EXPECTED = {
     'overview',
     'content',
     'interviews',
+    'podcasts',
     'assignments',
     'media',
     'breaking',
@@ -79,13 +80,20 @@ const EXPECTED = {
  * are contributors rather than accounts. Nobody but the Owner adds, edits or
  * removes them, and supabase/009_credits_page.sql enforces the same rule server
  * side so a leaked key is no help.
+ *
+ * `podcasts` is here for a different reason, and the distinction matters. A writer
+ * SUBMITS an episode -- the door for that is on the Interviews tab, which every
+ * staffer can open -- but only the Owner may publish or refuse one. Gating the
+ * decision at Board Manager would hand out an unreviewed-public-audio button,
+ * which is the whole risk the approval queue exists to prevent.
  */
 const OWNER_ONLY = [
   'accounts',
   'changelog',
   'branding',
   'security',
-  'credits'
+  'credits',
+  'podcasts'
 ];
 
 /**

@@ -951,8 +951,18 @@ const renderedPickerIds = new Set(
  *   staff-portrait-file -- read straight off .files at save time, because the
  *                         portrait is uploaded as part of the staff save rather
  *                         than staged into a URL box beforehand.
+ *   podcast-file -- bound in the delegated `change` handler, not here. It lives
+ *                  in a dialog that is re-created on every mount, and the
+ *                  delegated handler survives that without a re-bind; what it
+ *                  does is validate the file and read its length so the writer
+ *                  finds out about a 40 MB WAV before pressing Submit rather
+ *                  than after. It has no URL partner: audio is not pasted.
  */
-const pickedUpElsewhere = new Set(['article-extra-file', 'staff-portrait-file']);
+const pickedUpElsewhere = new Set([
+  'article-extra-file',
+  'staff-portrait-file',
+  'podcast-file'
+]);
 const unboundPickers = [...renderedPickerIds].filter(
   (id) => !boundPickerIds.has(id) && !pickedUpElsewhere.has(id)
 );
@@ -964,6 +974,12 @@ report(
 report(
   'the poster URL field is what the form actually saves',
   /image:\s*byId\('interview-image'\)\.value\.trim\(\)/.test(adminSrc)
+);
+report(
+  'podcast-file really is bound, in the delegated change handler',
+  /if \(target\.id === 'podcast-file'\)/.test(adminSrc) &&
+    /validateAudioFile\(file\)/.test(adminSrc),
+  'listing a picker as picked-up-elsewhere is only honest if it is genuinely handled'
 );
 
 /* ======================================================================== *

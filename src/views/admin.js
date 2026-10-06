@@ -55,7 +55,9 @@ import {
   normaliseColour,
   readableOn,
   groupByRole,
-  moveRoleBand
+  moveRoleBand,
+  ABOUT_CATEGORIES,
+  normaliseAboutCategory
 } from '../lib/credits.js';
 import {
   escapeHtml,
@@ -118,7 +120,7 @@ const BLANK_IMAGE =
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">' +
       '<rect width="800" height="450" fill="#e7e1d3"/>' +
       '<text x="50%" y="50%" font-family="Georgia,serif" font-size="42" ' +
-      'fill="#8c1d11" text-anchor="middle">The Wire</text></svg>'
+      'fill="#8c1d11" text-anchor="middle">The Pulse</text></svg>'
   );
 
 /** Fallback art for any record with a missing or unsafe image URL. */
@@ -295,6 +297,226 @@ function renderOverview() {
 /* Tab 2 — Content Desk                                                        */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The ids of the front-page layout as the Owner currently sees it, and whether
+ * it differs from what is saved.
+ *
+ * Module state rather than a DOM read, because the panel is re-rendered from the
+ * store on every unrelated change and a drag in progress must survive that. The
+ * saved baseline is captured when the list is first built so "Save" knows whether
+ * there is anything to write.
+ */
+let layoutDraft = null;
+let layoutSaved = '';
+
+/** The order the Owner is looking at, falling back to the store's own order. */
+function currentLayoutOrder() {
+  if (layoutDraft) return layoutDraft;
+  return store.listPublishedArticles().map((article) => article.id);
+}
+
+function layoutIsDirty() {
+  const order = currentLayoutOrder();
+  return order.join('|') !== layoutSaved;
+}
+
+/**
+ * "Latest Coverage" ordering, with drag-to-reorder and arrow buttons.
+ *
+ * WHY POINTER EVENTS AND NOT A LIBRARY
+ * ------------------------------------
+ * The brief named @hello-pangea/dnd or dnd-kit. Both are React; this panel is
+ * vanilla template strings, so either would mean adding React to render a list
+ * that is already rendered, or reaching for the vanilla build and hand-writing
+ * the accessibility layer anyway. Pointer Events give the same result in about
+ * forty lines and no dependency, and `touch-action: none` on the handle is the
+ * whole trick for stopping the page scrolling under a drag.
+ *
+ * THE ARROWS ARE NOT A FALLBACK, THEY ARE THE PRIMARY CONTROL
+ * -----------------------------------------------------------
+ * A one-step move is the common case -- "swap these two" -- and on a phone a
+ * drag for it is slow and easy to get wrong. The arrows are always present, not
+ * hidden behind a hover, because there is no hover on the device most of this
+ * will be used on.
+ */
+function contentLayoutPanel() {
+  const published = store.listPublishedArticles();
+  if (!published.length) return '';
+
+  const byId = new Map(published.map((article) => [article.id, article]));
+  const order = currentLayoutOrder().filter((id) => byId.has(id));
+  // Anything published that is not in the draft still belongs on the page: a row
+  // published in another tab must not silently vanish from the ordering UI.
+  for (const article of published) {
+    if (!order.includes(article.id)) order.push(article.id);
+  }
+
+  layoutSaved = store.listPublishedArticles().map((article) => article.id).join('|');
+
+  const dirty = layoutIsDirty();
+
+  return `
+    <section class="layout-panel" aria-labelledby="layout-heading">
+      <div class="layout-panel__head">
+        <div>
+          <h2 id="layout-heading" class="text-sm font-black tracking-tight">
+            Latest Coverage order
+          </h2>
+          <p class="ink-muted mt-1 text-xs">
+            Drag a card by its handle, or use the arrows, to choose the order the
+            front page runs in. Stories you have not placed keep their
+            newest-first order below yours.
+          </p>
+        </div>
+        <button
+          type="button"
+          class="btn btn-accent shrink-0"
+          data-action="layout-save"
+          ${dirty ? '' : 'disabled'}
+        >
+          <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save Layout Order
+        </button>
+      </div>
+
+      <ol class="layout-list" data-layout-list>
+        ${order
+          .map((id, index) => layoutRow(byId.get(id), index, order.length))
+          .join('')}
+      </ol>
+
+      ${
+        dirty
+          ? ''
+          : `<p class="layout-panel__saved">
+               <i class="fa-solid fa-circle-check ink-muted" aria-hidden="true"></i>
+               Saved. The front page is running this order.
+             </p>`
+      }
+    </section>
+  `;
+}
+
+function layoutRow(article, index, total) {
+  const id = escapeHtml(article.id || '');
+  const placed = Number.isFinite(article.displayOrder);
+
+  return `
+    <li class="layout-row" data-layout-id="${id}">
+      <button
+        type="button"
+        class="layout-row__handle"
+        data-layout-handle
+        aria-label="Drag to reorder ${escapeHtml(article.title || 'this story')}"
+        title="Drag to reorder"
+      >
+        <i class="fa-solid fa-grip-vertical" aria-hidden="true"></i>
+      </button>
+
+      <span class="layout-row__rank" aria-hidden="true">${index + 1}</span>
+
+      <div class="layout-row__body">
+        <p class="layout-row__title">${escapeHtml(article.title || 'Untitled')}</p>
+        <p class="layout-row__meta">
+          ${escapeHtml(article.author || 'The Pulse Staff')} &#8226;
+          ${escapeHtml(article.date || '')}
+          ${placed ? '' : ' &#8226; <span class="ink-muted">not placed yet</span>'}
+        </p>
+      </div>
+
+      <div class="layout-row__moves">
+        <button type="button" class="btn btn-quiet" data-action="layout-up"
+          data-id="${id}" ${index === 0 ? 'disabled' : ''}
+          aria-label="Move ${escapeHtml(article.title || 'this story')} up">
+          <i class="fa-solid fa-arrow-up" aria-hidden="true"></i>
+        </button>
+        <button type="button" class="btn btn-quiet" data-action="layout-down"
+          data-id="${id}" ${index === total - 1 ? 'disabled' : ''}
+          aria-label="Move ${escapeHtml(article.title || 'this story')} down">
+          <i class="fa-solid fa-arrow-down" aria-hidden="true"></i>
+        </button>
+      </div>
+    </li>
+  `;
+}
+
+/** Move one row by `delta`, then repaint. Purely local until Save is pressed. */
+function nudgeLayout(id, delta) {
+  const order = [...currentLayoutOrder()];
+  const from = order.indexOf(id);
+  if (from === -1) return;
+  const to = from + delta;
+  if (to < 0 || to >= order.length) return;
+
+  order.splice(to, 0, ...order.splice(from, 1));
+  layoutDraft = order;
+  paintActiveTab();
+}
+
+/**
+ * Pointer-driven reordering for the layout list.
+ *
+ * Bound once per render of the list, on the list itself rather than per row, so
+ * a repaint mid-drag cannot leave a handler attached to a detached node.
+ */
+function wireLayoutDrag() {
+  const list = document.querySelector('[data-layout-list]');
+  if (!list || list.dataset.dragBound === '1') return;
+  list.dataset.dragBound = '1';
+
+  let dragging = null;
+
+  const rowAt = (clientY) => {
+    const rows = [...list.querySelectorAll('[data-layout-id]')];
+    return rows.find((row) => {
+      const box = row.getBoundingClientRect();
+      return clientY >= box.top && clientY <= box.bottom;
+    });
+  };
+
+  list.addEventListener('pointerdown', (event) => {
+    const handle = event.target.closest('[data-layout-handle]');
+    if (!handle) return;
+
+    const row = handle.closest('[data-layout-id]');
+    if (!row) return;
+
+    dragging = row;
+    row.classList.add('layout-row--dragging');
+    // Capture on the list so the pointer keeps sending moves after it leaves the
+    // handle, and so a pointerup outside any row still ends the drag.
+    list.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  });
+
+  list.addEventListener('pointermove', (event) => {
+    if (!dragging) return;
+    const over = rowAt(event.clientY);
+    if (!over || over === dragging) return;
+
+    // Insert before or after depending on which half of the target the pointer
+    // is in, so the row follows the finger rather than jumping on contact.
+    const box = over.getBoundingClientRect();
+    const after = event.clientY > box.top + box.height / 2;
+    over.parentNode.insertBefore(dragging, after ? over.nextSibling : over);
+  });
+
+  const endDrag = () => {
+    if (!dragging) return;
+    dragging.classList.remove('layout-row--dragging');
+    dragging = null;
+    // The DOM order IS the draft now, so read it back rather than trying to
+    // track every move -- and repaint so the rank numbers and the arrow states
+    // agree with what the pointer just did.
+    layoutDraft = [...list.querySelectorAll('[data-layout-id]')].map(
+      (row) => row.dataset.layoutId
+    );
+    paintActiveTab();
+  };
+
+  list.addEventListener('pointerup', endDrag);
+  list.addEventListener('pointercancel', endDrag);
+}
+
 function renderContent() {
   const all = store.listArticles();
   const filtered =
@@ -331,6 +553,8 @@ function renderContent() {
           )
           .join('')}
       </div>
+
+      ${contentLayoutPanel()}
 
       ${
         filtered.length
@@ -426,15 +650,20 @@ function renderInterviewsTab() {
 
   return `
     <div class="space-y-5">
-      ${panelHeader(
-        'Interviews desk',
-        `${all.length} interview${all.length === 1 ? '' : 's'} on file - ${
-          pending.length
-        } awaiting approval`,
-        `<button class="btn btn-accent" data-action="interview-new">
+    ${panelHeader(
+      'Interviews desk',
+      `${all.length} interview${all.length === 1 ? '' : 's'} on file - ${
+        pending.length
+      } awaiting approval`,
+      `<div class="flex flex-wrap gap-2">
+         <button class="btn btn-ghost" data-action="podcast-new">
+           <i class="fa-solid fa-microphone-lines" aria-hidden="true"></i> Submit a podcast
+         </button>
+         <button class="btn btn-accent" data-action="interview-new">
            <i class="fa-solid fa-plus" aria-hidden="true"></i> New interview
-         </button>`
-      )}
+         </button>
+       </div>`
+    )}
 
       <div class="flex flex-wrap gap-2" role="group" aria-label="Filter interviews by status">
         ${filters
@@ -746,7 +975,7 @@ function renderBroadcastsTab() {
           <span>
             <strong class="text-[0.7rem]">Sent as a real push notification.</strong>
             This goes out through Web Push, so it reaches opted-in devices even when
-            The Wire is closed. Open devices also pick it up on their next refresh,
+            The Pulse is closed. Open devices also pick it up on their next refresh,
             which covers anyone whose browser cannot take a push.
           </span>
         </p>
@@ -991,78 +1220,47 @@ function normaliseStaffStatus(value) {
 }
 
 /**
- * Fill the account-id half of the portrait index.
+ * Index the staff roster's approved portraits by name.
  *
- * Only the Staff tab holds both sides of the join, which is why this lives here
- * and not in `primePortraits()`:
+ * This is the whole reason it lives here rather than in `primePortraits()`:
+ * `primePortraits()` reads `credits_people`, the hand-picked public Credits page,
+ * which is not the staff roster. Until this runs, a byline can only be answered
+ * from the Credits page, so a staffer who approved a portrait but was never added
+ * to that page renders as plain text while somebody who WAS added gets a photo --
+ * for the same kind of author. The Staff tab is where the roster lives, so the
+ * Staff tab is what indexes it.
  *
- *   • `staff` carries the portrait and its review state.
- *   • `staff_accounts` carries the id that `articles.author_account_id` points
- *     at. The two tables share exactly one column -- username -- so the Staff
- *     tab is the only place that can produce the mapping.
+ * There is no account lookup here, deliberately. An earlier version joined
+ * `staff` to `staff_accounts` on username so it could key portraits by
+ * `articles.author_account_id`; that column records who may edit the row, not who
+ * wrote it, so keying a FACE by it put the Owner's portrait beside a reporter's
+ * byline. The byline name is the only key a portrait should answer to.
  *
- * Until it runs, a byline resolves by name alone, which is exactly the path that
- * lets "Grace Wanjiku" and "Grace W. Wanjiku" borrow each other's face. The
- * join is skipped silently when the roster is empty or unreadable: an empty ID
- * index makes `portraitForArticle` fall back to the name, which is the
- * behaviour that already shipped.
- *
- * The roster is hashed into `staffPortraitIndexKey` so the owner-gated account
- * read happens once per roster change rather than on every repaint of the tab.
- * The key is only committed once a read has SUCCEEDED, so a dropped connection
- * costs one retry on the next repaint rather than pinning the index empty for the
- * rest of the session.
+ * The roster is hashed into `staffPortraitIndexKey` so the index is rebuilt once
+ * per roster change rather than on every repaint of the tab.
  *
  * It mirrors the roster exactly as the store holds it, which is the same limit
  * `primePortraits()` has always had: a portrait decided through the review
- * buttons lands in Postgres and the name cache is re-read, but the in-memory
+ * buttons lands in Postgres and the credits cache is re-read, but the in-memory
  * staff row keeps its old `portrait_status` until the next hydrate. So a freshly
- * approved portrait reaches readers through the name cache, and joins the FK
- * cache on the next page load.
+ * approved portrait reaches readers on the next page load.
  */
 let staffPortraitIndexKey = '';
-let staffPortraitIndexPending = false;
 
-async function primeStaffPortraits(staff) {
+function primeStaffPortraits(staff) {
   const key = staff
-    .map((member) => `${member.username}|${member.portrait_status}|${member.portrait_url}`)
+    .map((member) => `${member.name}|${member.portrait_status}|${member.portrait_url}`)
     .join('\n');
-  if (key === staffPortraitIndexKey || staffPortraitIndexPending) return;
-  staffPortraitIndexPending = true;
+  if (key === staffPortraitIndexKey) return;
+  staffPortraitIndexKey = key;
 
-  try {
-    const accounts = await loadAccounts();
-    if (!accounts) return;
-
-    const accountIdByUsername = new Map(
-      accounts
-        .map((account) => [
-          String(account?.username || '').trim().toLowerCase(),
-          account?.id
-        ])
-        .filter(([username, id]) => username && id)
-    );
-
-    indexStaffPortraits(
-      staff.map((member) => ({
-        // The ACCOUNT id, not staff.id -- see the note above.
-        id: accountIdByUsername.get(String(member.username || '').trim().toLowerCase()),
-        // The name goes in too: the same call also builds the by-name half of the
-        // index, so a card whose article has no author_account_id (a pre-007 row,
-        // a contributor with no account, anything in demo mode) resolves to the
-        // SAME photo as a card that does have one. Without the name that card
-        // falls through to the Credits roster and the same author can be seen
-        // wearing two different faces.
-        name: member.name,
-        portrait_url: member.portrait_url,
-        portrait_status: member.portrait_status
-      }))
-    );
-
-    staffPortraitIndexKey = key;
-  } finally {
-    staffPortraitIndexPending = false;
-  }
+  indexStaffPortraits(
+    staff.map((member) => ({
+      name: member.name,
+      portrait_url: member.portrait_url,
+      portrait_status: member.portrait_status
+    }))
+  );
 }
 
 function renderStaffTab() {
@@ -2743,6 +2941,19 @@ async function refreshCreditsPeople() {
  * Rows load asynchronously, so it returns a loading placeholder and fills itself
  * in when the page arrives.
  */
+/**
+ * Which roster the Credits tab is editing: '' is the Credits page, otherwise one
+ * of ABOUT_CATEGORIES.
+ *
+ * This is a VIEW filter over one shared table, not three editors. The Credits
+ * page and the two About rosters hold the same six fields, so they share the same
+ * cards, the same forms and the same handlers; only the category differs. A
+ * separate About tab with its own copy of that code would be a second thing to
+ * keep in step with the first -- and the two lists of ids in this project have
+ * already drifted once.
+ */
+let creditsScope = '';
+
 function renderCreditsTab() {
   const body = byId('admin-tab-body');
   if (!body) return '';
@@ -2771,56 +2982,122 @@ function renderCreditsTab() {
 const DEFAULT_ROLE_COLOR = '#c8102e';
 
 /**
+ * The roster switcher: Credits page, then the two About Us sections.
+ *
+ * Rendered as real buttons rather than tabs because they are not tabs -- they do
+ * not change which panel is open, they filter what the panel shows. `aria-pressed`
+ * rather than a role, because a tablist would promise keyboard arrow navigation
+ * this is not built for.
+ */
+function creditsScopeSwitcher(people) {
+  const options = [
+    { scope: '', label: 'Credits page' },
+    ...ABOUT_CATEGORIES.map((category) => ({ scope: category, label: category }))
+  ];
+
+  const counts = new Map(
+    options.map(({ scope }) => [
+      scope,
+      scope ? people.filter((p) => normaliseAboutCategory(p.category) === scope).length : people.length
+    ])
+  );
+
+  return `
+    <div class="credits-scope" role="group" aria-label="Which roster you are editing">
+      ${options
+        .map(
+          ({ scope, label }) => `
+        <button
+          type="button"
+          class="credits-scope__btn"
+          data-action="credits-scope"
+          data-scope="${escapeHtml(scope)}"
+          aria-pressed="${creditsScope === scope}"
+        >
+          ${escapeHtml(label)}
+          <span class="credits-scope__count">${counts.get(scope)}</span>
+        </button>`
+        )
+        .join('')}
+    </div>
+  `;
+}
+
+/**
  * Render the Credits editor: an "add someone" form plus one card per person.
  *
- * @param {Array<object>} people
+ * @param {Array<object>} people  the WHOLE roster; filtered here by creditsScope
  */
 function creditsPanel(people) {
+  // The cache always holds every row. Filtering a copy for display means a save
+  // that changes somebody's category cannot make them vanish from the list the
+  // Owner is looking at until the next refetch -- and, worse, cannot make the
+  // whole panel render as empty.
+  const scoped = creditsScope
+    ? people.filter((person) => normaliseAboutCategory(person.category) === creditsScope)
+    : people;
+
+  const onAboutPage = Boolean(creditsScope);
+
   return `
     <div class="space-y-5">
       ${panelHeader(
-        'Credits page',
-        `${people.length} ${people.length === 1 ? 'person' : 'people'} listed` +
-          ' · only people you add here appear on the page',
-        `<a class="btn btn-ghost" href="#credits" data-nav="credits">
+        onAboutPage ? `About Us — ${creditsScope}` : 'Credits page',
+        onAboutPage
+          ? `${scoped.length} ${scoped.length === 1 ? 'person' : 'people'} in this section, in the order readers see them`
+          : `${people.length} ${people.length === 1 ? 'person' : 'people'} listed` +
+            ' · only people you add here appear on the page',
+        `<a class="btn btn-ghost" href="#${onAboutPage ? 'about' : 'credits'}"
+            data-nav="${onAboutPage ? 'about' : 'credits'}">
            <i class="fa-solid fa-eye" aria-hidden="true"></i> Preview page
          </a>`
       )}
 
+      ${creditsScopeSwitcher(people)}
+
       <p class="panel-sunken p-4 text-xs ink-muted">
         <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
-        This page is a list of <strong>people</strong>, not of accounts. Adding
-        someone here creates no login and grants no access — it only puts their
-        name, photo and role on the public page. The role is free text, so you can
-        write anything you like, and each role carries its own colour.
+        ${
+          onAboutPage
+            ? `This section lists the people shown under <strong>${escapeHtml(
+                creditsScope
+              )}</strong> on the About Us page. The same person can appear on both pages; the
+             section only decides where they sit on About Us, and each page is
+             ordered independently.`
+            : `This page is a list of <strong>people</strong>, not of accounts. Adding
+             someone here creates no login and grants no access — it only puts their
+             name, photo and role on the public page. The role is free text, so you can
+             write anything you like, and each role carries its own colour.`
+        }
       </p>
 
-      ${creditsAddForm(people)}
+      ${creditsAddForm(scoped)}
 
       ${
-        people.length
-          ? groupByRole(people).map(creditsRoleBand).join('')
+        scoped.length
+          ? (creditsScope ? scoped.map(creditsPersonCard) : groupByRole(scoped).map(creditsRoleBand).join(''))
           : isCreditsMigrationMissing()
             ? `<div class="panel-raised p-6 text-sm">
                  <p class="flex items-center gap-2 font-bold">
-                   <i class="fa-solid fa-database ink-muted" aria-hidden="true"></i>
-                   Database migration not applied yet
+                   <i class="fa-solid fa-triangle-exclamation ink-muted" aria-hidden="true"></i>
+                   The Credits table is not there yet
                  </p>
                  <p class="ink-muted mt-2">
-                   The Credits page table does not exist in your Supabase project, so
-                   it cannot be read or saved. Run
-                   <code>supabase/009_credits_page.sql</code> in the Supabase SQL
+                   Run <code>supabase/009_credits_page.sql</code> in the Supabase SQL
                    Editor, then reopen this tab.
                  </p>
                </div>`
             : emptyState(
-                'Nobody is on the Credits page yet. Add the first person above.',
-                'fa-id-badge'
+                creditsScope
+                  ? `Nobody is listed under ${creditsScope} yet.`
+                  : 'Nobody on the Credits page yet.',
+                'fa-user-plus'
               )
       }
     </div>
   `;
 }
+
 
 /**
  * One role band in the Credits editor: the role heading with its two move
@@ -2886,6 +3163,12 @@ function creditsPersonCard(person) {
   const colour = normaliseColour(person.role_color) || DEFAULT_ROLE_COLOR;
   const order = Number(person.sort_order) || 100;
   const name = escapeHtml(person.name || 'Unnamed');
+  // The two order columns are different numbers for different pages, so the
+  // field that is EDITED depends on which roster is open -- and both are always
+  // carried in the form so a save cannot silently blank the other page's order.
+  const onAbout = Boolean(creditsScope);
+  const aboutOrder = Number(person.about_order) || 100;
+  const category = normaliseAboutCategory(person.category);
 
   return `
     <li class="panel-raised p-4" data-credits-row="${id}">
@@ -2901,22 +3184,49 @@ function creditsPersonCard(person) {
 
           <button type="button" class="btn btn-ghost shrink-0 text-rose-600"
             data-action="credits-remove" data-id="${id}"
-            aria-label="Remove ${name} from the Credits page">
+            aria-label="Remove ${name} from ${onAbout ? creditsScope : 'the Credits page'}">
             <i class="fa-solid fa-trash" aria-hidden="true"></i>
           </button>
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2">
           <div>
-            <label class="field-label" for="credits-role-${id}">Role</label>
+            <label class="field-label" for="credits-role-${id}">Role title</label>
             <input id="credits-role-${id}" class="field" type="text" maxlength="60"
               data-credits-role value="${escapeHtml(person.role_label || '')}" />
           </div>
           <div>
-            <label class="field-label" for="credits-order-${id}">Order</label>
-            <input id="credits-order-${id}" class="field" type="number" min="1"
-              max="999" data-credits-order value="${order > 0 ? order : 100}" />
+            <label class="field-label" for="credits-category-${id}">Appears under</label>
+            <select id="credits-category-${id}" class="field" data-credits-category>
+              <option value="" ${category ? '' : 'selected'}>Credits page only</option>
+              ${ABOUT_CATEGORIES.map(
+                (option) =>
+                  `<option value="${escapeHtml(option)}" ${
+                    category === option ? 'selected' : ''
+                  }>${escapeHtml(option)}</option>`
+              ).join('')}
+            </select>
           </div>
+        </div>
+
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label class="field-label" for="credits-order-${id}">
+              ${
+                onAbout
+                  ? `Order in ${escapeHtml(creditsScope)}`
+                  : 'Order on the Credits page'
+              }
+            </label>
+            <input id="credits-order-${id}" class="field" type="number" min="1"
+              max="999" ${
+                onAbout ? 'data-credits-about-order' : 'data-credits-order'
+              } value="${onAbout ? aboutOrder : order > 0 ? order : 100}" />
+          </div>
+          <p class="self-end text-[0.7rem] ink-muted">
+            Lower numbers appear first. Each page is ordered on its own, so
+            changing one does not move the person on the other.
+          </p>
         </div>
 
         <div>
@@ -3068,6 +3378,29 @@ function creditsAddForm(people) {
         </div>
       </div>
 
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label class="field-label" for="credits-add-category">Appears under</label>
+          <select id="credits-add-category" class="field">
+            <option value="" ${creditsScope ? '' : 'selected'}>Credits page only</option>
+            ${ABOUT_CATEGORIES.map(
+              (option) =>
+                `<option value="${escapeHtml(option)}" ${
+                  creditsScope === option ? 'selected' : ''
+                }>${escapeHtml(option)}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="field-label" for="credits-add-about-order">Order position</label>
+          <input id="credits-add-about-order" class="field" type="number" min="1"
+            max="999" value="100" />
+          <p class="mt-1 text-[0.6875rem] ink-muted">
+            Lower numbers appear first.
+          </p>
+        </div>
+      </div>
+
       <details class="text-xs">
         <summary class="cursor-pointer ink-muted">Or paste a photo URL</summary>
         <input id="credits-add-url" class="field mt-2" type="url"
@@ -3081,7 +3414,8 @@ function creditsAddForm(people) {
       </div>
 
       <button type="submit" class="btn btn-accent w-full sm:w-auto">
-        <i class="fa-solid fa-plus" aria-hidden="true"></i> Add to Credits page
+        <i class="fa-solid fa-plus" aria-hidden="true"></i>
+        ${creditsScope ? `Add to ${escapeHtml(creditsScope)}` : 'Add to Credits page'}
       </button>
     </form>
   `;
@@ -3208,10 +3542,327 @@ function inlineMarkdown(text) {
  * must be exactly the single Owner seat (Accounts, Security) rather than a
  * ranking — see visibleTabs().
  */
+/* -------------------------------------------------------------------------- */
+/* Podcasts — approvals (Owner) + submission (any staffer)                    */
+/* -------------------------------------------------------------------------- */
+
+/** The queue is fetched once per visit and re-fetched after every decision. */
+let podcastQueue = null;
+
+/**
+ * The Owner's podcast approval queue.
+ *
+ * Each row carries a real <audio> player rather than a filename, because the
+ * whole point of the decision is whether the audio is right: right episode, right
+ * take, not truncated. A title and a duration cannot tell the Owner that, and a
+ * silent approve-and-listen-later is how a broken episode reaches readers.
+ */
+function renderPodcastsTab() {
+  const body = byId('admin-tab-body');
+  if (!body) return '';
+
+  if (!isOwner()) {
+    return emptyState('Only the Owner can publish or refuse an episode.', 'fa-lock');
+  }
+
+  if (podcastQueue) return podcastQueuePanel(podcastQueue);
+
+  listPendingPodcasts().then((episodes) => {
+    podcastQueue = episodes;
+    if (!body.isConnected || body.dataset.tab !== 'podcasts') return;
+    body.innerHTML = podcastQueuePanel(episodes);
+  });
+
+  return `<div class="panel-sunken p-10 text-center">
+    <i class="fa-solid fa-circle-notch spin-slow ink-muted text-xl" aria-hidden="true"></i>
+    <p class="ink-muted mt-3 text-sm">Loading the podcast queue…</p>
+  </div>`;
+}
+
+function podcastQueuePanel(episodes) {
+  return `
+    <div class="space-y-5">
+      ${panelHeader(
+        'Podcast approvals',
+        episodes.length
+          ? `${episodes.length} submission${episodes.length === 1 ? '' : 's'} waiting on you`
+          : 'Nothing waiting',
+        `<a class="btn btn-ghost" href="#podcasts" data-nav="podcasts">
+           <i class="fa-solid fa-eye" aria-hidden="true"></i> Preview page
+         </a>`
+      )}
+
+      <p class="panel-sunken p-4 text-xs ink-muted">
+        <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+        Writers file an episode and it waits here. Nothing a writer submits is
+        ever public until you press <strong>Approve</strong>. <strong>Refuse</strong>
+        deletes the record <em>and</em> purges the MP3 from storage, so a refused
+        episode leaves nothing behind.
+      </p>
+
+      ${
+        episodes.length
+          ? `<ul class="space-y-4">${episodes.map(podcastQueueRow).join('')}</ul>`
+          : emptyState(
+              'No podcast is waiting for approval.',
+              'fa-headphones'
+            )
+      }
+    </div>
+  `;
+}
+
+function podcastQueueRow(episode) {
+  const id = escapeHtml(episode.id || '');
+  const title = escapeHtml(episode.title || 'Untitled episode');
+  const playable = Boolean(episode.audio_url);
+  const submitted = episode.created_at
+    ? new Date(episode.created_at).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      })
+    : 'recently';
+
+  return `
+    <li class="panel-raised p-4" data-podcast-row="${id}">
+      <div class="flex flex-wrap items-start gap-3">
+        <div class="min-w-0 flex-1">
+          <p class="font-headline text-base font-bold">${title}</p>
+          <p class="ink-muted mt-1 text-xs">
+            ${escapeHtml(episode.author_name || 'A contributor')}
+            &#8226; submitted ${escapeHtml(submitted)}
+            ${
+              Number.isFinite(episode.duration_seconds)
+                ? `&#8226; ${escapeHtml(podcastDuration(episode.duration_seconds))}`
+                : ''
+            }
+          </p>
+          ${
+            episode.description
+              ? `<p class="mt-2 text-sm">${escapeHtml(episode.description)}</p>`
+              : ''
+          }
+        </div>
+
+        <div class="flex shrink-0 gap-2">
+          <button type="button" class="btn btn-accent" data-action="podcast-approve"
+            data-id="${id}">
+            <i class="fa-solid fa-check" aria-hidden="true"></i> Approve
+          </button>
+          <button type="button" class="btn btn-ghost text-rose-600"
+            data-action="podcast-reject" data-id="${id}" data-title="${title}">
+            <i class="fa-solid fa-trash" aria-hidden="true"></i> Refuse
+          </button>
+        </div>
+      </div>
+
+      ${
+        playable
+          ? `<audio class="podcast-card__audio mt-3" controls preload="metadata"
+              src="${escapeHtml(episode.audio_url)}"></audio>`
+          : `<p class="mt-3 text-sm ink-muted">
+               <i class="fa-solid fa-triangle-exclamation me-2" aria-hidden="true"></i>
+               No audio file is attached to this submission, so there is nothing
+               to listen to. Refusing it will simply remove the record.
+             </p>`
+      }
+    </li>
+  `;
+}
+
+/** `M:SS` for the panel. The public page has its own, richer, formatter. */
+function podcastDuration(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/**
+ * Read an MP3's duration with the browser's own decoder.
+ *
+ * No library, and no frame parsing: an off-DOM <audio> pointed at an object URL
+ * reports `duration` from `loadedmetadata`. The object is revoked in a `finally`,
+ * because leaking one per submission would pin the whole file in memory for the
+ * life of the tab.
+ *
+ * @returns {Promise<number|null>} whole seconds, or null when it cannot be read
+ */
+function readAudioDuration(file) {
+  return new Promise((resolve) => {
+    let url = null;
+    let audio = null;
+    try {
+      url = URL.createObjectURL(file);
+      audio = new Audio();
+      audio.preload = 'metadata';
+      audio.addEventListener('loadedmetadata', () => {
+        const seconds = Number(audio.duration);
+        resolve(Number.isFinite(seconds) ? Math.round(seconds) : null);
+      });
+      audio.addEventListener('error', () => resolve(null));
+      // A file the browser cannot decode has no duration to show, but it is still
+      // worth submitting if the server accepts it -- so this resolves null rather
+      // than rejecting, and the form says the duration is unknown.
+      setTimeout(() => resolve(null), 8000);
+      audio.src = url;
+    } catch {
+      resolve(null);
+    } finally {
+      // Deliberately NOT revoking here: `loadedmetadata` has not fired yet, and
+      // revoking now would abort the very read this is waiting on. The timeout
+      // below revokes once the read has settled.
+      setTimeout(() => {
+        if (url) URL.revokeObjectURL(url);
+      }, 9000);
+    }
+  });
+}
+
+/** The writer's submission dialog. */
+function podcastEditorDialog() {
+  return `
+    <div
+      id="podcast-editor"
+      class="modal-backdrop hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="podcast-editor-title"
+    >
+      <div class="modal-card relative w-full max-w-lg p-6">
+        <button
+          type="button"
+          class="btn-quiet absolute top-4 right-4"
+          data-close-dialog="podcast-editor"
+          aria-label="Close"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+
+        <h3 id="podcast-editor-title" class="font-headline text-xl font-black tracking-wide uppercase">
+          Submit a podcast
+        </h3>
+
+        <form id="podcast-form" class="mt-4 space-y-3" novalidate>
+          <div>
+            <label class="field-label" for="podcast-title">Episode title</label>
+            <input id="podcast-title" class="field" type="text" maxlength="120" required />
+          </div>
+
+          <div>
+            <label class="field-label" for="podcast-description">
+              One-line description
+            </label>
+            <textarea id="podcast-description" class="field" rows="2"
+              maxlength="${PODCAST_DESCRIPTION_LIMIT}" required></textarea>
+            <p class="mt-1 text-[0.6875rem] ink-muted">
+              <span data-podcast-count>0</span>/${PODCAST_DESCRIPTION_LIMIT} characters.
+            </p>
+          </div>
+
+          <div>
+            <label class="field-label" for="podcast-file">MP3 file</label>
+            <input id="podcast-file" class="field" type="file" accept=".mp3,audio/mpeg" />
+            <p class="mt-1 text-[0.6875rem] ink-muted" data-podcast-duration>
+              MP3 only, up to 25 MB. The length is worked out from the file.
+            </p>
+          </div>
+
+          <div class="flex justify-end gap-2 pt-2">
+            <button type="button" class="btn btn-ghost" data-close-dialog="podcast-editor">
+              Cancel
+            </button>
+            <button type="submit" class="btn btn-accent">
+              <i class="fa-solid fa-paper-plane" aria-hidden="true"></i> Submit
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+/** The description limit lives in one place, imported rather than retyped. */
+const PODCAST_DESCRIPTION_LIMIT = MAX_DESCRIPTION;
+
+function openPodcastEditor() {
+  const title = byId('podcast-title');
+  if (title) title.value = '';
+  const description = byId('podcast-description');
+  if (description) description.value = '';
+  const file = byId('podcast-file');
+  if (file) file.value = '';
+  const note = byId('podcast-editor')?.querySelector('[data-podcast-duration]');
+  if (note) {
+    note.textContent = 'MP3 only, up to 25 MB. The length is worked out from the file.';
+  }
+  openDialog('podcast-editor', { initialFocus: '#podcast-title' });
+}
+
+async function savePodcastFromForm(form) {
+  const title = byId('podcast-title')?.value.trim() || '';
+  const description = byId('podcast-description')?.value.trim() || '';
+  const file = byId('podcast-file')?.files?.[0];
+
+  if (!title) {
+    showToast('Give the episode a title.', { type: 'error' });
+    return;
+  }
+  if (description.length > PODCAST_DESCRIPTION_LIMIT) {
+    showToast(
+      `The description is ${description.length} characters. The limit is ${PODCAST_DESCRIPTION_LIMIT}.`,
+      { type: 'error' }
+    );
+    return;
+  }
+
+  const busy = showToast('Uploading the episode…', { type: 'info', duration: 0 });
+  try {
+    // Read the duration BEFORE uploading: it costs a local file read, so doing it
+    // first means the wait is spent on the upload that actually needs the network.
+    const durationSeconds = file ? await readAudioDuration(file) : null;
+
+    const result = await submitPodcast({ title, description, file, durationSeconds });
+
+    if (!result.ok) {
+      showToast(result.message || 'The episode could not be submitted.', {
+        type: 'error',
+        duration: 8000
+      });
+      return;
+    }
+
+    closeDialog('podcast-editor');
+    podcastQueue = null;
+    showToast('Submitted. It is waiting on the Owner to approve it.', { type: 'success' });
+  } finally {
+    busy.remove();
+  }
+}
+
+import {
+  listPendingPodcasts,
+  decidePodcast,
+  submitPodcast,
+  validateAudioFile,
+  MAX_DESCRIPTION
+} from '../lib/podcasts.js';
+
+/**
+ * Every tab the Newsroom Panel offers, with the role that can see it.
+ *
+ * `ownerOnly` means the gate must be exactly the single Owner seat rather than a
+ * ranking -- see visibleTabs().
+ */
 const TABS = [
   { id: 'overview', label: 'Overview', icon: 'fa-gauge-high', render: renderOverview, minRole: 'Writer' },
   { id: 'content', label: 'Content', icon: 'fa-newspaper', render: renderContent, minRole: 'Writer' },
   { id: 'interviews', label: 'Interviews', icon: 'fa-circle-play', render: renderInterviewsTab, minRole: 'Writer' },
+  // The submission queue is open to any staffer, but the DECISION is not: a tab a
+  // writer can open but not act in is a dead end, so the gate is the Owner seat
+  // and not a role ranking.
+  { id: 'podcasts', label: 'Podcast Approvals', icon: 'fa-headphones', render: renderPodcastsTab, ownerOnly: true },
   { id: 'accounts', label: 'Accounts', icon: 'fa-user-check', render: renderAccountsTab, ownerOnly: true },
   { id: 'assignments', label: 'Assignments', icon: 'fa-clipboard-list', render: renderAssignmentsTab, minRole: 'Writer' },
   { id: 'breaking', label: 'Breaking', icon: 'fa-bolt', render: renderBreakingTab, minRole: 'Board Manager' },
@@ -3281,6 +3932,11 @@ function paintActiveTab() {
   // elements and their listeners must be re-attached on every paint. Guarded
   // by `dataset.bound` so a re-render of the same node cannot double-bind.
   bindFilePickers();
+
+  // Same story for the layout list's drag handlers. `wireLayoutDrag` guards
+  // itself, and it is safe to call on every tab: it finds nothing outside the
+  // Content desk.
+  wireLayoutDrag();
 }
 
 /** Attach the device-upload pickers to whatever is currently on screen. */
@@ -3407,6 +4063,7 @@ function shellMarkup() {
       ${articleEditorDialog()}
       ${interviewEditorDialog()}
       ${staffEditorDialog()}
+      ${podcastEditorDialog()}
       ${assignmentEditorDialog()}
       ${passwordResetDialog()}
       ${galleryCategoryPickerDialog()}
@@ -3578,6 +4235,9 @@ function attachAdminListeners() {
     } else if (form.id === 'staff-form') {
       event.preventDefault();
       guard(() => saveStaffFromForm(form));
+    } else if (form.id === 'podcast-form') {
+      event.preventDefault();
+      guard(() => savePodcastFromForm(form));
     } else if (form.id === 'assignment-form') {
       event.preventDefault();
       guard(() => saveAssignmentFromForm(form));
@@ -3770,7 +4430,7 @@ function notifyReadersOfArticle(article, body = '') {
   push
     .dispatchWebPush({
       title: article.title,
-      body: excerpt || 'A new article has just been published on The Wire!',
+      body: excerpt || 'A new article has just been published on The Pulse!',
       audience: 'Everyone',
       url: `/#article-${encodeURIComponent(article.id)}`
     })
@@ -4295,6 +4955,44 @@ function handleChange(event) {
     return;
   }
 
+  /* --- podcast submission form --- */
+  // Live feedback on the two fields that can be got wrong, rather than only on
+  // submit. Validating a 30 MB file after the writer has typed a title and a
+  // description and pressed the button is the worst moment to tell them the
+  // format is wrong.
+  if (target.id === 'podcast-file') {
+    const note = byId('podcast-editor')?.querySelector('[data-podcast-duration]');
+    if (!note) return;
+
+    const file = target.files?.[0];
+    if (!file) {
+      note.textContent = 'MP3 only, up to 25 MB. The length is worked out from the file.';
+      note.classList.remove('text-rose-600');
+      return;
+    }
+
+    const problem = validateAudioFile(file);
+    if (problem) {
+      note.textContent = problem;
+      note.classList.add('text-rose-600');
+      return;
+    }
+
+    note.classList.remove('text-rose-600');
+    note.textContent = 'Reading the length…';
+    readAudioDuration(file).then((seconds) => {
+      note.textContent =
+        seconds === null
+          ? 'That file is accepted, but its length could not be read.'
+          : `${podcastDuration(seconds)} — ${(file.size / (1024 * 1024)).toFixed(1)} MB.`;
+    });
+  }
+
+  if (target.id === 'podcast-description') {
+    const counter = byId('podcast-editor')?.querySelector('[data-podcast-count]');
+    if (counter) counter.textContent = String(target.value.length);
+  }
+
   /* --- Account roles ------------------------------------------------------- */
   // Only a *saved* row (an approved account) writes immediately. On a pending
   // request the role is just the value to be used by the Approve button, so
@@ -4434,6 +5132,16 @@ async function saveBrandingFromForm() {
  *
  * @param {HTMLFormElement} form
  */
+/** Clamp a typed order into the range the form and the page both accept. */
+function readOrderField(scope) {
+  const raw = Number(
+    document.querySelector(
+      scope ? '[data-credits-about-order]' : '[data-credits-order]'
+    )?.value
+  );
+  return Number.isFinite(raw) ? Math.min(999, Math.max(1, Math.round(raw))) : 100;
+}
+
 async function saveCreditsFromForm(form) {
   const personId = form.dataset.creditsForm;
   if (!personId) return;
@@ -4444,17 +5152,22 @@ async function saveCreditsFromForm(form) {
     return;
   }
 
-  const orderRaw = Number(form.querySelector('[data-credits-order]')?.value);
-  const order = Number.isFinite(orderRaw)
-    ? Math.min(999, Math.max(1, Math.round(orderRaw)))
-    : 100;
+  // Which order field this form even renders depends on the open roster, so it is
+  // read through the same switch the renderer used. Reading the other one would
+  // return undefined, `Number(undefined)` is NaN, and the save would write 100 --
+  // silently resetting somebody's position to the bottom of the page.
+  const orderKey = creditsScope ? 'about_order' : 'sort_order';
 
   const result = await updatePerson(personId, {
     name,
     role_label: form.querySelector('[data-credits-role]')?.value.trim() || '',
     role_color: form.querySelector('[data-credits-color]')?.value || '',
     blurb: form.querySelector('[data-credits-blurb]')?.value.trim() || '',
-    sort_order: order
+    // Always sent: '' clears the person from the About page and keeps their
+    // Credits entry, which is a real edit the Owner may be making by accident --
+    // so it is written explicitly rather than inferred from the open roster.
+    category: form.querySelector('[data-credits-category]')?.value ?? '',
+    [orderKey]: readOrderField(creditsScope)
   });
 
   if (!result.ok) {
@@ -4462,7 +5175,10 @@ async function saveCreditsFromForm(form) {
     return;
   }
 
-  showToast(`${name} saved to the Credits page.`, { type: 'success' });
+  showToast(
+    creditsScope ? `${name} saved to ${creditsScope}.` : `${name} saved to the Credits page.`,
+    { type: 'success' }
+  );
   await refreshCreditsPeople();
   paintActiveTab();
 }
@@ -4521,7 +5237,13 @@ async function addCreditsPersonFromForm(form) {
     role,
     color: byId('credits-add-color')?.value || '',
     blurb: byId('credits-add-blurb')?.value.trim() || '',
-    portraitUrl: portrait
+    portraitUrl: portrait,
+    // The open roster decides where a new person lands by default, and the select
+    // lets the Owner override it. Without the select a person added to
+    // "Board Members" would silently land on the Credits page instead, because
+    // the add handler has no idea which roster the panel is showing.
+    category: byId('credits-add-category')?.value ?? creditsScope,
+    aboutOrder: readOrderField(creditsScope)
   });
 
   if (!result.ok) {
@@ -4532,7 +5254,7 @@ async function addCreditsPersonFromForm(form) {
   form.reset();
   await refreshCreditsPeople();
   paintActiveTab();
-  showToast(`${name} added to the Credits page.`, { type: 'success' });
+  showToast(`${name} added.`, { type: 'success' });
 }
 
 /**
@@ -4726,7 +5448,7 @@ export async function sendBroadcastFromForm(form) {
       const allowed = await ensureAlertPermission();
       if (!allowed) {
         showToast(
-          'Allow notifications for The Wire on this device, then send again — ' +
+          'Allow notifications for The Pulse on this device, then send again — ' +
             'otherwise you cannot see the alert to confirm it works.',
           { type: 'info', duration: 9000 }
         );
@@ -4780,7 +5502,7 @@ export async function sendBroadcastFromForm(form) {
       no_subscribers:
         'No device has a usable push subscription yet. Readers must turn on alerts first.',
       target_has_no_devices: targeted
-        ? 'That account has no device registered for push. They must open The Wire on ' +
+        ? 'That account has no device registered for push. They must open The Pulse on ' +
           'that device, turn on alerts, and sign in — the subscription is linked to ' +
           'whoever is signed in when alerts are enabled.'
         : 'No device has a usable push subscription yet.',
@@ -5184,6 +5906,42 @@ function handleClick(event) {
       contentFilter = filter;
       paintActiveTab();
       break;
+
+    /* --- front-page layout --- */
+    // Local reordering. Nothing is written until Save is pressed, so a mis-drag
+    // costs one tap of the arrow buttons rather than a round trip and a repaint.
+    case 'layout-up':
+      nudgeLayout(id, -1);
+      break;
+    case 'layout-down':
+      nudgeLayout(id, 1);
+      break;
+
+    case 'layout-save': {
+      const order = currentLayoutOrder();
+      guard(async () => {
+        const button = trigger;
+        if (button) button.disabled = true;
+        try {
+          const result = await store.saveArticleLayout(order);
+          if (!result.ok) {
+            showToast(result.message || 'The layout could not be saved.', { type: 'error' });
+            return;
+          }
+          // Only now is the draft the truth. Clearing it first is what stops
+          // `layoutIsDirty` comparing the new order against the order we just
+          // wrote and reporting an unsaved change that does not exist.
+          layoutDraft = null;
+          layoutSaved = '';
+          showToast(`Front page order saved (${result.saved} stories).`, { type: 'success' });
+          paintActiveTab();
+        } finally {
+          if (button) button.disabled = false;
+        }
+      });
+      break;
+    }
+
     case 'article-new':
       openArticleEditor(null);
       break;
@@ -5233,6 +5991,13 @@ function handleClick(event) {
     /* --- interviews --- */
     case 'interview-new':
       openInterviewEditor(null);
+      break;
+
+    // The writer's door into the podcast feature. It lives on this tab, which
+    // every staffer can open, rather than on the approvals tab, which only the
+    // Owner can -- otherwise a writer has no way to submit at all.
+    case 'podcast-new':
+      openPodcastEditor();
       break;
     case 'interview-edit':
       openInterviewEditor(id);
@@ -5424,8 +6189,50 @@ function handleClick(event) {
       break;
     }
 
+    /* --- podcasts --- */
+    case 'podcast-approve':
+      guard(async () => {
+        const result = await decidePodcast(id, 'approved');
+        showToast(result.message, { type: result.ok ? 'success' : 'error' });
+        if (!result.ok) return;
+        podcastQueue = null;
+        paintActiveTab();
+      });
+      break;
+
+    case 'podcast-reject':
+      // Named in the prompt because it is irreversible and it deletes storage:
+      // there is no second confirmation dialog in the panel to appeal to, so the
+      // browser confirm is the last thing standing between a mis-click and a
+      // deleted recording.
+      if (
+        !window.confirm(
+          `Refuse "${name}"?\n\nThe record is deleted and the MP3 is purged from storage. This cannot be undone.`
+        )
+      ) {
+        break;
+      }
+      guard(async () => {
+        const result = await decidePodcast(id, 'rejected');
+        showToast(result.message, { type: result.ok ? 'success' : 'error', duration: 6000 });
+        if (!result.ok) return;
+        podcastQueue = null;
+        paintActiveTab();
+      });
+      break;
+
     /* --- credits --- */
-    // Every one of these writes to public.credits_people through an RPC that
+    // Switching which roster the tab is editing. Purely local state: the cards,
+    // the forms and the handlers are identical either way -- only the filter and
+    // two labels change. Repainted from the CACHE rather than refetched, because
+    // the whole roster is already loaded and a round-trip on every switch makes
+    // the switcher feel like a page load.
+    case 'credits-scope':
+      creditsScope = trigger.dataset.scope ?? '';
+      paintActiveTab();
+      break;
+
+    // Every one of the rest writes to public.credits_people through an RPC that
     // re-checks is_owner() in Postgres, so this client-side gate is a
     // convenience, not the enforcement.
     case 'credits-role-up':

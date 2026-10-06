@@ -1,5 +1,5 @@
 -- =============================================================================
---  THE WIRE - WHO IS HOLDING THE OWNER SEAT?   (READ-ONLY: changes nothing)
+--  THE PULSE - WHO IS HOLDING THE OWNER SEAT?   (READ-ONLY: changes nothing)
 -- =============================================================================
 --  WHY YOU NEED THIS
 --      Signup says "that username is already taken", sign-in says "incorrect

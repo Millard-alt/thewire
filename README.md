@@ -1,4 +1,4 @@
-# The Wire — MJLA Press Club
+# The Pulse — MJLA Press Club
 
 A production-ready digital newspaper plus a full **Newsroom Panel** for the
 newsroom. Built with Vite 6, Tailwind CSS v4 and Supabase.
@@ -67,7 +67,7 @@ which acts as a deliberate allow-list.
 | `VITE_SUPABASE_URL` | Supabase project URL | — |
 | `VITE_SUPABASE_ANON_KEY` | Anon / publishable key | — |
 | `VITE_DEMO_MODE` | `true` = localStorage only, no network | `true` when keys missing |
-| `VITE_SITE_NAME` | Publication name in the footer | `The Wire` |
+| `VITE_SITE_NAME` | Publication name in the footer | `The Pulse` |
 | `VITE_SITE_TAGLINE` | Masthead strapline | MJLA Press Club… |
 | `VITE_PUBLICATION_LOCATION` | Dateline | `Nakuru, Kenya` |
 | `VITE_ADMIN_USERNAMES` | Comma-separated **username** allow-list | *(empty = any staff row)* |

@@ -19,27 +19,29 @@ import {
   formatEditionDate,
   imageFallbackAttr
 } from '../lib/dom.js';
-import { bylineSticker, portraitForArticle } from '../lib/credits.js';
+import { bylineSticker, renderAbout } from '../lib/credits.js';
+import { listPodcasts } from '../lib/podcasts.js';
 
 /**
- * A story byline, with the author's portrait resolved from the article's
- * FOREIGN KEY (author_account_id) before its byline text.
+ * A story byline, credited by the NAME printed on the story.
  *
- * Name matching used to be the only path, which is what let a byline typed with
- * a small variation borrow a different staffer's face. `portraitForArticle`
- * tries the immutable id first and only falls back to the name for rows written
- * before migration 007 or by contributors with no account at all.
+ * Deliberately NOT resolved through `articles.author_account_id`. That column
+ * records which account may edit and delete the row -- migration 007 calls it
+ * "the account the author signs in with" -- and the Owner publishing a piece
+ * bylined to a reporter is ordinary practice. Resolving a face from it printed
+ * the Owner's portrait beside somebody else's byline, which is the inconsistency
+ * this function exists to prevent: one byline, two avatars, depending on which
+ * account happened to post it.
  *
  * Every byline on the site goes through here -- the cards, the Weekly slots,
  * Today's Pick, the article modal and both search strips -- so a byline is
  * rendered one way or not at all.
  *
- * @param {{author?: string, authorAccountId?: string|null}} article
+ * @param {{author?: string}} article
  * @param {{tag?: string, cls?: string, suffix?: string}} [opts]
  */
 function renderByline(article, opts = {}) {
-  const name = article?.author || 'The Wire staff';
-  return bylineSticker(name, { ...opts, portrait: portraitForArticle(article) });
+  return bylineSticker(article?.author || 'The Pulse staff', opts);
 }
 
 /** A neutral placeholder for stories with no lead image. */
@@ -49,7 +51,7 @@ const BLANK_IMAGE =
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450">' +
       '<rect width="800" height="450" fill="#e7e1d3"/>' +
       '<text x="50%" y="50%" font-family="Georgia,serif" font-size="42" ' +
-      'fill="#8c1d11" text-anchor="middle">The Wire</text></svg>'
+      'fill="#8c1d11" text-anchor="middle">The Pulse</text></svg>'
   );
 
 /* -------------------------------------------------------------------------- */
@@ -296,7 +298,7 @@ export function renderPublication() {
     ${
       showThisWeek !== false
         ? `<section id="weekly" aria-labelledby="weekly-heading" class="mb-12">
-      ${sectionHeading('weekly-heading', 'Curated by the owner', 'This Week In The Wire')}
+      ${sectionHeading('weekly-heading', 'Curated by the owner', 'This Week In The Pulse')}
       <div class="grid gap-6 md:grid-cols-3">
         ${[
           { label: 'Feature of the week', item: week.article },
@@ -792,7 +794,7 @@ export function renderInterviewsPage() {
         : published.length
           ? `<p class="panel p-6 text-sm ink-muted">No interviews on this page.</p>`
           : `<p class="panel p-6 text-sm ink-muted">
-               No interviews have been published yet. The Wire interviews
+               No interviews have been published yet. The Pulse interviews
                commissioners, archivists and organisers on the record; recordings
                appear here once the Owner has approved them.
              </p>`
@@ -1265,6 +1267,283 @@ export function openSearch() {
   if (input) input.value = '';
   runSearch('');
   openDialog('search-modal', { initialFocus: '#search-input' });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Podcasts                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/** Playback rates the speed button cycles through, slowest first. */
+const PODCAST_SPEEDS = [0.75, 1, 1.25, 1.5, 2];
+
+/** Seconds to `M:SS`, or `H:MM:SS` past an hour. */
+export function formatClock(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+/**
+ * Paint the public podcast feed into #podcasts-view.
+ *
+ * Repainted on every reveal rather than once, for the same reason the gallery
+ * and interviews feeds are: the Owner can approve an episode at any moment, and a
+ * reader who has the tab open must not be left on a stale list.
+ */
+export function renderPodcastsPage() {
+  const view = byId('podcasts-view');
+  if (!view) return;
+
+  view.innerHTML = `
+    <div class="mx-auto max-w-4xl px-4 py-10 md:py-14">
+      ${sectionHeading('podcasts-heading', 'Listen', 'Podcasts')}
+      <div id="podcast-feed" class="space-y-4">
+        <p class="panel-sunken p-6 text-center text-sm ink-muted">
+          <i class="fa-solid fa-circle-notch spin-slow me-2" aria-hidden="true"></i>
+          Loading episodes…
+        </p>
+      </div>
+    </div>
+  `;
+
+  const feed = byId('podcast-feed');
+  if (!feed) return;
+
+  listPodcasts()
+    .then((episodes) => {
+      if (!feed.isConnected) return;
+
+      if (!episodes.length) {
+        feed.innerHTML = `
+          <p class="panel-sunken p-8 text-center text-sm ink-muted">
+            <i class="fa-solid fa-microphone-lines mb-3 text-2xl" aria-hidden="true"></i><br />
+            No episodes have been published yet.
+          </p>`;
+        return;
+      }
+
+      feed.innerHTML = episodes.map(podcastCard).join('');
+      feed.querySelectorAll('[data-podcast-player]').forEach(wirePodcastPlayer);
+    })
+    .catch((error) => {
+      console.warn('[public] podcasts failed to load', error);
+      if (!feed.isConnected) return;
+      feed.innerHTML = `
+        <p class="panel-sunken p-8 text-center text-sm ink-muted">
+          The episodes could not be loaded just now. Please try again shortly.
+        </p>`;
+    });
+}
+
+/**
+ * One episode card.
+ *
+ * The <audio> element carries no `controls`. This is a custom player, and
+ * leaving the native one in place would put two sets of transport controls on the
+ * same card. `preload="metadata"` so the duration is known before playback
+ * without pulling the whole file down for a reader who only ever sees the card.
+ */
+function podcastCard(episode) {
+  const id = escapeHtml(episode.id || '');
+  const duration = Number(episode.duration_seconds) || 0;
+  const playable = Boolean(episode.audio_url);
+
+  return `
+    <article class="podcast-card" data-podcast-player>
+      <div class="podcast-card__head">
+        <h3 class="podcast-card__title">${escapeHtml(episode.title || 'Untitled episode')}</h3>
+        <p class="podcast-card__byline">${escapeHtml(episode.author_name || 'The Pulse Staff')}</p>
+      </div>
+
+      ${
+        episode.description
+          ? `<p class="podcast-card__desc">${escapeHtml(episode.description)}</p>`
+          : ''
+      }
+
+      ${
+        playable
+          ? `
+        <audio
+          class="podcast-card__audio"
+          data-audio
+          src="${escapeHtml(episode.audio_url)}"
+          preload="metadata"
+        ></audio>
+
+        <div class="podcast-player">
+          <button
+            type="button"
+            class="podcast-player__toggle"
+            data-toggle
+            aria-label="Play episode"
+          >
+            <i class="fa-solid fa-play" data-icon aria-hidden="true"></i>
+          </button>
+
+          <span class="podcast-player__time" data-elapsed>0:00</span>
+
+          <input
+            type="range"
+            class="podcast-player__scrub"
+            data-scrub
+            min="0"
+            max="100"
+            step="0.1"
+            value="0"
+            aria-label="Seek within the episode"
+          />
+
+          <span class="podcast-player__time" data-total>${
+            duration ? escapeHtml(formatClock(duration)) : '0:00'
+          }</span>
+
+          <button
+            type="button"
+            class="podcast-player__speed"
+            data-speed
+            aria-label="Playback speed, currently 1 times"
+          >1&times;</button>
+        </div>`
+          : `
+        <p class="podcast-card__unavailable">
+          <i class="fa-solid fa-circle-exclamation me-2" aria-hidden="true"></i>
+          The audio for this episode is not available.
+        </p>`
+      }
+    </article>
+  `;
+}
+
+/**
+ * Wire one card's transport controls.
+ *
+ * Three details that are easy to get wrong and were:
+ *
+ *   • While the pointer is DOWN on the scrubber the element is `scrubbing`, and
+ *     `timeupdate` must not write `value` back -- otherwise the thumb snaps to
+ *     wherever playback happens to be and the drag feels broken. The handler
+ *     only writes back when the user is not dragging.
+ *
+ *   • Speed is applied on `ratechange` rather than on click, so a browser or
+ *     extension that changes the rate on its own is reflected in the label.
+ *
+ *   • `ended` resets the transport. Without it a finished episode keeps the play
+ *     icon and sits at the end of the bar looking paused.
+ */
+function wirePodcastPlayer(card) {
+  const audio = card.querySelector('[data-audio]');
+  const toggle = card.querySelector('[data-toggle]');
+  const scrub = card.querySelector('[data-scrub]');
+  const elapsed = card.querySelector('[data-elapsed]');
+  const total = card.querySelector('[data-total]');
+  const speed = card.querySelector('[data-speed]');
+  const icon = card.querySelector('[data-icon]');
+
+  if (!audio || !toggle || !scrub) return;
+
+  let scrubbing = false;
+  let speedIndex = PODCAST_SPEEDS.indexOf(1);
+
+  const paint = (isPlaying) => {
+    if (icon) icon.className = `fa-solid ${isPlaying ? 'fa-pause' : 'fa-play'}`;
+    toggle.setAttribute('aria-label', isPlaying ? 'Pause episode' : 'Play episode');
+    toggle.setAttribute('aria-pressed', String(isPlaying));
+  };
+
+  toggle.addEventListener('click', () => {
+    if (audio.paused) {
+      // A play() rejected by autoplay policy is silent otherwise, and the reader
+      // is left tapping a button that appears to do nothing.
+      audio.play().catch((error) => console.warn('[podcasts] play refused', error));
+    } else {
+      audio.pause();
+    }
+  });
+
+  audio.addEventListener('play', () => paint(true));
+  audio.addEventListener('pause', () => paint(false));
+
+  audio.addEventListener('loadedmetadata', () => {
+    if (total && Number.isFinite(audio.duration)) total.textContent = formatClock(audio.duration);
+  });
+
+  audio.addEventListener('durationchange', () => {
+    if (total && Number.isFinite(audio.duration)) total.textContent = formatClock(audio.duration);
+  });
+
+  audio.addEventListener('timeupdate', () => {
+    if (elapsed) elapsed.textContent = formatClock(audio.currentTime);
+    if (scrubbing) return;
+    const span = Number(audio.duration) || 0;
+    scrub.value = span ? String((audio.currentTime / span) * 100) : '0';
+  });
+
+  audio.addEventListener('ended', () => {
+    paint(false);
+    scrub.value = '0';
+    if (elapsed) elapsed.textContent = '0:00';
+  });
+
+  audio.addEventListener('error', () => {
+    const note = card.querySelector('.podcast-card__unavailable');
+    if (note) {
+      note.innerHTML =
+        '<i class="fa-solid fa-triangle-exclamation me-2" aria-hidden="true"></i>This episode could not be loaded.';
+    }
+    toggle.setAttribute('disabled', '');
+  });
+
+  scrub.addEventListener('pointerdown', () => {
+    scrubbing = true;
+  });
+
+  const endScrub = () => {
+    if (!scrubbing) return;
+    scrubbing = false;
+    const span = Number(audio.duration) || 0;
+    if (span) audio.currentTime = (Number(scrub.value) / 100) * span;
+  };
+
+  scrub.addEventListener('pointerup', endScrub);
+  scrub.addEventListener('pointercancel', endScrub);
+  // A keyboard user never fires pointerdown, so the change event has to commit
+  // the position too or the arrow keys move the thumb without seeking.
+  scrub.addEventListener('change', endScrub);
+  scrub.addEventListener('input', () => {
+    const span = Number(audio.duration) || 0;
+    if (elapsed && span) elapsed.textContent = formatClock((Number(scrub.value) / 100) * span);
+  });
+
+  if (speed) {
+    const paintSpeed = () => {
+      const rate = PODCAST_SPEEDS[speedIndex];
+      speed.textContent = `${rate}\u00d7`;
+      speed.setAttribute('aria-label', `Playback speed, currently ${rate} times`);
+    };
+
+    speed.addEventListener('click', () => {
+      speedIndex = (speedIndex + 1) % PODCAST_SPEEDS.length;
+      audio.playbackRate = PODCAST_SPEEDS[speedIndex];
+      audio.defaultPlaybackRate = PODCAST_SPEEDS[speedIndex];
+      paintSpeed();
+    });
+
+    audio.addEventListener('ratechange', () => {
+      const found = PODCAST_SPEEDS.indexOf(Number(audio.playbackRate));
+      if (found !== -1 && found !== speedIndex) {
+        speedIndex = found;
+        paintSpeed();
+      }
+    });
+
+    paintSpeed();
+  }
+
+  paint(false);
 }
 
 /* -------------------------------------------------------------------------- */

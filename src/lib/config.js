@@ -88,7 +88,7 @@ export const config = {
   demoMode: envBool('VITE_DEMO_MODE', !supabaseConfigured),
 
   /* --- Publication identity --- */
-  siteName: env('VITE_SITE_NAME', 'The Wire'),
+  siteName: env('VITE_SITE_NAME', 'The Pulse'),
   siteTagline: env(
     'VITE_SITE_TAGLINE',
     'MJLA Press Club • Independent Verified Dispatches'

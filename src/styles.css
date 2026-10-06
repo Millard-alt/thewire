@@ -1,5 +1,5 @@
 /* =============================================================================
-   THE WIRE — STYLESHEET
+   THE PULSE — STYLESHEET
    -----------------------------------------------------------------------------
    Tailwind CSS v4, loaded CSS-first through the @tailwindcss/vite plugin. There
    is deliberately no tailwind.config.js: design tokens live in the `@theme`
@@ -62,6 +62,9 @@
     --accent: var(--color-newsred);
     --accent-contrast: #ffffff;
     --overlay: rgb(24 19 15 / 0.72);
+    /* The nav underline accent. A variable rather than a `.dark .nav-link::after`
+       override, so the hover rule below never has to be restated per theme. */
+    --nav-underline: var(--color-newsred);
     color-scheme: light;
   }
 
@@ -76,6 +79,7 @@
     --accent: #ff6b5b;
     --accent-contrast: #1a0d0b;
     --overlay: rgb(0 0 0 / 0.8);
+    --nav-underline: var(--color-newsgold-bright);
     color-scheme: dark;
   }
 
@@ -520,40 +524,43 @@
     outline-offset: 2px;
   }
 
-  /* --- Masthead nav underline --- */
+  /* --- Masthead nav underline ---
+     The underline is a background gradient, not a positioned ::after.
+
+     It used to be `position: relative` on the link plus an absolutely
+     positioned ::after scaled on hover. That coupling is what produced the
+     uneven spacing: `display: inline-block` on the link made its box hug the
+     glyphs, so each item's clickable area was a different width and the row
+     never distributed evenly. A background gradient needs no positioning at
+     all, which frees the link to be a flex box with real, uniform padding --
+     so the hit area and the gap are the same on every item.
+
+     --nav-underline carries the accent so light and dark stay in step from one
+     declaration instead of a `.dark .nav-link::after` override. */
   .nav-link {
-    position: relative;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    /* Uniform horizontal padding on every link, so the gap between two items is
+       the same whether the label is "Weekly" or "Photo Gallery". */
     padding-block: 0.25rem;
+    padding-inline: 0.5rem;
     color: var(--text);
-    transition: color 180ms ease;
-  }
-  .nav-link::after {
-    content: '';
-    position: absolute;
-    left: 0;
-    bottom: 0;
-    height: 2px;
-    width: 100%;
-    background-color: var(--color-newsred);
-    transform: scaleX(0);
-    transform-origin: left;
-    transition: transform 240ms var(--ease-out-expo);
+    background-image: linear-gradient(var(--nav-underline), var(--nav-underline));
+    background-repeat: no-repeat;
+    background-position: 0 100%;
+    background-size: 0% 2px;
+    transition:
+      color 180ms ease,
+      background-size 240ms var(--ease-out-expo);
   }
   .nav-link:hover,
   .nav-link:focus-visible {
     color: var(--color-newsred);
-  }
-  .nav-link:hover::after,
-  .nav-link:focus-visible::after {
-    transform: scaleX(1);
+    background-size: 100% 2px;
   }
   .dark .nav-link:hover,
   .dark .nav-link:focus-visible {
     color: var(--color-newsgold-bright);
-  }
-  .dark .nav-link::after {
-    background-color: var(--color-newsgold-bright);
   }
 }
 
@@ -2009,5 +2016,412 @@ class because the ratio is the whole point.
   .credits-band-editor__moves > button {
     flex: 1 1 0;
     justify-content: center;
+  }
+}
+
+/* =============================================================================
+   ABOUT US
+   -----------------------------------------------------------------------------
+   Two rosters on one page. The hero is the loudest thing on the site on purpose:
+   it is the first line a visitor reads about the paper, and it should not
+   compete with the news for attention once they scroll into it.
+   ========================================================================== */
+.about-hero {
+  border-block: 1px solid var(--rule);
+  padding-block: 2.5rem 2rem;
+  margin-bottom: 2rem;
+}
+
+.about-hero__title {
+  margin-top: 0.75rem;
+  font-family: var(--font-headline, Georgia, serif);
+  font-size: clamp(1.75rem, 5vw, 3rem);
+  font-weight: 900;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.about-mission {
+  max-width: 46rem;
+}
+
+.about-mission__tagline {
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-newsred);
+}
+
+.dark .about-mission__tagline {
+  color: var(--color-newsgold-bright);
+}
+
+.about-mission__sub {
+  margin-top: 1.75rem;
+  font-family: var(--font-headline, Georgia, serif);
+  font-size: 1.125rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.about-mission__body {
+  margin-top: 0.5rem;
+  color: var(--text-muted);
+  line-height: 1.7;
+  max-width: 40rem;
+}
+
+.about-roster {
+  margin-top: 2.5rem;
+}
+
+.about-roster__heading {
+  font-family: var(--font-headline, Georgia, serif);
+  font-size: 1.25rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--color-newsred);
+  margin-bottom: 1.25rem;
+}
+
+.dark .about-roster__heading {
+  border-bottom-color: var(--color-newsgold-bright);
+}
+
+.about-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+}
+
+.about-card {
+  display: flex;
+  gap: 0.875rem;
+  align-items: flex-start;
+  padding: 1rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule-soft);
+  border-radius: 0.5rem;
+}
+
+/* Square and shrink-proof, so one non-square upload cannot make the whole grid
+   ragged -- the same constraint .staff-portrait already carries. */
+.about-card__photo {
+  width: 4rem;
+  height: 4rem;
+  flex-shrink: 0;
+  border-radius: 0.375rem;
+  object-fit: cover;
+  background: var(--surface-sunken);
+}
+
+.about-card__photo--empty {
+  display: grid;
+  place-items: center;
+}
+
+.about-card__initials {
+  font-size: 1rem;
+  font-weight: 900;
+  color: var(--text-muted);
+}
+
+.about-card__body {
+  min-width: 0;
+}
+
+.about-card__name {
+  font-family: var(--font-headline, Georgia, serif);
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.about-card__role {
+  display: inline-block;
+  margin-top: 0.375rem;
+  background: var(--role-colour, #1d4ed8);
+  color: #fff;
+}
+
+.about-card__note {
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* =============================================================================
+   OWNER PANEL — ROSTER SCOPE SWITCHER (Credits page + the two About sections)
+   ========================================================================== */
+.credits-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.credits-scope__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+
+.credits-scope__btn[aria-pressed='true'] {
+  color: var(--accent-contrast);
+  background: var(--color-newsred);
+  border-color: var(--color-newsred);
+}
+
+.credits-scope__count {
+  padding-inline: 0.375rem;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+}
+
+/* =============================================================================
+   OWNER PANEL — "LATEST COVERAGE" LAYOUT
+   -----------------------------------------------------------------------------
+   The handle sets `touch-action: none`, which is the entire reason a touch drag
+   does not scroll the page instead. Without it the browser claims the gesture
+   for scrolling the moment the finger moves, and the card never moves.
+   ========================================================================== */
+.layout-panel {
+  padding: 1rem;
+  background: var(--surface-sunken);
+  border: 1px solid var(--rule-soft);
+  border-radius: 0.5rem;
+}
+
+.layout-panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.layout-panel__saved {
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.layout-list {
+  margin-top: 0.875rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.layout-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5rem 0.625rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule-soft);
+  border-radius: 0.375rem;
+  touch-action: pan-y;
+}
+
+.layout-row--dragging {
+  opacity: 0.65;
+  border-color: var(--color-newsred);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+}
+
+.layout-row__handle {
+  /* The one rule that makes touch dragging possible at all. */
+  touch-action: none;
+  cursor: grab;
+  padding: 0.375rem 0.25rem;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 0.25rem;
+}
+
+.layout-row__handle:active {
+  cursor: grabbing;
+}
+
+.layout-row__rank {
+  min-width: 1.5rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.layout-row__body {
+  min-width: 0;
+  flex: 1;
+}
+
+.layout-row__title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layout-row__meta {
+  margin-top: 0.125rem;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+.layout-row__moves {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+/* =============================================================================
+   PODCASTS
+   -----------------------------------------------------------------------------
+   The player is a flex row with the scrubber as the only flexible part, so the
+   two timestamps keep their width whether the episode is 40 seconds or 90
+   minutes and the bar never jitters as time advances.
+   ========================================================================== */
+.podcast-card {
+  padding: 1.125rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--rule-soft);
+  border-radius: 0.5rem;
+}
+
+.podcast-card__head {
+  margin-bottom: 0.375rem;
+}
+
+.podcast-card__title {
+  font-family: var(--font-headline, Georgia, serif);
+  font-size: 1.125rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.podcast-card__byline {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-newsred);
+}
+
+.dark .podcast-card__byline {
+  color: var(--color-newsgold-bright);
+}
+
+.podcast-card__desc {
+  margin-bottom: 0.875rem;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.podcast-card__unavailable {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.podcast-card__audio {
+  width: 100%;
+  margin-top: 0.75rem;
+}
+
+.podcast-player {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-top: 0.875rem;
+  padding: 0.5rem 0.625rem;
+  background: var(--surface-sunken);
+  border: 1px solid var(--rule-soft);
+  border-radius: 999px;
+}
+
+.podcast-player__toggle {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--color-newsred);
+  color: #fff;
+  border: 0;
+  cursor: pointer;
+}
+
+.podcast-player__toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.podcast-player__time {
+  flex-shrink: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  /* Reserved width so the bar does not reflow as the digits change. */
+  min-width: 2.75rem;
+  text-align: center;
+}
+
+.podcast-player__scrub {
+  flex: 1;
+  min-width: 3rem;
+  height: 1.25rem;
+  accent-color: var(--color-newsred);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.podcast-player__speed {
+  flex-shrink: 0;
+  min-width: 2.75rem;
+  padding: 0.25rem 0.375rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+@media (width < 30rem) {
+  /* On a phone the two timestamps are the first thing to go: the scrubber is the
+     control that matters, and it keeps the row from wrapping to two lines. */
+  .podcast-player__time[data-total] {
+    display: none;
+  }
+
+  .layout-row__rank {
+    display: none;
   }
 }

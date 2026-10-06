@@ -131,7 +131,7 @@ where not exists (
 -- show_this_week rides the same statement so a freshly seeded database matches
 -- createSeedState() exactly, today's true default and all.
 update public.site_settings
-   set title         = 'THE WIRE',
+   set title         = 'THE PULSE',
        subtitle      = 'MJLA PRESS CLUB   INDEPENDENT VERIFIED DISPATCHES',
        edition       = 'VOL. CXIV... NO. 32,841   NAKURU, KENYA',
        breaking_news = '{"enabled":true,"label":"BREAKING DISPATCH","headline":"MJLA Press Club Launches Sovereign Editorial Control Suite","subtext":"Full administrative controls are live across the newsroom.","severity":"Breaking","color":"Red","sticky":true,"dismissible":false,"linkText":"Read the announcement","linkUrl":"#"}'::jsonb,

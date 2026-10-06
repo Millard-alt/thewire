@@ -5,7 +5,7 @@
  * Special Elite) were loaded from fonts.googleapis.com at runtime. Google Fonts
  * is on a great many blocklists, and a blocked stylesheet silently drops the
  * entire typographic identity of the newspaper back to system serif/sans — the
- * design stops reading as "The Wire" at all.
+ * design stops reading as "The Pulse" at all.
  *
  * This downloads the *Latin* subset of each face into public/vendor/fonts/ and
  * rewrites the @font-face src to a local path. Latin only is deliberate: the

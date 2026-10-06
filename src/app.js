@@ -42,13 +42,14 @@ import {
   renderPublication,
   renderGalleryPage,
   renderInterviewsPage,
+  renderPodcastsPage,
   initPublicInteractions
 } from './views/public.js';
 
 import { initAuthModal, renderAuthSlot } from './views/auth.js';
 import { openAdmin, closeAdmin, isAdminOpen } from './views/admin.js';
 import { initAlerts } from './views/alerts.js';
-import { renderCredits, primePortraits } from './lib/credits.js';
+import { renderCredits, primePortraits, renderAbout } from './lib/credits.js';
 import {
   openPortraitEditor,
   portraitRequirementMet,
@@ -82,8 +83,42 @@ function renderChrome() {
 /** The reader-facing section currently on screen. */
 let readerView = 'publication';
 
-/** The reader pages, in the order the router recognises them. */
-const READER_VIEWS = ['publication', 'credits', 'gallery', 'interviews'];
+/**
+ * The reader pages, in the order the router recognises them.
+ *
+ * `about` and `podcasts` join the list because a reader view is anything with
+ * `data-reader-view` in index.html -- the switcher below selects on that
+ * attribute rather than on a list of ids, so a new view needs an entry HERE and
+ * a section THERE and nothing else. The three lists this project used to keep by
+ * hand (READER_VIEWS, the ids in showReaderView, and the body.admin-active rule)
+ * had already drifted once and cost a reader-view/admin overlap bug; the attribute
+ * removed two of them.
+ */
+const READER_VIEWS = [
+  'publication',
+  'credits',
+  'gallery',
+  'interviews',
+  'about',
+  'podcasts'
+];
+
+/**
+ * Route-specific document titles.
+ *
+ * A tab that says "Podcasts" while the browser tab says "The Pulse" is a small
+ * thing that costs the reader their place when they have six tabs open, and on
+ * mobile it is the entire title. Keyed by view id, resolved by the same list the
+ * switcher uses so a new view cannot ship without one.
+ */
+const VIEW_TITLES = {
+  publication: 'The Pulse — MJLA Press Club',
+  credits: 'Credits — The Pulse',
+  gallery: 'Photo Gallery — The Pulse',
+  interviews: 'Interviews — The Pulse',
+  about: 'About Us — The Pulse',
+  podcasts: 'Podcasts — The Pulse'
+};
 
 /**
  * Show exactly one reader view. The Owner workspace is untouched by this, so a
@@ -94,7 +129,7 @@ const READER_VIEWS = ['publication', 'credits', 'gallery', 'interviews'];
  * dispatched as a `wire:navigate` event with nothing listening for it, which
  * left the gallery door as a dead button.
  *
- * @param {'publication'|'credits'|'gallery'|'interviews'} name
+ * @param {'publication'|'credits'|'gallery'|'interviews'|'about'|'podcasts'} name
  */
 function showReaderView(name) {
   const target = READER_VIEWS.includes(name) ? name : 'publication';
@@ -102,7 +137,7 @@ function showReaderView(name) {
 
   // Selected by attribute, not by a list of ids. See the note in index.html: the
   // id list drifted once already and cost a reader-view/admin overlap bug, so
-  // adding a fifth reader view must not require remembering this function.
+  // adding a reader view must not require remembering this function.
   const views = document.querySelectorAll('[data-reader-view]');
   views.forEach((view) => {
     const isTarget = view.id === `${target}-view`;
@@ -132,6 +167,18 @@ function showReaderView(name) {
   // any time, so the feed is rebuilt on every reveal. Painting once would leave
   // a reader on a stale page after an approval.
   if (target === 'interviews') renderInterviewsPage();
+
+  // About Us reads the credits roster too, so it has the same staleness: a
+  // promotion or a departure must not need a reload to appear.
+  if (target === 'about') renderAbout(byId('about-view'));
+
+  // And the podcast feed, for the same reason: an approval lands the moment the
+  // Owner presses the button.
+  if (target === 'podcasts') renderPodcastsPage();
+
+  // The browser tab follows the route, so six open tabs are six distinguishable
+  // tabs. Falls back to the publication title rather than to undefined.
+  document.title = VIEW_TITLES[target] || VIEW_TITLES.publication;
 
   // Keep the header nav's pressed state honest.
   document
@@ -232,10 +279,16 @@ function initReaderNavigation() {
     }
   });
 
-  // Land on the right page when a reader arrives with #credits or #gallery.
-  // Both are reader pages, not in-page anchors, so they need the full view swap.
-  if (window.location.hash === '#credits') showReaderView('credits');
-  if (window.location.hash === '#gallery') showReaderView('gallery');
+  // Land on the right page when a reader arrives with a reader-page hash.
+  // These are pages, not in-page anchors, so they need the full view swap.
+  //
+  // Driven off READER_VIEWS rather than a hand-written `if` per page. The list
+  // used to be spelled out here, which is exactly the kind of second list that
+  // drifts: #credits and #gallery were handled while #interviews was not, so a
+  // shared link to an interview silently landed on the front page. One list, and
+  // a deep link works for every page that exists.
+  const deepLink = window.location.hash.replace(/^#/, '');
+  if (READER_VIEWS.includes(deepLink)) showReaderView(deepLink);
 
   // Public views ask the shell to change page without knowing how the router
   // works (src/views/public.js owns the gallery door, not the routing).

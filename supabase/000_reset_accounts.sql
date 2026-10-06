@@ -1,5 +1,5 @@
 -- =============================================================================
---  THE WIRE - EMERGENCY ACCOUNT RESET
+--  THE PULSE - EMERGENCY ACCOUNT RESET
 -- =============================================================================
 --  sign in to approve or manage staff. This wipes every login so the very
 --  next signup re-claims the Owner role.

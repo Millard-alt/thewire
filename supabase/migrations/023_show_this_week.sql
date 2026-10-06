@@ -3,7 +3,7 @@
 -- Paste THIS file into the Supabase SQL Editor.
 --
 -- One boolean on the singleton site_settings row: whether the "This Week In
--- The Wire" band renders on the homepage. The Curation tab writes it through
+-- The Pulse" band renders on the homepage. The Curation tab writes it through
 -- saveCuration() (src/lib/store.js), hydrate() reads it back as
 -- `show_this_week`, and public.js omits the whole <section id="weekly">
 -- container from the front page when it is false.

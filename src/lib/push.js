@@ -211,7 +211,7 @@ export async function initPush() {
  * @returns {Promise<boolean>} true when the OS actually accepted the notification
  */
 export async function deliverLocally({
-  title = 'The Wire',
+  title = 'The Pulse',
   body = '',
   tag = 'the-wire-broadcast',
   url = '/',
@@ -1080,7 +1080,7 @@ export async function pollOnce() {
     if (seen.size === 0) continue;
 
     const delivered = await deliverLocally({
-      title: row.title || 'The Wire',
+      title: row.title || 'The Pulse',
       body: row.message || '',
       tag: `broadcast-${key}`,
       url: config.notificationTargetUrl || '/',
@@ -1138,10 +1138,10 @@ export function pushStatus() {
   if (isIOS() && !isStandalone()) {
     return {
       ok: false,
-      label: 'Add The Wire to your Home Screen',
+      label: 'Add The Pulse to your Home Screen',
       detail:
-        'On iPhone and iPad, alerts only work once The Wire is installed. Tap the ' +
-        'Share button, then “Add to Home Screen”, and open The Wire from there.'
+        'On iPhone and iPad, alerts only work once The Pulse is installed. Tap the ' +
+        'Share button, then “Add to Home Screen”, and open The Pulse from there.'
     };
   }
 
@@ -1151,7 +1151,7 @@ export function pushStatus() {
       label: 'Blocked by an extension',
       detail:
         'A privacy extension has disabled notifications for this site. Allow ' +
-        'notifications for The Wire, or open the page in an Incognito window.'
+        'notifications for The Pulse, or open the page in an Incognito window.'
     };
   }
 
@@ -1181,7 +1181,7 @@ export function pushStatus() {
       ok: false,
       label: 'Not turned on yet',
       detail:
-        'Tap “Turn on alerts” to let The Wire raise notifications on this device.'
+        'Tap “Turn on alerts” to let The Pulse raise notifications on this device.'
     };
   }
 

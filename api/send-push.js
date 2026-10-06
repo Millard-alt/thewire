@@ -1,5 +1,5 @@
 /**
- * THE WIRE - web push sender.
+ * THE PULSE - web push sender.
  *
  * Until now a "broadcast" was only a row in `public.broadcasts` that every
  * opted-in browser discovered by POLLING. That cannot reach a phone with the app
@@ -184,7 +184,7 @@ async function readRequest(req) {
 function payloadFor(broadcast) {
   if (broadcast) {
     return {
-      title: broadcast.title || 'THE WIRE',
+      title: broadcast.title || 'THE PULSE',
       body: broadcast.message || '',
       icon: '/icons/icon-192.png',
       url: broadcast.url || '/',

@@ -12,11 +12,12 @@
    supabase/016_grant_owner_panel_rpcs.sql.
    Pure file reading. No network, no database. */
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, extname } from 'node:path';
 
 const SRC = 'src';
 const SQL = 'supabase';
+const MIGRATIONS = join(SQL, 'migrations');
 
 function jsFiles(dir) {
   const out = [];
@@ -71,8 +72,33 @@ function splitTop(text, sep) {
 /* name -> Set(lower param names). Later files supersede earlier ones. */
 const defs = new Map();
 
-for (const file of readdirSync(SQL).filter((f) => f.endsWith('.sql'))) {
-  const text = readFileSync(join(SQL, file), 'utf8');
+/*
+ * supabase/migrations/ is scanned too, and it has to be.
+ *
+ * The newest migrations live there, so reading only the top level meant every
+ * function defined in migrations/ was invisible here: the checker could not
+ * confirm a client's argument names against it, and it reported "OK" for calls
+ * it had never actually looked at. That is the worst failure mode for a guard --
+ * silently passing on the half of the schema that is newest.
+ *
+ * Files are visited in name order across both directories so a later definition
+ * still supersedes an earlier one (`defs.set` is last-write-wins).
+ */
+const sqlFiles = [
+  ...readdirSync(SQL)
+    .filter((f) => f.endsWith('.sql'))
+    .map((f) => join(SQL, f)),
+  ...(existsSync(MIGRATIONS)
+    ? readdirSync(MIGRATIONS)
+        .filter((f) => f.endsWith('.sql'))
+        .sort()
+        .map((f) => join(MIGRATIONS, f))
+    : [])
+];
+
+for (const path of sqlFiles) {
+  const file = path;
+  const text = readFileSync(path, 'utf8');
   // Allow an optional schema qualifier. `create or replace function
   // public.wire_login(` is the form used throughout supabase/, and without the
   // `(?:[a-z0-9_]+\.)?` the name captured was just "public" -- which then failed

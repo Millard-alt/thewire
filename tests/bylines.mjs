@@ -119,8 +119,15 @@ report(
   'a self-call here is a stack overflow on the first painted card'
 );
 report(
-  'renderByline resolves the portrait from the article foreign key',
-  /portraitForArticle\(/.test(renderByline)
+  'renderByline credits the byline NAME, never the account pointer',
+  /bylineSticker\(\s*article\?\.author/.test(renderByline) &&
+    !/authorAccountId|portraitForArticle/.test(renderByline),
+  'author_account_id is who may edit the row, not who wrote it: resolving a face from it printed the Owner beside a reporter byline'
+);
+report(
+  'public.js does not import portraitForArticle at all',
+  !/portraitForArticle/.test(publicSrc),
+  'the foreign-key portrait path was removed; the name is the only key'
 );
 report(
   'public.js still imports bylineSticker',
@@ -183,47 +190,50 @@ report(
 console.log('\ncredits.js — only APPROVED portraits reach a byline\n');
 
 credits.indexStaffPortraits([
-  { id: 'acct-approved', name: 'Grace Wanjiku', portrait_url: 'https://cdn.test/ok.jpg', portrait_status: 'approved' },
-  { id: 'acct-pending', name: 'Pending Person', portrait_url: 'https://cdn.test/new.jpg', portrait_status: 'pending' },
-  { id: 'acct-rejected', name: 'Rejected Person', portrait_url: 'https://cdn.test/bad.jpg', portrait_status: 'rejected' },
-  { id: 'acct-none', name: 'Unreviewed Person', portrait_url: 'https://cdn.test/none.jpg' }
+  { name: 'Grace Wanjiku', portrait_url: 'https://cdn.test/ok.jpg', portrait_status: 'approved' },
+  { name: 'Pending Person', portrait_url: 'https://cdn.test/new.jpg', portrait_status: 'pending' },
+  { name: 'Rejected Person', portrait_url: 'https://cdn.test/bad.jpg', portrait_status: 'rejected' },
+  { name: 'Unreviewed Person', portrait_url: 'https://cdn.test/none.jpg' }
 ]);
 
 report(
-  'an approved portrait resolves by account id',
-  credits.portraitForAccountId('acct-approved') === 'https://cdn.test/ok.jpg'
+  'an approved portrait resolves',
+  credits.portraitFor('Grace Wanjiku') === 'https://cdn.test/ok.jpg'
 );
 report(
   'a portrait still awaiting the Owner review never reaches a byline',
-  credits.portraitForAccountId('acct-pending') === null,
+  credits.portraitFor('Pending Person') === null,
   'this is the whole point of the review gate'
 );
 report(
   'a rejected portrait never reaches a byline',
-  credits.portraitForAccountId('acct-rejected') === null
+  credits.portraitFor('Rejected Person') === null
 );
 report(
   'a portrait with no review state never reaches a byline',
-  credits.portraitForAccountId('acct-none') === null
+  credits.portraitFor('Unreviewed Person') === null
 );
 report(
-  'an article with an unknown account id falls back to its byline name',
-  credits.portraitForArticle({ author: 'Nobody At All', authorAccountId: 'acct-missing' }) === null
+  'a byline nobody has a profile for resolves to nothing',
+  credits.portraitForArticle({ author: 'Nobody At All' }) === null
 );
 
-console.log('\none person, one face — whichever way the byline resolves\n');
+console.log('\none byline, one face — and never the account operator\n');
 
 /* THE BUG THIS EXISTS FOR
    -----------------------
-   A byline resolved two ways: by foreign key (from `staff`) or by name (from
-   `credits_people`). Both were consulted, both answered, and they disagreed --
-   so the same author wore a different photo on different cards depending on
-   whether that article happened to carry an author_account_id. */
+   Portrait lookup went through `articles.author_account_id`, which migration 007
+   defines as "the account the author signs in with" -- a PERMISSIONS pointer.
+   The Owner posting a piece credited to a reporter is ordinary practice, so three
+   articles bylined "Mercy Kamande" showed HER profile (they pointed at her
+   account) and a fourth showed the OWNER's (it pointed there). One byline, two
+   avatars: the inconsistency that started this. */
 const STAFF_FACE = 'https://cdn.test/staff-grace.jpg';
 const CREDITS_FACE = 'https://cdn.test/credits-grace.jpg';
 
 credits.indexStaffPortraits([
-  { id: 'acct-grace', name: 'Grace Wanjiku', portrait_url: STAFF_FACE, portrait_status: 'approved' }
+  { name: 'Grace Wanjiku', portrait_url: STAFF_FACE, portrait_status: 'approved' },
+  { name: 'Chief Owner', portrait_url: 'https://cdn.test/chief-owner.jpg', portrait_status: 'approved' }
 ]);
 credits.indexPortraits([
   { name: 'Grace Wanjiku', portrait_url: CREDITS_FACE },
@@ -231,10 +241,18 @@ credits.indexPortraits([
 ]);
 
 report(
-  'a card WITH a foreign key and a card WITHOUT one show the same photo',
-  credits.portraitForArticle({ author: 'Grace Wanjiku', authorAccountId: 'acct-grace' }) ===
-    credits.portraitForArticle({ author: 'Grace Wanjiku', authorAccountId: null }),
-  'the FK path and the name path disagreeing for one person is the reported symptom'
+  'the account pointer is ignored entirely: one byline, one face',
+  credits.portraitForArticle({ author: 'Grace Wanjiku', authorAccountId: 'acct-mercy' }) ===
+    credits.portraitForArticle({ author: 'Grace Wanjiku', authorAccountId: 'acct-owner' }) &&
+    credits.portraitForArticle({ author: 'Grace Wanjiku', authorAccountId: 'acct-mercy' }) ===
+      STAFF_FACE,
+  'resolving a face from author_account_id is what printed two different people under one byline'
+);
+report(
+  'the removed lookup cannot be reached from the module at all',
+  typeof credits.portraitForAccountId === 'undefined' &&
+    !/portraitIndexById/.test(read('src/lib/credits.js')),
+  'a dead export invites the next person to wire it back up'
 );
 report(
   'the staff profile outranks the Credits page for a name both carry',
@@ -257,8 +275,8 @@ report(
 
 /* A shared surname must resolve to nobody rather than to the wrong person. */
 credits.indexStaffPortraits([
-  { id: 'acct-a', name: 'Amara K.', portrait_url: 'https://cdn.test/amara-k.jpg', portrait_status: 'approved' },
-  { id: 'acct-b', name: 'Amara Z.', portrait_url: 'https://cdn.test/amara-z.jpg', portrait_status: 'approved' }
+  { name: 'Amara K.', portrait_url: 'https://cdn.test/amara-k.jpg', portrait_status: 'approved' },
+  { name: 'Amara Z.', portrait_url: 'https://cdn.test/amara-z.jpg', portrait_status: 'approved' }
 ]);
 report(
   'an ambiguous bare surname resolves to nobody, not to the wrong staffer',
@@ -272,7 +290,7 @@ report(
 
 // Put a known roster back for the assertions below.
 credits.indexStaffPortraits([
-  { id: 'acct-approved', name: 'Grace Wanjiku', portrait_url: STAFF_FACE, portrait_status: 'approved' }
+  { name: 'Grace Wanjiku', portrait_url: STAFF_FACE, portrait_status: 'approved' }
 ]);
 credits.indexPortraits([]);
 
@@ -287,14 +305,16 @@ report(
   /function\s+renderStaffTab\(\)[\s\S]*?primeStaffPortraits\(/.test(adminSrc)
 );
 report(
-  'the join is on username, the only column the two tables share',
-  /accountIdByUsername\.get\(/.test(adminSrc) &&
-    /indexStaffPortraits\(/.test(adminSrc)
+  'the Staff tab indexes the roster without touching the account list',
+  /function\s+renderStaffTab\(\)[\s\S]*?primeStaffPortraits\(/.test(adminSrc) &&
+    /indexStaffPortraits\(/.test(adminSrc) &&
+    !/accountIdByUsername/.test(adminSrc),
+  'the staff-to-account join only existed to key portraits by author_account_id, which points at whoever operated the CMS'
 );
 report(
-  "the join passes each staffer's NAME, not just the id",
+  "the Staff tab passes each staffer's name, not just a url",
   /name: member\.name,/.test(adminSrc),
-  'indexStaffPortraits also builds the by-name index; without the name a byline with no author_account_id still resolves from the Credits roster and the two disagree again'
+  'indexStaffPortraits keys by name; without it the staff roster indexes nothing'
 );
 
 console.log('\nrendered images — a dead URL must not leave a broken icon\n');
@@ -375,6 +395,163 @@ report(
   'the staff mirror touches role only, so a suspension survives an edit',
   /update\s+public\.staff\s+set\s+role\s*=\s*v_stored/.test(staffMirror)
 );
+
+/* 42883: function min(uuid) does not exist.
+   Postgres ships no min()/max() aggregate for uuid, so an aggregate applied
+   straight to an id column aborts the statement. Migration 007's backfill raised
+   42883 on its first run and linked nothing. Nothing about that is visible until
+   a query is pasted, so it is asserted here instead. */
+const sqlFiles = [
+  'supabase/007_article_ownership.sql',
+  'supabase/024_set_account_role.sql',
+  'supabase/025_backfill_article_ownership.sql',
+  'supabase/026_repair_article_attribution.sql',
+  'supabase/027_restore_article_ownership.sql'
+];
+for (const file of sqlFiles) {
+  const live = stripSqlComments(read(file));
+  const bare = live.match(/\b(?:min|max)\s*\(\s*[A-Za-z0-9_.]*\bid\b\s*\)/gi) || [];
+  report(
+    `${file}: no min()/max() applied straight to a uuid column`,
+    bare.length === 0,
+    bare.length ? `cast it: min(id::text)::uuid -- ${bare.join(', ')}` : ''
+  );
+}
+report(
+  'the repaired 007 backfill casts before aggregating',
+  /min\(id::text\)::uuid/.test(read('supabase/007_article_ownership.sql'))
+);
+
+/* 42501: only the Owner can reassign an article.
+   articles_reassign_guard_trg raises on ANY change to author_account_id unless
+   is_owner(), and is_owner() resolves a bearer token the SQL Editor never sends
+   -- so it is false there. Any migration that writes the column has to stand the
+   guard down and put it back, or it aborts on the first row. */
+for (const file of [
+  'supabase/025_backfill_article_ownership.sql',
+  'supabase/026_repair_article_attribution.sql',
+  'supabase/027_restore_article_ownership.sql'
+]) {
+  const live = stripSqlComments(read(file));
+  const writesColumn = /update public\.articles/.test(live);
+  if (!writesColumn) continue;
+  report(
+    `${file}: stands the reassignment guard down before writing`,
+    live.indexOf('disable trigger articles_reassign_guard_trg') > -1 &&
+      live.indexOf('disable trigger articles_reassign_guard_trg') <
+        live.indexOf('update public.articles'),
+    'without this it raises 42501 on the first row'
+  );
+  report(
+    `${file}: re-enables the guard, and a failure cannot leave it off`,
+    live.indexOf('enable trigger articles_reassign_guard_trg') >
+      live.indexOf('update public.articles') &&
+      /exception when others then[\s\S]*?raise;/.test(live)
+  );
+}
+
+/* THE ERROR, ASSERTED SO IT CANNOT COME BACK
+   -----------------------------------------
+   025 inferred articles.author_account_id from the byline. 026 then "repaired"
+   025's output by clearing links whose byline disagreed with the account, and
+   destroyed a correct one: the Owner had posted a piece bylined "Mercy Kamande"
+   while signed in as the Owner.
+
+   Both were wrong because articles.author_account_id is a PERMISSIONS pointer --
+   migration 007: "the account the author signs in with", and the column comment
+   says NULL means only the Owner may delete the row -- while articles.author is
+   a byline credit. They describe different things, so a byline is no evidence
+   about who owns a row. Getting it wrong decides who can delete a story.
+
+   A byline may name anybody. The Owner posting a reporter's piece is the normal
+   case on a single-desk paper. */
+const backfill = read('supabase/025_backfill_article_ownership.sql');
+const repair = read('supabase/026_repair_article_attribution.sql');
+const restore = read('supabase/027_restore_article_ownership.sql');
+
+report(
+  '007 says in so many words what the column is, and the tests quote it',
+  /points at staff_accounts\.id - the account the/.test(read('supabase/007_article_ownership.sql')),
+  'this sentence is the whole reason the byline cannot be used to infer ownership'
+);
+report(
+  'the 007 column comment names it as an ownership/permissions marker',
+  /NULL means ownership unknown/.test(read('supabase/007_article_ownership.sql'))
+);
+report(
+  '025 is marked superseded and warns against inferring ownership from a byline',
+  /SUPERSEDED/.test(backfill) && /027_restore_article_ownership\.sql/.test(backfill),
+  '025 already ran here; the next person to read it must not run it on a fresh database'
+);
+report(
+  '026 is marked superseded and records that it cleared a correct link',
+  /SUPERSEDED/.test(repair) &&
+    /cleared one link that was CORRECT/i.test(repair) &&
+    /027_restore_article_ownership\.sql/.test(repair),
+  'a repair script that destroyed correct data must say so at the top, not be quietly reusable'
+);
+report(
+  '026 records WHY it was wrong: byline and account are different things',
+  /PERMISSIONS pointer/.test(repair) && /SIGNS IN WITH/.test(repair)
+);
+report(
+  '027 restores only rows that are currently NULL',
+  /where id = v_article\s*\n\s*and author_account_id is null/.test(stripSqlComments(restore)),
+  'this must never overwrite an attribution that is already correct'
+);
+report(
+  '027 takes both ids from the Owner rather than inferring them',
+  /v_article uuid := 'PASTE-THE-ARTICLE-UUID-HERE'/.test(restore) &&
+    /v_owner   uuid := 'PASTE-THE-OWNER-ACCOUNT-UUID-HERE'/.test(restore) &&
+    /Fill in both UUIDs/.test(restore),
+  'no table anywhere records the creating account for an article, so this cannot be automated'
+);
+report(
+  '027 refuses to run with the placeholders still in place',
+  /raise exception 'Fill in both UUIDs/.test(stripSqlComments(restore))
+);
+report(
+  '027 says a byline that disagrees with its owner is the correct state',
+  /byline_matches_account/.test(restore) && /EXPECTED TO BE FALSE/.test(restore),
+  'this is the assertion that stops 026 being run a second time'
+);
+report(
+  '027 finds the Owner account with a read-only query rather than assuming',
+  /select id, username, display_name, is_owner/.test(restore) &&
+    /where is_owner/.test(restore)
+);
+
+/* A `create table if not exists` is a no-op against a live table, so every
+   `unique` declared inside one has to be treated as unproven. Both of these
+   tables are keyed by username, and wire_login resolves an account by username,
+   so a duplicate there is a login bug and not merely untidy. */
+const schema = read('supabase/schema.sql');
+const credentials = read('supabase/credentials.sql');
+report(
+  'the duplicate-username diagnostic is still offered',
+  /group by username\s*\n?\s*having count\(\*\) > 1/.test(stripSqlComments(repair)),
+  'wire_login resolves an account BY username, so a clash is a login bug too'
+);
+report(
+  'the diagnostic reports whether username is actually unique',
+  /username_is_unique/.test(repair)
+);
+report(
+  'adding the missing unique constraints is left to the Owner, not run here',
+  /^--\s*alter table public\.staff_accounts$/m.test(repair) &&
+    /^--\s*add constraint staff_accounts_username_key unique \(username\);$/m.test(repair) &&
+    /^--\s*alter table public\.staff$/m.test(repair),
+  'a migration that picks a winner among duplicate accounts repeats the bug'
+);
+report(
+  'the table declarations that lost their constraint are the ones in question',
+  /create table if not exists public\.staff_accounts/.test(credentials) &&
+    /create table if not exists public\.staff\b/.test(schema) &&
+    /username\s+text\s+not null unique/.test(credentials) &&
+    /username\s+text\s+not null unique/.test(schema),
+  'if these stop matching, re-check whether the constraint is real or only declared'
+);
+
 
 console.log(`\n${pass} passed, ${fail} failed`);
 

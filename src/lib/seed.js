@@ -9,7 +9,7 @@
 export function createSeedState() {
   return {
     branding: {
-      title: 'THE WIRE',
+      title: 'THE PULSE',
       subtitle: 'MJLA PRESS CLUB • INDEPENDENT VERIFIED DISPATCHES',
       edition: 'VOL. CXIV... NO. 32,841 — NAKURU, KENYA'
     },
@@ -45,7 +45,7 @@ export function createSeedState() {
       picture: 'seed-article-3'
     },
 
-    // The "This Week In The Wire" band is on the front page unless the Owner
+    // The "This Week In The Pulse" band is on the front page unless the Owner
     // switches it off from the Curation tab. True is the default so a fresh
     // install — or a settings reset — looks exactly as it did before the
     // toggle existed.

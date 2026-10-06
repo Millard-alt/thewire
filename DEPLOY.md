@@ -1,4 +1,4 @@
-# Deploying The Wire to Vercel
+# Deploying The Pulse to Vercel
 
 ## The short version
 
@@ -46,7 +46,7 @@ Every `VITE_` variable must be added by hand in the Vercel dashboard:
 | `VITE_SUPABASE_URL` | `https://iguzwwqjufzzdblkqroj.supabase.co` | your project ref |
 | `VITE_SUPABASE_ANON_KEY` | your **anon/publishable** key | safe in the browser; RLS protects it |
 | `VITE_DEMO_MODE` | `false` | `true` would make the deployed site ignore the database |
-| `VITE_SITE_NAME` | `The Wire` | |
+| `VITE_SITE_NAME` | `The Pulse` | |
 | `VITE_SITE_TAGLINE` | `MJLA Press Club` | |
 | `VITE_PUBLICATION_LOCATION` | `Nakuru, Kenya` | |
 | `VITE_ADMIN_USERNAMES` | `chief.owner` | comma-separated |
@@ -120,7 +120,7 @@ encrypted environment. It signs the Web Push request; a leaked key lets an
 attacker push fake alerts to your entire subscriber list.
 
 **Until that sender exists, broadcasts are in-app only.** They notify devices
-that currently have The Wire open. That limit is stated in the Newsroom Panel so
+that currently have The Pulse open. That limit is stated in the Newsroom Panel so
 it cannot mislead you.
 
 ---

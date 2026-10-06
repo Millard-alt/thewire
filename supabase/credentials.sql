@@ -1,5 +1,5 @@
 -- ============================================================================
---  THE WIRE - STAGE 2: USERNAME + PASSWORD CREDENTIALS (no Supabase Auth)
+--  THE PULSE - STAGE 2: USERNAME + PASSWORD CREDENTIALS (no Supabase Auth)
 --  Run this AFTER schema.sql. Idempotent, so re-running is safe.
 --
 --  Supabase Auth is e-mail-native, which forced staff to invent addresses they

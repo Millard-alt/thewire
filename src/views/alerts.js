@@ -76,27 +76,27 @@ function instructions(permission) {
   // settings, where there is nothing useful for them to change.
   if (push.isIOS() && !push.isStandalone()) {
     steps.push(
-      'On iPhone and iPad, The Wire must be installed before it can send alerts.',
+      'On iPhone and iPad, The Pulse must be installed before it can send alerts.',
       'Tap the Share button (the square with an arrow), then Add to Home Screen.',
-      'Open The Wire from the new Home Screen icon. Alerts work only from there.'
+      'Open The Pulse from the new Home Screen icon. Alerts work only from there.'
     );
   } else if (permission === 'unsupported') {
     steps.push(
       'This browser cannot show system notifications, or the page is not on a ' +
         'secure (https) connection.',
-      'Open The Wire over https, or use Chrome, Edge, Firefox or Safari on a phone.'
+      'Open The Pulse over https, or use Chrome, Edge, Firefox or Safari on a phone.'
     );
   } else if (permission === 'denied') {
     steps.push(
       'Your browser is blocking notifications for this site.',
       'Tap the padlock or the “i” icon beside the address bar, then choose ' +
-        '“Allow notifications” for The Wire.',
+        '“Allow notifications” for The Pulse.',
       'Reload the page afterwards.'
     );
   } else {
     steps.push(
       'Tap “Turn on alerts”. Your phone will ask you to confirm.',
-      'Choose “Allow” so The Wire can reach you when a dispatch breaks.'
+      'Choose “Allow” so The Pulse can reach you when a dispatch breaks.'
     );
   }
 
@@ -104,7 +104,7 @@ function instructions(permission) {
   if (blocker.stylesBlocked || blocker.notificationsStubbed) {
     steps.push(
       'An ad blocker is interfering with this page.',
-      'Allow this site in your blocker, or open The Wire in an Incognito window.'
+      'Allow this site in your blocker, or open The Pulse in an Incognito window.'
     );
   }
 
@@ -129,7 +129,7 @@ function gateMarkup(permission) {
   return `
     <div class="space-y-5">
       <p class="text-sm leading-relaxed">
-        The Wire only shows a dispatch once alerts are on. Here is how to turn
+        The Pulse only shows a dispatch once alerts are on. Here is how to turn
         them on — this is the last step before your first notification.
       </p>
       <ol class="space-y-3">${steps}</ol>
@@ -328,7 +328,7 @@ export async function initAlerts() {
   if (blocker.stylesBlocked) {
     showToast(
       'Some of this page’s styling was blocked by an ad blocker. Allow this ' +
-        'site, or open The Wire in an Incognito window, to see the full design.',
+        'site, or open The Pulse in an Incognito window, to see the full design.',
       { type: 'error', duration: 9000 }
     );
   }
@@ -410,7 +410,7 @@ export async function sendBroadcastToDevices({
   // Real Web Push, via the serverless sender. This is NOT a count of rows in the
   // subscriber table - it is what the push service accepted.
   const result = await push.dispatchWebPush({
-    title: title || 'The Wire',
+    title: title || 'The Pulse',
     body: message || '',
     audience,
     // null for a broadcast to everyone; a staff_accounts uuid for a targeted
@@ -428,7 +428,7 @@ export async function sendBroadcastToDevices({
   // The local popup is a courtesy proof on the Owner's own machine. It is
   // deliberately not counted as delivery to anybody else.
   const popped = await push.deliverLocally({
-    title: title || 'The Wire',
+    title: title || 'The Pulse',
     body: message || '',
     tag: `broadcast-${broadcast.id}`,
     url: config.notificationTargetUrl || '/',

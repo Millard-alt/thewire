@@ -48,7 +48,7 @@ create table if not exists public.interviews (
   guest             text        not null,
   -- Their title for the byline strip, e.g. "County Governor".
   guest_role        text,
-  -- The Wire staffer who conducted the interview.
+  -- The Pulse staffer who conducted the interview.
   interviewer       text,
   -- Short standfirst shown on the feed card.
   summary           text,

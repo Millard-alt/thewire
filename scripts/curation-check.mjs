@@ -13,7 +13,7 @@
  *   2. clicking Save does NOT reload the page;
  *   3. Save confirms with its toast and the new pick survives the repaint;
  *   4. closing the panel re-sorts the front page — the chosen story leads;
- *   5. the "This Week In The Wire" band switch hides the whole section (plus
+ *   5. the "This Week In The Pulse" band switch hides the whole section (plus
  *      its nav links) and brings it back with the curation untouched.
  *
  * Demo mode only — this never touches the live database.
@@ -25,6 +25,40 @@ import { chromium } from 'playwright';
 const BASE = process.env.BASE_URL || 'http://localhost:5201/';
 const PASS = process.env.TEST_PASS || 'password123';
 const OWNER = process.env.TEST_OWNER || 'chief.owner';
+
+/**
+ * The store module URL THE APP ACTUALLY LOADED.
+ *
+ * `await import('/src/lib/store.js')` looks like it reaches the running app's
+ * store, and it does not. Vite serves each module with a cache-busting query --
+ * `/src/lib/store.js?t=1791309669512`, derived from a browser hash it persists
+ * to disk -- so the app's copy and a bare `/src/lib/store.js` are two different
+ * URLs and therefore two different module instances, each with its own private
+ * `state`.
+ *
+ * The symptom is brutal to diagnose from the assertion alone: the test reads a
+ * store the app has never touched, sees stale curation data, and reports that the
+ * save did not work, while the DOM and the rendered front page both show the
+ * save DID work. Every assertion below that reads store state went green the
+ * moment the dev server was freshly started -- the hash then matched the plain
+ * path -- and red again after any edit invalidated it. A harness that passes or
+ * fails on when the server was started is not testing anything.
+ *
+ * So resolve the URL from the page's own resource log and import THAT. One
+ * module instance, whichever query Vite happens to be serving today.
+ *
+ * @param {import('playwright').Page} page
+ * @returns {Promise<string>}
+ */
+async function appStoreUrl(page) {
+  return page.evaluate(() => {
+    const loaded = performance
+      .getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .find((name) => /\/src\/lib\/store\.js(\?|$)/.test(name));
+    return loaded || '/src/lib/store.js';
+  });
+}
 
 const results = [];
 const problems = [];
@@ -64,8 +98,13 @@ try {
     if (m.type() === 'error') problems.push(`[curation] ${m.text()}`);
   });
 
-  await signIn(page, OWNER);
-  await openAdmin(page, 'curation');
+await signIn(page, OWNER);
+await openAdmin(page, 'curation');
+
+// Resolved AFTER the app has booted, because it is read from the resource log
+// the app itself produced. See appStoreUrl() for why this cannot be a constant.
+const storeUrl = await appStoreUrl(page);
+
 
   /* --- 1. the tab renders the form and its four selects ------------------ */
   check('the Curation tab renders #curation-form', Boolean(await page.$('#curation-form')));
@@ -76,13 +115,13 @@ try {
     `${slotCount} select(s)`
   );
 
-  const before = await page.evaluate(async () => {
-    const store = await import('/src/lib/store.js');
+  const before = await page.evaluate(async (url) => {
+    const store = await import(url);
     return {
       storedPick: store.getState().todaysPickId,
       shownPick: document.querySelector('#slot-todays-pick')?.value
     };
-  });
+  }, storeUrl);
   check(
     'the pick select shows the SAVED story, not the first option',
     Boolean(before.storedPick) && before.storedPick === before.shownPick,
@@ -129,10 +168,10 @@ try {
     const afterValue = await page.$eval('#slot-todays-pick', (el) => el.value);
     check('the new pick survives the repaint as the selected option', afterValue === choice.value);
 
-    const stored = await page.evaluate(async () => {
-      const store = await import('/src/lib/store.js');
+    const stored = await page.evaluate(async (url) => {
+      const store = await import(url);
       return store.getState().todaysPickId;
-    });
+    }, storeUrl);
     check('the store holds the new pick', stored === choice.value, stored);
 
     /* --- 4. closing the panel re-sorts the front page --------------------- */
@@ -147,20 +186,20 @@ try {
     );
   }
 
-  /* --- 5. the "This Week In The Wire" band toggle ------------------------- */
+  /* --- 5. the "This Week In The Pulse" band toggle ------------------------- */
   // The panel was closed in step 4, so the homepage is on screen and the band
   // must be visible: the flag ships enabled and a fresh browser context starts
   // from the seed.
   check('the band is on the homepage by default', Boolean(await page.$('#weekly')));
 
-  const snapshot = await page.evaluate(async () => {
-    const state = (await import('/src/lib/store.js')).getState();
+  const snapshot = await page.evaluate(async (url) => {
+    const state = (await import(url)).getState();
     return {
       slots: JSON.stringify(state.weeklySlots),
       pick: state.todaysPickId,
       flag: state.showThisWeek
     };
-  });
+  }, storeUrl);
   check('the store starts with the band enabled', snapshot.flag !== false);
 
   // Disable through the switch, then click Save — the payload path.
@@ -182,14 +221,14 @@ try {
     `${navOff.length} link(s)`
   );
 
-  const afterOff = await page.evaluate(async () => {
-    const state = (await import('/src/lib/store.js')).getState();
+  const afterOff = await page.evaluate(async (url) => {
+    const state = (await import(url)).getState();
     return {
       slots: JSON.stringify(state.weeklySlots),
       pick: state.todaysPickId,
       flag: state.showThisWeek
     };
-  });
+  }, storeUrl);
   check(
     'switching it off keeps the curation data intact',
     afterOff.flag === false && afterOff.slots === snapshot.slots && afterOff.pick === snapshot.pick
@@ -214,7 +253,7 @@ try {
     check('all three curated cards are back', cards === 3, `${cards} card(s)`);
 
     const heading = await page.$eval('#weekly-heading', (el) => el.textContent.trim());
-    check('the band heading is intact', heading.toLowerCase() === 'this week in the wire', heading);
+    check('the band heading is intact', heading.toLowerCase() === 'this week in the pulse', heading);
 
     const kicker = await page
       .$eval('#weekly .accent-text', (el) => el.textContent.trim())
@@ -233,14 +272,14 @@ try {
     `${navBack.length} link(s)`
   );
 
-  const afterOn = await page.evaluate(async () => {
-    const state = (await import('/src/lib/store.js')).getState();
+  const afterOn = await page.evaluate(async (url) => {
+    const state = (await import(url)).getState();
     return {
       slots: JSON.stringify(state.weeklySlots),
       pick: state.todaysPickId,
       flag: state.showThisWeek
     };
-  });
+  }, storeUrl);
   check(
     're-enabling changes nothing but the flag',
     afterOn.flag === true && afterOn.slots === snapshot.slots && afterOn.pick === snapshot.pick

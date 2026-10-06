@@ -1,5 +1,5 @@
 -- =============================================================================
---  THE WIRE - ACCOUNT RESET, KEEPING THE OWNER
+--  THE PULSE - ACCOUNT RESET, KEEPING THE OWNER
 -- =============================================================================
 --  Run this when test accounts have piled up and every browser is signed in as
 --  somebody. Unlike 000_reset_accounts.sql, this KEEPS the Owner seat, so the

@@ -1,5 +1,5 @@
 /* =============================================================================
-   THE WIRE — SERVICE WORKER
+   THE PULSE — SERVICE WORKER
    -----------------------------------------------------------------------------
    Receives real Web Push messages and displays native OS notifications, so a
    broadcast from the Newsroom Panel genuinely pops up on a phone.
@@ -122,10 +122,10 @@ async function display({ title, body, icon, tag, url, requireInteraction }) {
 
   // Prefer the standard API; Safari/iOS needs the constructor form.
   if (self.registration.showNotification) {
-    return self.registration.showNotification(title || 'The Wire', options);
+    return self.registration.showNotification(title || 'The Pulse', options);
   }
   return self.registration.__proto__ &&
-    new Notification(title || 'The Wire', options);
+    new Notification(title || 'The Pulse', options);
 }
 
 /* Push diagnostics. These are deliberately chatty: when a broadcast "does
@@ -149,7 +149,7 @@ self.addEventListener('push', (event) => {
         parseMode = 'json';
       } catch {
         // Not JSON. Fall back to a plain-text body rather than showing nothing.
-        payload = { title: 'The Wire', body: raw };
+        payload = { title: 'The Pulse', body: raw };
         parseMode = 'text';
       }
     }

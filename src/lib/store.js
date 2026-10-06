@@ -629,6 +629,11 @@ export async function hydrate() {
         caption: row.caption || '',
         body: row.body || '',
         status: row.status,
+        // Manual front-page position (migration 024). NULL means "no manual
+        // placement", and listPublishedArticles() sorts those by date as before
+        // -- so the migration cannot rearrange a live front page by itself, only
+        // an explicit save can.
+        displayOrder: row.display_order ?? null,
         // Read defensively: migration 007 may not have run yet, in which case
         // PostgREST omits the key entirely rather than returning null.
         authorAccountId: row.author_account_id ?? null,
@@ -994,8 +999,87 @@ function display(value, fallback = '—') {
 }
 
 /** Only the stories a reader may see. */
+/**
+ * Published articles in front-page order.
+ *
+ * ORDER OF RANK, NOT OF ROW
+ * --------------------------
+ * A story the Owner has placed with `display_order` comes before everything
+ * else, in that order. Everything else keeps the order it already had.
+ *
+ * The two are ranked separately rather than coalesced into one number, because
+ * they are different things: a manual position is an instruction, a date is an
+ * observation. Coalescing them would mean an unplaced story published today
+ * outranking a placed one, so "put this at the top" would depend on when it was
+ * filed -- the behaviour the Owner is trying to get rid of.
+ *
+ * DELIBERATELY NOT RE-SORTED
+ * --------------------------
+ * The unplaced tail is passed through in the store's own order, which is
+ * `created_at desc` from the database query. Sorting it again by the article's
+ * `published_at` looks tidier and is wrong: the two columns disagree for every
+ * story written before publication, so it silently reordered the front page AND
+ * the Curation tab's dropdown -- a change to a published page that nothing asked
+ * for. If the default order is ever wrong, that is a change to the query, made
+ * deliberately.
+ */
 export function listPublishedArticles() {
-  return getState().articles.filter((article) => isStatus(article.status, 'Published'));
+  const published = getState().articles.filter((article) =>
+    isStatus(article.status, 'Published')
+  );
+
+  const placed = published
+    .filter((article) => Number.isFinite(article.displayOrder))
+    .sort((a, b) => a.displayOrder - b.displayOrder);
+
+  return [...placed, ...published.filter((article) => !Number.isFinite(article.displayOrder))];
+}
+
+/**
+ * Save the front-page layout: one call, one statement, the whole order.
+ *
+ * @param {string[]} ids  article ids in the order the Owner arranged them
+ * @returns {Promise<{ok: boolean, message?: string, saved?: number}>}
+ */
+export async function saveArticleLayout(ids) {
+  const order = (ids || []).map((id) => String(id || '').trim()).filter(Boolean);
+  if (!order.length) return { ok: false, message: 'There is no layout to save.' };
+
+  if (config.demoMode || !db()) {
+    const current = getState();
+    const position = new Map(order.map((id, index) => [id, index + 1]));
+    current.articles = current.articles.map((article) =>
+      position.has(article.id) ? { ...article, displayOrder: position.get(article.id) } : article
+    );
+    await addAuditLog(`Reordered the front page (${order.length} stories)`);
+    commit();
+    return { ok: true, saved: order.length };
+  }
+
+  // assertOk rather than a hand-rolled message: every other write in this module
+  // reports a failure the same way, and `guard()` in the panel renders
+  // error.message directly.
+  let saved;
+  try {
+    saved = assertOk(
+      await db().rpc('wire_set_article_layout', { p_ids: order }),
+      'save the front page layout'
+    );
+  } catch (error) {
+    return { ok: false, message: error.message };
+  }
+
+  // The RPC writes positions but does not return the rows, so the local state is
+  // updated from what was sent rather than refetched. One round trip instead of
+  // two, and the panel repaints from the same numbers the database now holds.
+  const current = getState();
+  const position = new Map(order.map((id, index) => [id, index + 1]));
+  current.articles = current.articles.map((article) =>
+    position.has(article.id) ? { ...article, displayOrder: position.get(article.id) } : article
+  );
+  await addAuditLog(`Reordered the front page (${saved ?? order.length} stories)`);
+  commit();
+  return { ok: true, saved: saved ?? order.length };
 }
 
 /** @param {string} id */
@@ -1013,7 +1097,7 @@ export async function createArticle(input) {
   const article = {
     id: newId('article'),
     title: input.title?.trim() || 'Untitled dispatch',
-    author: input.author?.trim() || 'The Wire Staff',
+    author: input.author?.trim() || 'The Pulse Staff',
     category: input.category || 'Civic Dispatch',
     date: input.date || nowStamp(),
     image: input.image || '',
@@ -1298,7 +1382,7 @@ export function listInterviews() {
  *
  * The status filter here is a UI courtesy, not the security boundary -- that is
  * the RLS policy in migration 022. Both exist because they fail differently: RLS
- * keeps a pending row off the wire; this keeps a row that is ALREADY in local
+ * keeps a pending row off the pulse; this keeps a row that is ALREADY in local
  * memory out of the public feed while an Owner happens to be signed in.
  */
 export function listPublishedInterviews() {
@@ -2306,7 +2390,7 @@ async function persistSettings(overrides = {}) {
     breaking_news: current.breakingNews,
     todays_pick_id: current.todaysPickId,
     weekly_slots: current.weeklySlots,
-    // Whether the "This Week In The Wire" band appears on the homepage.
+    // Whether the "This Week In The Pulse" band appears on the homepage.
     // `undefined` must never write false — an unset flag means enabled.
     show_this_week: current.showThisWeek !== false,
     forced_notifications: current.notifications.forced,

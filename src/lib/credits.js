@@ -98,7 +98,9 @@ export async function listCredits() {
 
   const { data, error } = await client
     .from('credits_people')
-    .select('id, name, role_label, role_color, blurb, portrait_url, sort_order')
+    .select(
+      'id, name, role_label, role_color, blurb, portrait_url, sort_order, category, about_order'
+    )
     .order('sort_order', { ascending: true })
     .order('name', { ascending: true });
 
@@ -111,6 +113,171 @@ export async function listCredits() {
   }
   migrationMissing = false;
   return data || [];
+}
+
+/**
+ * The About Us page, grouped into its two rosters.
+ *
+ * Reads the SAME table as the Credits page rather than a parallel one: the six
+ * fields a team card needs are the six fields a credits entry already has, and a
+ * second table would mean a second uploader, a second avatar fallback, a second
+ * colour picker and a second delete path in the Owner panel for identical data.
+ *
+ * Rows with no category are Credits-page-only and are excluded here. Ordering is
+ * `about_order` -- the About page's OWN position column, deliberately not
+ * `sort_order`, which orders the Credits page. One integer serving both lists
+ * would mean promoting somebody to the board also reshuffled a published page.
+ *
+ * Never rejects. A reader landing on /about with the database unreachable gets an
+ * empty roster and a heading that says so, not a blank page.
+ *
+ * @returns {Promise<Array<{category: string, people: Array<object>}>>}
+ *   one entry per category, in ABOUT_CATEGORIES order, always all of them
+ */
+export async function loadAboutRoster() {
+  const people = await listCredits();
+  return ABOUT_CATEGORIES.map((category) => ({
+    category,
+    people: people
+      .filter((person) => normaliseAboutCategory(person.category) === category)
+      .sort(
+        (a, b) =>
+          (a.about_order ?? 100) - (b.about_order ?? 100) ||
+          String(a.name || '').localeCompare(String(b.name || ''))
+      )
+  }));
+}
+
+/** Paint the About page into `mount`. Safe to call repeatedly. */
+export function renderAbout(mount) {
+  if (!mount) return;
+
+  loadAboutRoster().then((sections) => {
+    // A re-render racing an earlier one would paint a roster the Owner has
+    // already changed.
+    if (!mount.isConnected) return;
+    mount.innerHTML = aboutTemplate(sections);
+  });
+}
+
+/**
+ * One team card.
+ *
+ * The avatar falls back three ways, in order, because a photo on this page is
+ * optional and a broken one must not be worse than none: the stored portrait,
+ * then the neutral glyph (imageFallbackAttr covers a URL that 404s), then the
+ * initials. The third is a server render rather than an onerror swap because it
+ * needs the name, which the browser does not have.
+ */
+function aboutCard(person) {
+  const url = safeUrl(person.portrait_url);
+  const name = String(person.name || '').trim() || 'Team member';
+  const role = String(person.role_label || '').trim();
+  const colour = normaliseColour(person.role_color) || '#1d4ed8';
+  const note = String(person.blurb || '').trim();
+
+  const photo = url
+    ? `<img class="about-card__photo" src="${escapeHtml(url)}" ${imageFallbackAttr()}
+         alt="${escapeHtml(name)}" width="96" height="96" loading="lazy" decoding="async" />`
+    : `<span class="about-card__photo about-card__photo--empty" aria-hidden="true">
+         <span class="about-card__initials">${escapeHtml(initialsOf(name))}</span>
+       </span>`;
+
+  return `
+    <li class="about-card">
+      ${photo}
+      <div class="about-card__body">
+        <p class="about-card__name">${escapeHtml(name)}</p>
+        ${
+          role
+            ? `<span class="badge about-card__role" style="--role-colour:${escapeHtml(
+                colour
+              )}">${escapeHtml(role)}</span>`
+            : ''
+        }
+        ${note ? `<p class="about-card__note">${escapeHtml(note)}</p>` : ''}
+      </div>
+    </li>
+  `;
+}
+
+function aboutTemplate(sections) {
+  const body = sections
+    .map(
+      ({ category, people }) => `
+      <section class="about-roster" aria-labelledby="about-${slug(category)}">
+        <h3 id="about-${slug(category)}" class="about-roster__heading">
+          ${escapeHtml(category)}
+        </h3>
+        ${
+          people.length
+            ? `<ul class="about-grid">${people.map(aboutCard).join('')}</ul>`
+            : `<p class="panel-sunken p-4 text-sm ink-muted">
+                 Nobody listed under ${escapeHtml(category)} yet.
+               </p>`
+        }
+      </section>`
+    )
+    .join('');
+
+  return `
+    <div class="mx-auto max-w-5xl px-4 py-10 md:py-14">
+      <header class="about-hero">
+        <p class="accent-text text-[0.625rem] font-bold tracking-[0.2em] uppercase">
+          About us
+        </p>
+        <h1 class="about-hero__title">Stories that matter. Voices that count.</h1>
+      </header>
+
+      <section class="about-mission" aria-labelledby="about-mission-heading">
+        <h2 id="about-mission-heading" class="font-headline text-2xl font-black tracking-wide uppercase">
+          Our mission &amp; Vision
+        </h2>
+        <p class="about-mission__tagline">Truth &#8226; Integrity &#8226; Voice</p>
+
+        <h3 class="about-mission__sub">Why we press</h3>
+        <p class="about-mission__body">
+          Every school has stories worth telling. From the roar in the sports field
+          to the quiet achievements of students; From classroom breakthroughs to
+          conversations that challenge us. We believe there is always a story
+          waiting to be told.
+        </p>
+
+        <h3 class="about-mission__sub">Our promise</h3>
+        <p class="about-mission__body">
+          We promise to listen before we write, verify before we publish and
+          respect the people behind every story.
+        </p>
+      </section>
+
+      <section class="mt-12" aria-labelledby="about-press-heading">
+        <h2 id="about-press-heading" class="font-headline text-2xl font-black tracking-wide uppercase">
+          Meet the press
+        </h2>
+        <p class="ink-muted mt-2 text-sm">Behind every story is a team.</p>
+        ${body}
+      </section>
+    </div>
+  `;
+}
+
+/** An id-safe fragment from a heading. */
+function slug(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/** First letters of the first and last name, e.g. "Amina Mohamed" -> "AM". */
+function initialsOf(name) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -140,12 +307,44 @@ export async function listCreditsForOwner() {
  * @param {{name: string, role: string, color: string, blurb?: string,
  *          portraitUrl?: string}} person
  */
+/**
+ * The two About Us rosters, in the order they appear on the page.
+ *
+ * CONSTRAINED IN THREE PLACES, deliberately, because this list is rendered as
+ * section headings and offered as a `<select>`: the CHECK constraint on
+ * `credits_people.category` (migration 024), the guard in
+ * `wire_credits_people_upsert`, and `normaliseAboutCategory` here. If they drift
+ * apart, an unrecognised value becomes a heading that no filter matches -- a
+ * section that renders for nobody and looks like a layout bug rather than a
+ * data error.
+ *
+ * `null` is the third state and is not a category: it means "Credits page only",
+ * which is what every row written before the About page existed means.
+ */
+export const ABOUT_CATEGORIES = ['Board Members', 'Behind the Bylines'];
+
+/**
+ * Fold a category onto one this app knows, or '' for "not on the About page".
+ *
+ * @param {unknown} value
+ * @returns {string} one of ABOUT_CATEGORIES, or ''
+ */
+export function normaliseAboutCategory(value) {
+  const wanted = String(value ?? '').trim().toLowerCase();
+  if (!wanted) return '';
+  return ABOUT_CATEGORIES.find((option) => option.toLowerCase() === wanted) || '';
+}
+
 export async function addPerson(person) {
   const name = String(person.name || '').trim();
   if (!name) return { ok: false, message: 'Give this person a name.' };
 
   const role = String(person.role || '').trim() || 'Contributor';
   const color = String(person.color || '').trim() || '#1d4ed8';
+  // '' means Credits-page-only. Never sent as an unrecognised value: the server
+  // refuses one, which is the point -- a typo must not become a third About
+  // heading that nothing renders.
+  const category = normaliseAboutCategory(person.category);
 
   if (config.demoMode) {
     const rows = demoRoster();
@@ -156,7 +355,8 @@ export async function addPerson(person) {
       role_color: color,
       blurb: String(person.blurb || '').trim(),
       portrait_url: String(person.portraitUrl || '').trim() || null,
-      sort_order: nextDemoOrder(rows)
+      sort_order: nextDemoOrder(rows),
+      category: category || null
     };
     writeDemoRoster([...rows, entry]);
     return { ok: true, person: entry };
@@ -165,7 +365,7 @@ export async function addPerson(person) {
   const client = getSupabase();
   if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
 
-  // RPC NAME AND ARG NAMES MUST MATCH supabase/009_credits_page.sql.
+  // RPC NAME AND ARG NAMES MUST MATCH supabase/migrations/024_about_podcasts_and_layout.sql.
   //
   // There is no wire_add_credits_person. The server exposes a single upsert,
   // wire_credits_people_upsert, where p_id = NULL means INSERT and p_id = the
@@ -173,6 +373,10 @@ export async function addPerson(person) {
   // returned PGRST202 "Could not find the function" for every add, save and
   // remove, which is why the whole Credits tab was dead. The portrait argument
   // is p_portrait, not p_portrait_url.
+  //
+  // p_category arrived with 024, which DROPPED the old seven-argument signature
+  // rather than overloading it -- two candidates for one PostgREST name is
+  // PGRST202 again, so the drop in that migration is load-bearing.
   const { data, error } = await client.rpc('wire_credits_people_upsert', {
     p_id: null,
     p_name: name,
@@ -180,7 +384,9 @@ export async function addPerson(person) {
     p_role_color: color,
     p_blurb: String(person.blurb || '').trim(),
     p_portrait: String(person.portraitUrl || '').trim(),
-    p_sort_order: 100
+    p_sort_order: 100,
+    p_category: category,
+    p_about_order: 100
   });
 
   if (error) return { ok: false, message: describe(error, 'credits entry') };
@@ -211,6 +417,7 @@ export async function addPerson(person) {
  * @param {{name?: string, role?: string, role_label?: string,
  *          color?: string, role_color?: string, blurb?: string,
  *          portraitUrl?: string, portrait_url?: string,
+ *          category?: string|null,
  *          order?: number, sort_order?: number}} patch
  */
 export async function updatePerson(id, patch) {
@@ -225,6 +432,17 @@ export async function updatePerson(id, patch) {
   const colorValue = field('color', 'role_color');
   const portraitValue = field('portraitUrl', 'portrait_url');
   const orderValue = field('order', 'sort_order');
+  // `category` is the one field that cannot use coalesce() semantics on the
+  // server, because taking somebody OFF the About page is a real edit: they keep
+  // their Credits entry but stop appearing under a heading. So undefined means
+  // "leave it alone" here, and '' or null means "clear it" -- which is exactly
+  // the distinction a missing key cannot express in the RPC's argument list.
+  const categoryValue =
+    patch.category === undefined ? undefined : normaliseAboutCategory(patch.category);
+  // about_order is the About page's own position. Absent means "leave it", which
+  // is coalesce()'s job server-side -- see the note on the column in migration
+  // 024 for why it is not the same column as sort_order.
+  const aboutOrderValue = field('aboutOrder', 'about_order');
 
   if (config.demoMode) {
     const rows = demoRoster();
@@ -244,6 +462,8 @@ export async function updatePerson(id, patch) {
       next.portrait_url = String(portraitValue).trim() || null;
     }
     if (orderValue !== undefined) next.sort_order = Number(orderValue);
+    if (aboutOrderValue !== undefined) next.about_order = Number(aboutOrderValue);
+    if (categoryValue !== undefined) next.category = categoryValue || null;
 
     rows[index] = next;
     writeDemoRoster(rows);
@@ -269,7 +489,12 @@ export async function updatePerson(id, patch) {
     p_role_color: colorValue === undefined ? null : String(colorValue).trim(),
     p_blurb: patch.blurb === undefined ? null : String(patch.blurb).trim(),
     p_portrait: portraitValue === undefined ? null : String(portraitValue).trim(),
-    p_sort_order: orderValue === undefined ? null : Number(orderValue)
+    p_sort_order: orderValue === undefined ? null : Number(orderValue),
+    p_about_order: aboutOrderValue === undefined ? null : Number(aboutOrderValue),
+    // Absent from the payload entirely when the caller did not mention the
+    // category, so the server's unconditional assignment does not clear a
+    // heading the panel simply did not render.
+    ...(categoryValue === undefined ? {} : { p_category: categoryValue })
   });
 
   if (error) return { ok: false, message: describe(error, 'credits entry') };
@@ -485,7 +710,9 @@ export function demoRoster() {
       role_color: '#8c1d11',
       blurb: 'Sets the line, and answers for it.',
       portrait_url: null,
-      sort_order: 1
+      sort_order: 1,
+      // Demo-only: gives /about both rosters something to render.
+      category: 'Board Members'
     },
     {
       id: 'demo-1',
@@ -494,7 +721,8 @@ export function demoRoster() {
       role_color: '#1d4ed8',
       blurb: 'Covers local government and civic affairs.',
       portrait_url: null,
-      sort_order: 10
+      sort_order: 10,
+      category: 'Behind the Bylines'
     },
     {
       id: 'demo-2',
@@ -503,7 +731,8 @@ export function demoRoster() {
       role_color: '#047857',
       blurb: 'Football, athletics, and the people who fund them.',
       portrait_url: null,
-      sort_order: 20
+      sort_order: 20,
+      category: 'Behind the Bylines'
     },
     {
       id: 'demo-3',
@@ -512,7 +741,8 @@ export function demoRoster() {
       role_color: '#b45309',
       blurb: 'Runs the picture desk and the gallery.',
       portrait_url: null,
-      sort_order: 30
+      sort_order: 30,
+      category: 'Behind the Bylines'
     }
   ];
 
@@ -560,34 +790,35 @@ function nextDemoOrder(rows) {
 let portraitIndex = new Map();
 
 /**
- * Approved portraits from the STAFF roster, keyed by account id.
+ * Approved portraits from the STAFF roster, keyed by name.
  *
- * The `articles.author_account_id` -> `staff_accounts.id` path. Only the Staff
- * tab can fill it, because it is the only place that holds both sides of the
- * join: `staff` carries the photo and its review state, `staff_accounts`
- * carries the id an article points at, and the two tables share one column.
- */
-let portraitIndexById = new Map();
-
-/**
- * The same staff portraits, keyed by name.
+ * THIS IS THE AUTHORITY, and the byline NAME is the only key that gets here.
  *
- * WHY THIS EXISTS
- * ---------------
- * A byline could resolve two different ways -- by foreign key, or by name -- and
- * they consulted two different tables. `portraitForArticle` tries the FK first
- * and falls back to the name, while the name itself was answered by
- * `credits_people`. So the SAME person produced a different face depending on
- * which path a given card took: an article carrying `author_account_id` showed
- * the photo from `staff`, and an article without one -- a row written before
- * migration 007, a contributor with no account, a hand-inserted row, or any
- * article in demo mode -- fell through to whatever `credits_people` happened to
- * hold under that name. One author, two avatars across two cards.
+ * WHY THERE IS NO FOREIGN-KEY LOOKUP
+ * ----------------------------------
+ * There was one. `portraitForArticle()` used to resolve `articles.author_account_id`
+ * against `staff_accounts.id` and treat that as the author, falling back to the
+ * byline text. That premise is wrong, and it is wrong in a way that is visible on
+ * the front page.
  *
- * Indexing the staff roster by name as well, and consulting it FIRST, collapses
- * that to a single answer per person: the current approved photo from the
- * profile table, whichever route the byline arrives by. The Credits roster then
- * only supplies names the staff roster does not know at all.
+ * Migration 007 defines the column as "the account the author SIGNS IN WITH", and
+ * its own column comment says "NULL means ownership unknown; only the Owner may
+ * delete that row". It is a PERMISSIONS pointer -- who may edit and delete the row
+ * -- not a statement of who wrote it. The Owner publishing a piece bylined to
+ * somebody else is ordinary editorial practice, and it is the normal case for a
+ * one-desk paper: the Owner holds the login, the story is credited to a reporter.
+ *
+ * So the FK-first lookup printed the wrong face next to a real byline. Three
+ * articles bylined "Mercy Kamande" resolved to Mercy's profile because they
+ * pointed at her account; a fourth, posted by the Owner, resolved to the OWNER's
+ * profile because it pointed there -- same byline, two different faces, which is
+ * exactly the inconsistency that started this.
+ *
+ * A byline is a credit. It identifies the person a reader should see, and it is
+ * carried as text on the article itself. That text is the key.
+ *
+ * The Credits roster below is the fallback for people with no staff profile --
+ * outside contributors, who by definition have no account and no row in `staff`.
  */
 let staffPortraitByName = new Map();
 
@@ -670,10 +901,9 @@ export function indexPortraits(people) {
  * different faces. `staffPortraitByName` wins outright; `portraitIndex` is only
  * reached for a name no staff profile claims.
  *
- * Note the asymmetry with `portraitForArticle`, which is the reverse and is
- * correct as written: the foreign key is the precise answer and the name is the
- * guess, so the FK is tried first there. Here both keys are guesses, so the
- * authoritative source (the profile table) is tried first.
+ * The name is the only key. See the note on `staffPortraitByName` for why the
+ * article's `author_account_id` is not consulted here: it points at whoever
+ * operated the CMS, which is frequently not the person in the byline.
  */
 export function portraitFor(name) {
   for (const key of candidateKeys(name)) {
@@ -688,82 +918,28 @@ export function portraitFor(name) {
 }
 
 /**
- * Resolve a byline to a portrait by FOREIGN KEY rather than by name.
+ * The approved portrait for an article -- resolved from its BYLINE.
  *
- * The roster is keyed on `staff.id`, and articles carry `author_account_id`
- * (migration 007) pointing at `staff_accounts.id`. The two are joined on
- * username, so the article's pointer and the portrait's owner are the same
- * person only when the join is exact -- which is what this function does.
- *
- * Name matching is the FALLBACK, not the primary path. It used to be the only
- * path, and it is what let a byline typed with a typo or a minor variation
- * ("Grace Wanjiku" vs "Grace W. Wanjiku", "Lilian W." vs "Lilian Wanjiku")
- * silently borrow a different staffer's photo -- or, worse, attach nobody's
- * photo to a name that is one character off from a real one. A reader sees a
- * sticker with the wrong face and nothing indicates it.
- *
- * @param {string|null|undefined} authorId  the article's author_account_id
- * @returns {string|null}
- */
-export function portraitForAccountId(authorId) {
-  if (!authorId) return null;
-  const hit = portraitIndexById.get(String(authorId));
-  return hit || null;
-}
-
-/**
- * The approved portrait for an article, preferring the foreign key.
- *
- * Order of resolution:
- *   1. `authorAccountId` -> the staffer who actually filed the story (exact).
- *   2. The byline name, as a fallback for rows written before migration 007
- *      or by contributors who have no account at all.
- *
- * @param {{author?: string, authorAccountId?: string|null}} article
+ * @param {{author?: string}} article
  * @returns {string|null}
  */
 export function portraitForArticle(article) {
-  if (!article) return null;
-  const byId = portraitForAccountId(article.authorAccountId);
-  if (byId) return byId;
-  return portraitFor(article.author);
+  return portraitFor(article?.author);
 }
 
 /**
- * Rebuild the ID-keyed index alongside the name-keyed one.
+ * Rebuild the name-keyed staff index.
  *
  * `indexPortraits` is called from two places with two different shapes:
- * `listCredits()` returns `credits_people` rows (no account id), while the
- * Staff tab returns `staff` rows that DO carry one. Only the Staff tab can
- * populate the ID index, so this is a separate function called from
- * `indexStaffPortraits` -- and the ID index is empty rather than wrong when
- * only the credits roster has been loaded.
+ * `listCredits()` returns `credits_people` rows, while the Staff tab returns
+ * `staff` rows that carry a review state this one requires. So they are two
+ * separate indexes rather than one -- see `staffPortraitByName` for which of the
+ * two wins.
  *
- * `id` is the ACCOUNT id, not `staff.id`: an article points at
- * `staff_accounts.id` through `author_account_id`, and the two tables share only
- * a username, so the Staff tab has to do that join before calling this.
- *
- * ONLY approved portraits are indexed. This index feeds the byline stickers, and
- * the whole point of the Owner's review gate is that an unreviewed photo never
- * reaches a reader's screen -- a staff row with `portrait_status = 'pending'`
- * would otherwise be published by this path while the Credits roster correctly
- * hides it.
- *
- * A name key claimed by MORE THAN ONE staffer is dropped rather than resolved.
- * `candidateKeys` is deliberately forgiving (a bare surname has to find
- * "Grace Wanjiku"), and that forgiveness is only safe while the key is unique:
- * with two Amaras on the roster, "Amara" would otherwise resolve to whichever
- * row was indexed first, and the wrong staffer's photo would print beside
- * somebody else's byline. No match is the correct failure -- `portraitFor` then
- * falls through to the Credits roster and, failing that, to the plain text
- * byline. The full name is unaffected: it is distinct per person, so an
- * ambiguous surname never costs the exact match its photo.
- *
- * @param {Array<{id: string, name?: string, portrait_url?: string,
+ * @param {Array<{name?: string, portrait_url?: string,
  *                 portrait_status?: string}>} people
  */
 export function indexStaffPortraits(people) {
-  const byId = new Map();
   const byName = new Map();
   // How many distinct people claim each key. Anything above one is ambiguous.
   const claims = new Map();
@@ -773,14 +949,10 @@ export function indexStaffPortraits(people) {
     const url = safeUrl(person.portrait_url);
     if (!url) continue;
 
-    if (person.id && !byId.has(String(person.id))) {
-      byId.set(String(person.id), url);
-    }
-
     // The person's own name, so the claim count is per human rather than per
     // alias: two rows for the same staffer must not make their own name look
     // ambiguous.
-    const owner = String(person.id || person.name || url);
+    const owner = String(person.name || url);
     for (const key of candidateKeys(person.name)) {
       if (!key) continue;
       const seen = claims.get(key);
@@ -794,7 +966,6 @@ export function indexStaffPortraits(people) {
     if (owner === false) byName.delete(key);
   }
 
-  portraitIndexById = byId;
   staffPortraitByName = byName;
 }
 
@@ -823,18 +994,19 @@ export async function primePortraits() {
  * which is always the case until the Owner approves one — so the front page
  * never breaks and never leaks an unreviewed photo.
  *
- * `portrait` overrides the name lookup. The publication passes the URL it has
- * already resolved from the article's foreign key (see `portraitForArticle`),
- * because a byline whose text is one character off from the real name resolves
- * to the WRONG person's face by name — or to nobody's. Callers that only have a
- * name can omit it and the cached index is used as before.
+ * `portrait` overrides the name lookup, for a caller that has already resolved a
+ * portrait by some other means. Nothing in the publication does: a byline is
+ * credited by NAME, and the article's `author_account_id` is deliberately not
+ * used to pick a face -- it records who operated the CMS, which for a
+ * single-desk paper is usually the Owner rather than the person in the byline.
+ * See the note on `staffPortraitByName`.
  *
  * @param {string} name
  * @param {{tag?: string, cls?: string, suffix?: string, portrait?: string|null}} [opts]
  */
 export function bylineSticker(name, { tag = 'p', cls = '', suffix = '', portrait } = {}) {
   const face = safeUrl(portrait) || portraitFor(name);
-  const label = escapeHtml(name || 'The Wire staff');
+  const label = escapeHtml(name || 'The Pulse staff');
   const tail = suffix ? escapeHtml(suffix) : '';
 
   if (!face) {
@@ -884,7 +1056,7 @@ function emptyState() {
     <div class="mx-auto max-w-2xl text-center">
       <h1 class="font-headline text-3xl font-bold tracking-[0.06em] uppercase">Credits</h1>
       <p class="rule-soft mt-3 text-sm ink-muted">
-        The people behind The Wire are being assembled. Please check back shortly.
+        The people behind The Pulse are being assembled. Please check back shortly.
       </p>
     </div>
   `;
@@ -899,7 +1071,7 @@ function template(people) {
         <p class="eyebrow">About the newsroom</p>
         <h1 class="font-headline text-3xl font-bold tracking-[0.06em] uppercase sm:text-4xl">Credits</h1>
         <p class="rule-soft mx-auto mt-3 max-w-2xl text-sm ink-muted">
-          ${people.length} ${people.length === 1 ? 'person makes' : 'people make'} The Wire.
+          ${people.length} ${people.length === 1 ? 'person makes' : 'people make'} The Pulse.
         </p>
       </header>
 

@@ -6,9 +6,9 @@
     <meta name="theme-color" content="#F7F4EC" />
     <meta
       name="description"
-      content="The Wire — MJLA Press Club. Independent, verified dispatches and the full newsroom panel for the writing desk."
+      content="The Pulse — MJLA Press Club. Independent, verified dispatches and the full newsroom panel for the writing desk."
     />
-    <title>The Wire — MJLA Press Club</title>
+    <title>The Pulse — MJLA Press Club</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -58,7 +58,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="The Wire" />
+    <meta name="apple-mobile-web-app-title" content="The Pulse" />
     <meta name="mobile-web-app-capable" content="yes" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
 
@@ -126,7 +126,7 @@
               id="masthead-title"
               class="newspaper-texture relative text-center font-headline text-4xl leading-none font-black tracking-[0.06em] uppercase md:text-6xl"
             >
-              THE WIRE
+              THE PULSE
             </h1>
           </div>
           <p
@@ -163,7 +163,7 @@
 
           <ul
             id="primary-links"
-            class="flex flex-1 flex-wrap items-center gap-x-6 gap-y-2 text-[0.6875rem] font-bold tracking-[0.12em] uppercase"
+            class="flex flex-1 flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[0.6875rem] font-bold tracking-[0.12em] uppercase"
           >
             <li><a class="nav-link" href="#latest">Latest</a></li>
             <li><a class="nav-link" href="#today">Today's Pick</a></li>
@@ -174,10 +174,16 @@
               <button class="nav-link" type="button" data-nav="interviews">INTERVIEWS</button>
             </li>
             <li>
+              <button class="nav-link" type="button" data-nav="podcasts">PODCASTS</button>
+            </li>
+            <li>
               <button class="nav-link" type="button" data-nav="gallery">PHOTO GALLERY</button>
             </li>
             <li>
               <button class="nav-link" type="button" data-nav="credits">CREDITS</button>
+            </li>
+            <li>
+              <button class="nav-link" type="button" data-nav="about">ABOUT US</button>
             </li>
           </ul>
 
@@ -273,6 +279,24 @@
         tabindex="-1"
       ></section>
 
+      <!-- About Us: mission plus the two press rosters (src/views/public.js) -->
+      <section
+        id="about-view"
+        data-reader-view
+        class="hidden"
+        aria-label="About Us"
+        tabindex="-1"
+      ></section>
+
+      <!-- Podcasts feed: approved episodes with the custom player -->
+      <section
+        id="podcasts-view"
+        data-reader-view
+        class="hidden"
+        aria-label="Podcasts"
+        tabindex="-1"
+      ></section>
+
       <!-- Newsroom Panel (injected only for privileged sessions) -->
       <section
         id="admin-view"
@@ -290,7 +314,7 @@
               id="masthead-foot"
               class="font-headline text-2xl font-black tracking-[0.06em] uppercase"
             >
-              THE WIRE
+              THE PULSE
             </h2>
             <p class="mt-2 text-sm ink-muted">
               MJLA Press Club. Every dispatch is verified, attributed and
@@ -314,6 +338,24 @@
                 </button>
               </li>
               <li>
+                <button class="nav-link" type="button" data-nav="interviews">
+                  Interviews
+                </button>
+              </li>
+              <li>
+                <button class="nav-link" type="button" data-nav="podcasts">
+                  Podcasts
+                </button>
+              </li>
+              <li>
+                <button class="nav-link" type="button" data-nav="credits">
+                  Credits
+                </button>
+              </li>
+              <li>
+                <button class="nav-link" type="button" data-nav="about">About Us</button>
+              </li>
+              <li>
                 <a class="nav-link" href="#assignments">Assignment Board</a>
               </li>
             </ul>
@@ -330,7 +372,7 @@
           </div>
         </div>
         <p class="rule-soft mt-8 border-t pt-6 text-center text-xs ink-muted">
-          &#169; <span id="footer-year">2026</span> The Wire &#8212; MJLA Press Club. All
+          &#169; <span id="footer-year">2026</span> The Pulse &#8212; MJLA Press Club. All
           rights reserved.
         </p>
         <!-- Attribution. Kept deliberately quieter than the copyright line so it
@@ -674,7 +716,7 @@
         <div class="mb-4 flex items-start gap-3 pr-8">
           <i class="fa-solid fa-bell mt-1 text-lg text-newsred" aria-hidden="true"></i>
           <h2 id="alert-gate-title" class="font-headline text-xl leading-tight font-bold">
-            Turn on alerts for The Wire
+            Turn on alerts for The Pulse
           </h2>
         </div>
 

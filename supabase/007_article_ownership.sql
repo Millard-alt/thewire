@@ -166,7 +166,17 @@ begin
      set author_account_id = resolved.account_id
     from (
       select lower(trim(coalesce(display_name, ''))) as match_name,
-             min(id)                    as account_id
+             -- min() over a uuid is not a thing: Postgres ships no min(uuid)
+             -- aggregate, so this used to abort the whole DO block with
+             --   ERROR: 42883 function min(uuid) does not exist
+             -- which is why the backfill below never linked a single row.
+             -- `having count(*) = 1` already guarantees one id per name, so this
+             -- is a tie-break that cannot be reached -- sorting the text form is
+             -- the portable way to express it. See also
+             -- supabase/025_backfill_article_ownership.sql, which supersedes this
+             -- backfill by joining through `staff` instead of matching a display
+             -- name by exact string.
+             min(id::text)::uuid        as account_id
         from public.staff_accounts
        where display_name is not null
        group by lower(trim(coalesce(display_name, '')))
