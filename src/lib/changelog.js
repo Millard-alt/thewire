@@ -25,17 +25,32 @@ const SECTION_ICONS = {
   Security: 'fa-shield-halved',
   'Known limitations': 'fa-circle-info',
   Applied: 'fa-circle-check',
-  'Pending — required before these features work': 'fa-hourglass-half'
+  /*
+   * KEYED ON THE BASE TITLE, NOT THE FULL HEADING.
+   *
+   * This was keyed 'Pending — required before these features work', which can
+   * never match: `baseTitle()` reduces any "Word — qualifier" heading to just
+   * "Word", so the lookup below was always `SECTION_ICONS['Pending']` ->
+   * undefined -> the generic fa-circle-dot, and the section sorted to the end
+   * among unknown headings instead of second.
+   *
+   * The heading a release actually writes is still free to carry a qualifier;
+   * `baseTitle()` is what both the icon and the ordering consult, so the key has
+   * to be the reduced form. Verified against the real heading below.
+   */
+  Pending: 'fa-hourglass-half'
 };
 
 /**
  * Section order. Known sections first in the conventional order, then anything
  * unrecognised alphabetically, so a new heading in the markdown still shows up
  * rather than disappearing.
+ *
+ * Keys are BASE TITLES for the same reason as SECTION_ICONS above.
  */
 const SECTION_ORDER = [
   'Applied',
-  'Pending — required before these features work',
+  'Pending',
   'Added',
   'Changed',
   'Fixed',
