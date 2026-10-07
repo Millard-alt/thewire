@@ -151,11 +151,32 @@ export function describeStorageError(error, what = 'the episode') {
 }
 
 /**
- * Does the `podcasts` bucket exist and is it writable by this session?
+ * Does the `podcasts` bucket exist, and can THIS SESSION write to it?
  *
- * Runs BEFORE an upload so a misconfigured bucket costs one cheap read instead
- * of a wasted multi-megabyte POST, and so the writer is told what is wrong while
- * the file is still on their device.
+ * Runs BEFORE an upload so a misconfigured bucket costs one tiny write instead of
+ * a wasted multi-megabyte POST, and so the writer is told what is wrong while the
+ * file is still on their device.
+ *
+ * WHY THIS PROBES A WRITE, NOT A READ
+ * ----------------------------------
+ * It used to call `.list('', { limit: 1 })`, on the reasonable-sounding grounds
+ * that it was "the cheapest call that still exercises the bucket". It is not,
+ * for this purpose: `list` is a READ, and it is authorised by `podcasts_read`.
+ * The policy that actually refuses podcast uploads is `podcasts_upload`, which
+ * is `for insert ... with check (public.is_staff())`.
+ *
+ * So the preflight passed, the dialog opened, the writer picked their episode and
+ * spent their data allowance pushing it — and the upload was refused at the very
+ * end by a rule the preflight had never tested. The failure surfaced as an RLS
+ * error after the whole file had crossed the network, which is the worst moment
+ * to discover it and exactly the thing this function exists to prevent.
+ *
+ * The probe therefore uploads a one-byte object to the same `episodes/` prefix
+ * the real upload uses — so it exercises the `foldername(name) = 'episodes'`
+ * clause too, not just the role check — and removes it again. Delete is Owner
+ * only, so cleanup is best-effort: a writer who cannot delete leaves a 1-byte
+ * orphan at a `.probe` path. That is a deliberate trade, because the alternative
+ * is no write check at all.
  *
  * @returns {Promise<{ok: boolean, message?: string}>}
  */
@@ -164,15 +185,55 @@ export async function checkPodcastStorage() {
   const client = getSupabase();
   if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
 
+  /*
+   * Does the bucket itself exist? Asking first keeps the RLS answer meaningful:
+   * a missing bucket and a refused write produce different messages, and the
+   * Owner needs the missing-bucket one because the fix is to run a migration.
+   */
   try {
-    // A one-item list is the cheapest call that still exercises the bucket AND
-    // this session's read access. It reads no object data.
-    const { error } = await client.storage.from(BUCKET).list('', { limit: 1 });
-    if (error) return { ok: false, message: describeStorageError(error, 'the podcast bucket') };
-    return { ok: true };
+    const { error: listError } = await client.storage.from(BUCKET).list('', { limit: 1 });
+    if (listError) return { ok: false, message: describeStorageError(listError, 'the podcast bucket') };
   } catch (error) {
     return { ok: false, message: describeStorageError(error, 'the podcast bucket') };
   }
+
+  /*
+   * Now the write probe. Deliberately a SEPARATE try: the RLS refusal below is
+   * the interesting failure, and folding it into the same catch as the read
+   * would blur "the bucket is gone" with "you may not write to it".
+   */
+  const probePath = 'episodes/.write-probe';
+  try {
+    const { error: writeError } = await client.storage
+      .from(BUCKET)
+      .upload(probePath, new Blob([new Uint8Array(1)]), {
+        contentType: 'application/octet-stream',
+        upsert: true
+      });
+
+    if (writeError) {
+      return {
+        ok: false,
+        message:
+          describeStorageError(writeError, 'the podcast bucket') +
+          ' The bucket exists, so the upload policy is missing or this account is ' +
+          'not an active staffer: run ' +
+          'supabase/migrations/025_podcasts_storage_repair.sql, then check the ' +
+          'Staff roster has an Active row for you.'
+      };
+    }
+  } catch (error) {
+    return { ok: false, message: describeStorageError(error, 'the podcast bucket') };
+  }
+
+  // Best-effort cleanup. Owner-only delete, so a writer simply leaves the probe.
+  try {
+    await client.storage.from(BUCKET).remove([probePath]);
+  } catch {
+    /* a 1-byte orphan at a .probe path is not worth failing an upload over */
+  }
+
+  return { ok: true };
 }
 
 /* -------------------------------------------------------------------------- */

@@ -27,7 +27,7 @@
    Run:  node tests/features.mjs
    ========================================================================== */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -1021,6 +1021,114 @@ report(
     offenders.length
       ? `a backtick closes the template early and the rest becomes code: ${offenders.join(', ')}`
       : ''
+  );
+}
+
+/*
+ * THE SAME CLASS OF MISTAKE, IN SQL.
+ *
+ * A migration is the only file in this repo that cannot be exercised by running
+ * the app, cannot be unit tested, and fails only when a person pastes it into a
+ * web form. There is no local Postgres here to parse it with and no CI running
+ * Supabase, so a syntax error in one is invisible until it is somebody's
+ * afternoon. Two got through:
+ *
+ *   028_page_scopes.sql            -- comment lines written as " * ..." instead of
+ *                                    "-- ...": ERROR 42601 at or near "*".
+ *   025_podcasts_storage_repair.sql -- a report query selecting b.id / b.public
+ *                                    with NO FROM clause: ERROR 42P01.
+ *
+ * DELIBERATELY NOT A GENERAL SQL LINTER. An earlier attempt checked undeclared
+ * table aliases across every migration and produced false positives on three
+ * separate legitimate constructs in one file — a `from (values …) as v(…)`
+ * derived table, a `'@users.thewire.press'` string literal, and CTE aliases. Each
+ * fix invited another, and a checker that cries wolf gets switched off, which is
+ * worse than having none. These two assertions are narrow, were each written
+ * after the exact failure, and cannot fire on valid SQL.
+ */
+
+/** Every migration .sql, top level and migrations/ both. */
+function migrationFiles() {
+  const out = [];
+  for (const dir of ['supabase', 'supabase/migrations']) {
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) if (f.endsWith('.sql')) out.push(`${dir}/${f}`);
+  }
+  return out;
+}
+
+/**
+ * Lines OUTSIDE any dollar-quoted body. Inside $$ … $$ the text is plpgsql, and
+ * a bare `*` there is a legitimate comment.
+ */
+function sqlLinesOutsideFunctionBodies(path) {
+  const out = [];
+  let inBody = false;
+  read(path, path)
+    .split('\n')
+    .forEach((line, i) => {
+      if (/\$\$|\$[a-z_]*\$/i.test(line)) inBody = !inBody;
+      if (!inBody) out.push({ line: i + 1, text: line });
+    });
+  return out;
+}
+
+{
+  const commentOffenders = [];
+  for (const path of migrationFiles()) {
+    for (const { line, text } of sqlLinesOutsideFunctionBodies(path)) {
+      // A first non-space character of * / { is a C or JS comment. Postgres reads
+      // it as a syntax error, and `--` is the only comment it has.
+      if (/^\s*[*/{]/.test(text)) {
+        commentOffenders.push(`${path}:${line} ${text.trim().slice(0, 40)}`);
+      }
+    }
+  }
+  report(
+    'no migration uses a C-style comment marker where SQL needs --',
+    commentOffenders.length === 0,
+    commentOffenders.length
+      ? `Postgres stops with 42601 at the first one: ${commentOffenders.join('; ')}`
+      : 'a line starting with * or { outside a dollar-quoted body is a syntax error'
+  );
+}
+
+{
+  /**
+   * SQL with `--` comments removed.
+   *
+   * Not cosmetic. The 025 fix documents the expression it replaced, so the very
+   * pattern meant to be absent ("this used to be `bool_or((storage.foldername(…))`")
+   * appears verbatim in a comment explaining the change -- and the assertion that
+   * was supposed to prove the old code is gone instead failed on the sentence
+   * describing it. Asserting against commented-out SQL tests the prose, not the
+   * statement.
+   */
+  const sql = read('supabase/migrations/025_podcasts_storage_repair.sql')
+    .split('\n')
+    .map((l) => {
+      const at = l.indexOf('--');
+      return at === -1 ? l : l.slice(0, at);
+    })
+    .join('\n');
+
+  report(
+    'the 025 diagnosis resolves its bucket columns, it does not invent them',
+    /\(select b\.id\s+from storage\.buckets b where b\.id = 'podcasts'\)/.test(sql) &&
+      !/^\s*b\.id,\s*$/m.test(sql),
+    'it selected b.id and b.public with no FROM clause at all, which is 42P01 — and the naive fix, adding FROM storage.buckets b, returns ZERO rows exactly when the bucket is missing, so every other column would vanish in the one case being diagnosed'
+  );
+  report(
+    'the 025 diagnosis is one row whether or not the bucket exists',
+    /exists \(select 1 from storage\.buckets b where b\.id = 'podcasts'\)\s+as bucket_exists/.test(
+      sql
+    ) && !/^\s*from storage\.buckets b\s*;/m.test(sql)
+  );
+  report(
+    'the 025 path check reads the policy instead of a constant',
+    /p\.with_check like '%foldername%'/.test(sql) &&
+      !/bool_or\(\s*\(storage\.foldername\('episodes\/probe\.mp3'\)\)/.test(sql),
+    'that expression is constant — it never looks at the policy — so it reported the same answer whether the policy checked the path or not, and NULL when the policy was absent. A check that cannot fail is not a check.'
   );
 }
 

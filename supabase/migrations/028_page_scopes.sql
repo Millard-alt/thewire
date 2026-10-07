@@ -52,7 +52,7 @@
 -- SAFE TO RE-RUN. Every statement is idempotent, and the backfill only touches
 -- rows whose page_scope is still NULL.
 --
- * RUN IT AFTER 024, NEVER BEFORE, AND NEVER RE-RUN 024 AFTERWARDS.
+-- RUN IT AFTER 024, NEVER BEFORE, AND NEVER RE-RUN 024 AFTERWARDS.
 -- 024 still contains `create or replace function wire_credits_people_upsert(...,
 -- p_about_order)` -- the NINE-argument version. 028 drops that signature and
 -- creates the ten-argument one. Replaying 024 afterwards would re-create the

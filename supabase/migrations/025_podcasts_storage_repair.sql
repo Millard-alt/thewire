@@ -56,11 +56,29 @@
 
 -- -----------------------------------------------------------------------------
 -- STEP 1 — read-only diagnosis. Changes nothing.
+--
+-- ALWAYS RETURNS EXACTLY ONE ROW, and that is the whole design point.
+--
+-- This query originally selected `b.id` and `b.public` with NO FROM clause at
+-- all, so it failed with `42P01 missing FROM-clause entry for table "b"` and
+-- never diagnosed anything. The obvious repair — adding `FROM storage.buckets b`
+-- — would then have been WORSE in the one case that matters most: a missing
+-- bucket returns zero rows, so `bucket_exists`, `storage_policies`,
+-- `caller_is_staff` and everything else would all disappear, and the reader
+-- would see an empty result and learn nothing.
+--
+-- Hence scalar subqueries rather than a FROM: they yield NULL for the bucket
+-- columns and a row nonetheless, so the failure being investigated always
+-- reports itself.
 -- -----------------------------------------------------------------------------
 select
-  b.id,
-  b.public                                                        as is_public,
-  (b.id is not null)                                               as bucket_exists,
+  -- Bucket. NULL when it does not exist, which is the answer, not an error.
+  (select b.id       from storage.buckets b where b.id = 'podcasts') as bucket_id,
+  (select b.public   from storage.buckets b where b.id = 'podcasts') as is_public,
+  exists (select 1 from storage.buckets b where b.id = 'podcasts')  as bucket_exists,
+
+  -- How many of the three policies exist. 0 = never ran this file; 1 or 2 =
+  -- half-applied; 3 = healthy.
   (
     select count(*)
       from pg_policies p
@@ -68,25 +86,34 @@ select
        and p.tablename  = 'objects'
        and p.policyname in ('podcasts_read', 'podcasts_upload', 'podcasts_delete')
   )                                                               as storage_policies,
-  (
-    select bool_or(
-      (storage.foldername('episodes/probe.mp3'))[1] = 'episodes'
-    )
-      from pg_policies
-     where schemaname = 'storage' and tablename = 'objects' and policyname = 'podcasts_upload'
-  )                                                               as path_ok,
-  (
-    select public.is_staff()
-  )                                                               as caller_is_staff,
-  (
-    select public.current_account_id() is not null
-  )                                                               as session_resolves,
-  to_regclass('public.podcasts')                                   as podcasts_table,
-  (
-    select exists (
-      select 1 from pg_constraint where conname = 'podcasts_status_check'
-    )
-  )                                                               as podcasts_constraints_ok;
+
+  -- Does the upload policy actually constrain the path?
+  --
+  -- This used to be `bool_or((storage.foldername('episodes/probe.mp3'))[1] =
+  -- 'episodes')` over the policy rows. That expression is CONSTANT — it never
+  -- looks at the policy — so it reported the same true/false whether the policy
+  -- checked the folder or not, and reported NULL when the policy was absent. A
+  -- check that cannot fail is not a check. This one reads the policy's own
+  -- WITH CHECK clause: if it does not mention foldername, a writer could upload
+  -- anywhere in the bucket, including a path that overwrites the portrait bucket
+  -- convention.
+  coalesce((
+    select bool_or(p.with_check like '%foldername%')
+      from pg_policies p
+     where p.schemaname = 'storage'
+       and p.tablename  = 'objects'
+       and p.policyname = 'podcasts_upload'
+  ), false)                                                       as upload_policy_checks_path,
+
+  -- Who the SQL editor is talking to. false here with policies in place is the
+  -- other half of a refused upload: the policy is fine and the caller is not.
+  (select public.is_staff())                                      as caller_is_staff,
+  (select public.current_account_id() is not null)                as session_resolves,
+
+  to_regclass('public.podcasts')                                  as podcasts_table,
+  exists (
+    select 1 from pg_constraint where conname = 'podcasts_status_check'
+  )                                                              as podcasts_constraints_ok;
 
 -- -----------------------------------------------------------------------------
 -- STEP 2 — the repair. Idempotent; safe to run twice.
