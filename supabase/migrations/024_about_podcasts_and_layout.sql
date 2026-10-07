@@ -175,9 +175,16 @@ create policy podcasts_public_read on public.podcasts
 -- A writer files a submission. The WITH CHECK is the whole gate: it pins the
 -- status to 'pending' on the way IN, so a crafted request cannot self-approve,
 -- and it stamps the filer from the session rather than trusting a sent id.
+--
+-- NO ROLE CLAUSE, AND THAT IS CORRECT. This was `for insert to authenticated`,
+-- which made every writer submission impossible: the project has no Supabase Auth
+-- JWT, so requests arrive as `anon` and the policy matched nothing. Every other
+-- working policy in this repository names anon too -- articles_* in 007,
+-- interviews_* in 022. Corrected here as well as in 029 so that replaying this
+-- file cannot reintroduce the bug; see 029 for the full account.
 drop policy if exists podcasts_staff_submit on public.podcasts;
 create policy podcasts_staff_submit on public.podcasts
-  for insert to authenticated
+  for insert
   with check (
     public.is_staff()
     and status = 'pending'
@@ -187,9 +194,13 @@ create policy podcasts_staff_submit on public.podcasts
 -- The Owner edits anything: the description, the title, the audio, and the
 -- approve/reject decision. Writers get no UPDATE at all -- a writer who cannot
 -- approve must not be able to edit an approved row either.
+--
+-- This is also what permits the Owner's publish-now insert, whose status is
+-- 'approved' and which podcasts_staff_submit rejects on purpose. Permissive
+-- policies are OR'd, so is_owner() allows it.
 drop policy if exists podcasts_owner_all on public.podcasts;
 create policy podcasts_owner_all on public.podcasts
-  for all to authenticated
+  for all
   using (public.is_owner())
   with check (public.is_owner());
 
@@ -197,16 +208,20 @@ create policy podcasts_owner_all on public.podcasts
 -- 'pending' so it cannot be used to delete an episode that is already live.
 drop policy if exists podcasts_delete_own_pending on public.podcasts;
 create policy podcasts_delete_own_pending on public.podcasts
-  for delete to authenticated
+  for delete
   using (
     public.is_staff()
     and status = 'pending'
     and author_account_id = public.current_account_id()
   );
 
+-- `anon` IS the signed-in role in this architecture: it is the name PostgREST
+-- gives a request carrying no Supabase Auth session, which is all of them. RLS is
+-- only consulted after these privileges, so omitting anon here refuses the insert
+-- with "permission denied" before any policy is evaluated.
 grant select on public.podcasts to anon, authenticated;
-grant insert on public.podcasts to authenticated;
-grant update, delete on public.podcasts to authenticated;
+grant insert on public.podcasts to anon, authenticated;
+grant update, delete on public.podcasts to anon, authenticated;
 
 -- -----------------------------------------------------------------------------
 -- 3b. THE CREDITS RPC, REDEFINED TO CARRY A CATEGORY
@@ -428,7 +443,7 @@ create policy podcasts_read on storage.objects
 -- album, which is what this is for.
 drop policy if exists podcasts_upload on storage.objects;
 create policy podcasts_upload on storage.objects
-  for insert to authenticated
+  for insert
   with check (
     bucket_id = 'podcasts'
     and public.is_staff()
@@ -450,7 +465,7 @@ create policy podcasts_upload on storage.objects
 -- that is a decision about something already published.
 drop policy if exists podcasts_delete on storage.objects;
 create policy podcasts_delete on storage.objects
-  for delete to authenticated
+  for delete
   using (bucket_id = 'podcasts' and public.is_owner());
 
 commit;

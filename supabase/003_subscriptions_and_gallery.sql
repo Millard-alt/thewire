@@ -56,18 +56,26 @@ create policy "push_subscriptions_unsubscribe"
   using (true);
 
 -- Readers must NOT be able to enumerate other people's devices, so there is no
--- select policy for anon. Only active staff can read the registry.
+-- select policy granting the registry to everybody. Only active staff can read
+-- it.
+--
+-- `anon` IS NAMED, AND THAT IS THE POINT. This policy said `to authenticated`
+-- only, which made it unreachable rather than strict: this project has no Supabase
+-- Auth JWT, so every request arrives as role `anon` and the policy never matched.
+-- The `using (public.is_staff())` clause is the real gate and is unchanged --
+-- naming `anon` widens which roles are EVALUATED, never who is ALLOWED, so a
+-- reader still cannot enumerate anyone's devices. See 029.
 drop policy if exists push_subscriptions_staff_read on public.push_subscriptions;
 create policy "push_subscriptions_staff_read"
   on public.push_subscriptions for select
-  to authenticated
+  to anon, authenticated
   using (public.is_staff());
 
--- Staff may also clear a dead device record.
+-- Staff may also clear a dead device record. Same correction as above.
 drop policy if exists push_subscriptions_staff_delete on public.push_subscriptions;
 create policy "push_subscriptions_staff_delete"
   on public.push_subscriptions for delete
-  to authenticated
+  to anon, authenticated
   using (public.is_staff());
 
 grant insert, delete on public.push_subscriptions to anon, authenticated;

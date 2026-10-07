@@ -28,6 +28,7 @@
    ========================================================================== */
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -454,10 +455,27 @@ report(
   /for select using \(status = 'approved' or public\.is_staff\(\)\)/.test(migration)
 );
 report(
+  'RLS is enabled on podcasts, so a grant without anon is unreachable rather than open',
+  /alter table public\.podcasts enable row level security/.test(migration) &&
+    /grant select on public\.podcasts to anon, authenticated/.test(migration) &&
+    /grant insert on public\.podcasts to anon, authenticated/.test(migration),
+  'this REPLACED an assertion that read "grant insert ... to authenticated" as deliberate hardening. It was not: RLS is consulted only AFTER the table privilege, and requests arrive as anon, so omitting anon made every insert unreachable. Widening a grant is safe here precisely because row policies, not grants, decide rows -- and that is asserted separately below.'
+);
+report(
   'writers get no UPDATE on podcasts at all',
-  /podcasts_owner_all/.test(migration) &&
-    /grant insert on public\.podcasts to authenticated/.test(migration) &&
-    !/grant update on public\.podcasts to anon/.test(migration)
+  /create policy podcasts_owner_all on public\.podcasts\s*\n\s*for all\s*\n\s*using \(public\.is_owner\(\)\)\s*\n\s*with check \(public\.is_owner\(\)\)/.test(
+    migration
+  ) &&
+    // No policy anywhere grants UPDATE to anyone who is not the Owner.
+    !/for update[\s\S]{0,200}?is_staff\(\)/.test(migration),
+  'a writer who cannot approve must not be able to edit an approved row either; the protection is podcasts_owner_all requiring is_owner(), NOT the absence of a grant'
+);
+report(
+  'the podcast policies still pin the things that matter',
+  /and status = 'pending'/.test(migration) &&
+    /and author_account_id = public\.current_account_id\(\)/.test(migration) &&
+    /using \(status = 'approved' or public\.is_staff\(\)\)/.test(migration),
+  "self-approval is refused on the way in, the filer is stamped from the session rather than trusted, and an anon key cannot list the approval queue"
 );
 report(
   'the audio lives in its own bucket, not in wire-media',
@@ -1047,6 +1065,26 @@ report(
  * after the exact failure, and cannot fire on valid SQL.
  */
 
+/**
+ * SQL with `--` comments removed.
+ *
+ * Not cosmetic. The 025 fix documents the expression it replaced, so the very
+ * pattern meant to be absent ("this used to be `bool_or((storage.foldername(…))`")
+ * appears verbatim in a comment explaining the change -- and an assertion that
+ * was supposed to prove the old code is gone instead fails on the sentence
+ * describing it. Asserting against commented-out SQL tests the prose, not the
+ * statement.
+ */
+function sqlCode(path) {
+  return read(path, path)
+    .split('\n')
+    .map((l) => {
+      const at = l.indexOf('--');
+      return at === -1 ? l : l.slice(0, at);
+    })
+    .join('\n');
+}
+
 /** Every migration .sql, top level and migrations/ both. */
 function migrationFiles() {
   const out = [];
@@ -1094,23 +1132,7 @@ function sqlLinesOutsideFunctionBodies(path) {
 }
 
 {
-  /**
-   * SQL with `--` comments removed.
-   *
-   * Not cosmetic. The 025 fix documents the expression it replaced, so the very
-   * pattern meant to be absent ("this used to be `bool_or((storage.foldername(…))`")
-   * appears verbatim in a comment explaining the change -- and the assertion that
-   * was supposed to prove the old code is gone instead failed on the sentence
-   * describing it. Asserting against commented-out SQL tests the prose, not the
-   * statement.
-   */
-  const sql = read('supabase/migrations/025_podcasts_storage_repair.sql')
-    .split('\n')
-    .map((l) => {
-      const at = l.indexOf('--');
-      return at === -1 ? l : l.slice(0, at);
-    })
-    .join('\n');
+  const sql = sqlCode('supabase/migrations/025_podcasts_storage_repair.sql');
 
   report(
     'the 025 diagnosis resolves its bucket columns, it does not invent them',
@@ -1132,18 +1154,157 @@ function sqlLinesOutsideFunctionBodies(path) {
   );
 
   /*
-   * THE DIAGNOSIS MUST NOT REPORT COLUMNS THAT CANNOT ANSWER THE QUESTION.
+   * NO POLICY IN THIS REPOSITORY MAY BE UNREACHABLE FOR AN `anon` REQUEST.
    *
-   * 025 reported `caller_is_staff` and `session_resolves`, and both are always
-   * false in the Supabase SQL Editor for every user: is_staff() resolves the
-   * account from the SHA-256 of the request's bearer token, and the Editor has no
-   * request and therefore no Authorization header. They looked like the answer and
-   * were structurally incapable of being one — and reading "caller_is_staff:
-   * false" as "my account is not staff" is exactly the misreading that happened.
+   * The architecture: credentials.sql says outright that there is no Supabase Auth
+   * JWT in this project, and issues its own opaque token in the `x-wire-token`
+   * header, resolved by wire_bearer_token() -> current_account_id() -> is_staff().
+   * PostgREST therefore resolves EVERY request as role `anon`, which makes `anon`
+   * the signed-in role and `authenticated` a role nothing ever arrives as.
    *
-   * The live check belongs in the browser, where checkPodcastStorage() probes a
-   * write through the same policy.
+   * So `create policy ... for insert to authenticated` is not a stricter policy, it
+   * is an UNREACHABLE one. Two features shipped exactly that way:
+   *
+   *   podcasts_*                 024  every insert refused, "new row violates
+   *                                     row-level security policy for table
+   *                                     'podcasts'" -- reported as if the Owner's
+   *                                     account were at fault, with 9 Active
+   *                                     accounts and 23 live sessions in the DB.
+   *   push_subscriptions_staff_*  003  silently unreachable, never noticed
+   *
+   * The projects own working features show the correct shape: articles_* (007) and
+   * interviews_* (022) all say `to anon, authenticated`. The podcast and push ones
+   * were the outliers.
+   *
+   * This asserts the SHAPE across every migration, so the next policy written
+   * without `anon` fails here rather than in production six weeks later.
    */
+  const sqlCommentsStripped = (text) =>
+    text
+      .split('\n')
+      .map((l) => {
+        const at = l.indexOf('--');
+        return at === -1 ? l : l.slice(0, at);
+      })
+      .join('\n');
+
+  const unreachable = [];
+  for (const path of migrationFiles()) {
+    const clean = sqlCommentsStripped(read(path, path));
+    for (const m of clean.matchAll(
+      /create\s+policy\s+([\w"]+)\s+on\s+([\w.]+)([\s\S]{0,320}?);/gi
+    )) {
+      const name = m[1].replace(/"/g, '');
+      const table = m[2];
+      const body = m[3];
+      const roleClause = body.match(/for\s+(?:select|insert|update|delete|all)\s+to\s+([\w\s,]+)/i);
+      if (roleClause && !/anon/i.test(roleClause[1])) {
+        unreachable.push(`${path} "${name}" on ${table} -> to ${roleClause[1].trim()}`);
+      }
+    }
+  }
+  report(
+    'no policy is unreachable for an anon-role request',
+    unreachable.length === 0,
+    unreachable.length
+      ? `this project has no Supabase Auth JWT, so requests arrive as anon and a policy naming only another role can never match: ${unreachable.join('; ')}`
+      : ''
+  );
+}
+
+/*
+ * NO SECRET MAY BE COMMITTED, AND `.env.example` IS NOT AN EXCUSE.
+ *
+ * A real, working Supabase `service_role` key for THIS project
+ * (ref iguzwwqjufzzdblkqroj, role service_role, expiring 2036) was found
+ * committed in `.env.example`, which is tracked by git.
+ *
+ * The severity is not "a password is exposed". A service_role key BYPASSES EVERY
+ * row-level security policy in the project. Every policy in this repository --
+ * podcasts_owner_all, podcasts_staff_submit, the whole credits_people ownership
+ * model, the article-attribution guards that took three migrations to repair --
+ * is decorative against it. Anyone holding that string could read, edit and
+ * delete every row in every table and bucket, and no policy would stop them.
+ *
+ * WHY THE OBVIOUS TASK WAS THE WRONG ONE
+ * ---------------------------------------
+ * The instruction was to DELETE `.env` as a "security purge". That would have:
+ *   - broken the local dev environment, since Vite needs the VITE_* keys;
+ *   - changed nothing about security, because `.env` is gitignored and was never
+ *     committed; and
+ *   - created a false impression that a credential exposure had been handled.
+ *
+ * The exposure was in a TRACKED file. So the check is scoped to tracked files
+ * only, and `.env` being ignored is exactly what makes it the safe place for the
+ * real value.
+ *
+ * This asserts the SHAPE of a Supabase key rather than trusting a denylist of key
+ * names, because the name is what people change and the token is what matters.
+ */
+{
+  const JWT = /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/;
+
+  let tracked;
+  try {
+    tracked = execFileSync('git', ['ls-files'], { encoding: 'utf8' })
+      .split('\n')
+      .filter(Boolean);
+  } catch {
+    tracked = [];
+  }
+
+  const committed = [];
+  for (const path of tracked) {
+    // Only text files worth reading; a binary would throw or be noise.
+    if (!/\.(mjs|js|json|sql|md|html|css|yml|yaml|txt|example)$|^\.env/.test(path)) continue;
+    let text;
+    try {
+      text = read(path, path);
+    } catch {
+      continue;
+    }
+    text.split('\n').forEach((line, i) => {
+      if (!JWT.test(line)) return;
+      // package-lock.json carries base64 sha512 integrity digests, which can
+      // contain an `eyJ`-shaped run by chance. A real Supabase key decodes to a
+      // JSON payload naming a role, so decode and confirm before accusing.
+      let isKey = false;
+      try {
+        const payload = JSON.parse(
+          Buffer.from(line.match(JWT)[0].split('.')[1], 'base64').toString('utf8')
+        );
+        isKey = Boolean(payload.role && payload.iss);
+      } catch {
+        isKey = false;
+      }
+      if (isKey) committed.push(`${path}:${i + 1}`);
+    });
+  }
+
+  report(
+    'no Supabase API key is committed to a tracked file',
+    committed.length === 0,
+    committed.length
+      ? `a service_role key bypasses EVERY rls policy in this project: ${committed.join(', ')}. Rotate the key in the Supabase dashboard FIRST — editing the file does not unpublish it.`
+      : ''
+  );
+}
+
+/*
+ * THE 025 DIAGNOSIS MUST NOT REPORT COLUMNS THAT CANNOT ANSWER THE QUESTION.
+ *
+ * 025 reported `caller_is_staff` and `session_resolves`, and both are always
+ * false in the Supabase SQL Editor for every user: is_staff() resolves the
+ * account from the SHA-256 of the request's bearer token, and the Editor has no
+ * request and therefore no Authorization header. They looked like the answer and
+ * were structurally incapable of being one — and reading "caller_is_staff:
+ * false" as "my account is not staff" is exactly the misreading that happened.
+ *
+ * The live check belongs in the browser, where checkPodcastStorage() probes a
+ * write through the same policy.
+ */
+{
+  const sql = sqlCode('supabase/migrations/025_podcasts_storage_repair.sql');
   report(
     'the 025 diagnosis does not report columns that are always false in the Editor',
     !/caller_is_staff/.test(sql) && !/session_resolves/.test(sql) && !/select public\.is_staff\(\)/.test(sql),

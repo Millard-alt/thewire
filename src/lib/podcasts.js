@@ -58,6 +58,35 @@ function displayName() {
   return String(user?.name || user?.username || 'A contributor').trim() || 'A contributor';
 }
 
+/**
+ * The signed-in account's `staff_accounts.id`, or null.
+ *
+ * WHY THE PODCAST ROW NEEDS THIS AT ALL, given it also stores a name
+ * -----------------------------------------------------------------
+ * Storing a name is right for DISPLAY -- a submission must still read correctly
+ * after the account is renamed or removed. But the insert policy is
+ *
+ *     with check (is_staff() and status = 'pending'
+ *                  and author_account_id = current_account_id())
+ *
+ * and neither insert path ever sent `author_account_id`. It is a nullable column,
+ * so the row was written with NULL -- and `NULL = current_account_id()` is NULL,
+ * not true, so the policy refused the insert. A writer submission could NEVER
+ * succeed: the refusal was reported as a generic "The submission was refused by
+ * the server", which is the least informative sentence available for a
+ * misconfigured policy.
+ *
+ * `author_name` is free text, so a row with a NULL `author_account_id` also cannot
+ * be withdrawn by its author afterwards, and cannot be attributed to an account
+ * at all. The id is what makes the row knowable.
+ *
+ * @returns {string|null} a uuid, or null when not signed in
+ */
+function accountId() {
+  const id = getSession()?.user?.id;
+  return typeof id === 'string' && id.length > 0 ? id : null;
+}
+
 /** @param {File} file @returns {string} an error message, or '' when fine */
 export function validateAudioFile(file) {
   if (!file) return 'Choose an MP3 from your device first.';
@@ -459,6 +488,10 @@ export async function submitPodcast({ title, description = '', file, durationSec
       storage_path: path,
       duration_seconds: seconds,
       status: 'pending',
+      // Required by podcasts_staff_submit. See accountId(): without it the
+      // policy's `author_account_id = current_account_id()` is NULL and the insert
+      // is refused, so this line is what makes writer submissions possible at all.
+      author_account_id: accountId(),
       author_name: who
     })
     .select()
@@ -468,7 +501,12 @@ export async function submitPodcast({ title, description = '', file, durationSec
     // The row failed, so the object is orphaned. Remove it rather than leaving
     // an unplayable file accruing in a bucket nobody will ever list.
     await client.storage.from(BUCKET).remove([path]).catch(() => {});
-    return { ok: false, message: 'The submission was refused by the server.' };
+    return {
+      ok: false,
+      message: accountId()
+        ? `The submission was refused by the server. ${error.message}`
+        : 'You need to be signed in as an active staffer to file an episode.'
+    };
   }
 
   return { ok: true, podcast: data };
@@ -657,6 +695,16 @@ export async function publishPodcast({
         ? Math.round(Number(durationSeconds))
         : null,
       status: 'approved',
+      // The Owner's publish-now path. `status = 'pending'` is deliberately NOT
+      // satisfied here, and podcasts_staff_submit forbids self-approval by design;
+      // this row is permitted by podcasts_owner_all instead, whose WITH CHECK is
+      // is_owner(). Permissive policies are OR'd, so the Owner's insert is allowed
+      // even though the writer policy rejects it -- which is the intended shape.
+      //
+      // author_account_id is still sent, because it is what lets the Owner's own
+      // published episodes be attributed and later edited by the same code path
+      // that edits an approved row.
+      author_account_id: accountId(),
       author_name: who
     })
     .select()
