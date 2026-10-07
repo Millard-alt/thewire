@@ -52,7 +52,7 @@ export function renderAuthSlot(session, { onOpenAdmin } = {}) {
         aria-label="Press login. Press members only."
       >
         <i class="fa-solid fa-right-to-bracket" aria-hidden="true"></i>
-        <span>Press Login</span>
+        <span class="auth-slot__text">Press Login</span>
       </button>
     `;
     slot.querySelector('#open-auth')?.addEventListener('click', openAuthModal);
@@ -76,7 +76,7 @@ export function renderAuthSlot(session, { onOpenAdmin } = {}) {
       isAdmin
         ? `<button type="button" id="open-admin" class="btn btn-primary">
              <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
-             <span>Admin Panel</span>
+             <span class="auth-slot__text">Admin Panel</span>
            </button>`
         : `<span class="badge badge-neutral" title="Signed in with reader access">
              <i class="fa-solid fa-user" aria-hidden="true"></i> Reader

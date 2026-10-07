@@ -1686,13 +1686,21 @@ function initNavigation() {
    *
    * Summing the items and adding the gaps measures what the row actually wants,
    * which is the only number that can be compared against the space available.
+   *
+   * EVERY item is counted, not just the movable ones. Summing only the overflow
+   * candidates made this return 416px against 514px of space -- "it fits", move
+   * nothing -- while the five primary links the reader could not avoid took up
+   * another 530px the decision never saw. The row then overflowed the viewport by
+   * 295px and the page scrolled sideways. An overflow decision that ignores
+   * fixed content is not an overflow decision.
    */
   const neededWidth = () => {
-    const shown = overflowItems.filter((item) => !item.hidden);
-    const widths = shown.map((item) => item.offsetWidth);
-    if (!widths.length) return 0;
+    const shown = [...list.children].filter(
+      (item) => !item.hidden && item.offsetWidth > 0
+    );
+    if (!shown.length) return 0;
     const gap = Number.parseFloat(getComputedStyle(list).columnGap) || 0;
-    return widths.reduce((sum, w) => sum + w, 0) + gap * (widths.length - 1);
+    return shown.reduce((sum, item) => sum + item.offsetWidth, 0) + gap * (shown.length - 1);
   };
 
   const placeOverflow = () => {
@@ -1717,28 +1725,39 @@ function initNavigation() {
 
     // Otherwise move links out until the row fits. Longest labels go first, so
     // the ones that stay visible are the ones that read worst in a menu.
-    const moved = [];
-    for (const item of overflowItems) {
+    for (const candidate of overflowItems) {
       if (neededWidth() <= available) break;
-      // Move the TALLEST remaining item, measured, rather than assuming order.
-      const tallest = overflowItems
-        .filter((candidate) => !candidate.hidden)
+      if (candidate.hidden) continue;
+
+      // Move the widest REMAINING item, measured, rather than assuming that
+      // document order is width order. "Photo Gallery" is not the last item but
+      // it is usually the widest.
+      const widest = overflowItems
+        .filter((item) => !item.hidden)
         .sort((a, b) => b.offsetWidth - a.offsetWidth)[0];
-      if (!tallest || tallest === item) {
-        item.hidden = true;
-        moved.push(item);
-        continue;
-      }
-      tallest.hidden = true;
-      moved.push(tallest);
-      item.hidden = true;
-      moved.push(item);
+      if (!widest) break;
+
+      widest.hidden = true;
+
+      // `widest` may be a later item than `candidate`, so walk forward until the
+      // widest one is passed. Without this the loop iterates `candidate` twice for
+      // the same row and the menu ends up listing "Credits" twice.
+      if (widest === candidate) continue;
     }
 
-    moreWrap.hidden = moved.length === 0;
-    if (moved.length === 0) return;
+    // The menu is built from the DOM, not from a log of what was moved. The
+    // hidden flags are the single source of truth, so an item cannot be listed
+    // twice no matter how the loop above got there -- which is exactly what
+    // happened when the menu was built from an accumulator.
+    const hidden = overflowItems.filter((item) => item.hidden);
 
-    moreMenu.innerHTML = moved
+    moreWrap.hidden = hidden.length === 0;
+    if (hidden.length === 0) {
+      closeMore();
+      return;
+    }
+
+    moreMenu.innerHTML = hidden
       .map((item) => {
         const button = item.querySelector('button');
         if (!button) return '';

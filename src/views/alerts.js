@@ -143,11 +143,33 @@ function gateMarkup(permission) {
 
 /**
  * Show the instructions, then ask for permission from the reader's tap.
+ *
+ * `deliberate` is the whole fix for a dead button.
+ *
+ * The prompt is suppressed once a reader has answered -- it used to reappear on
+ * every article opened, which was its own bug. But that guard was applied to
+ * DELIBERATE clicks too, so after answering once the "Turn on alerts" button did
+ * nothing at all: no dialog, no toast, no permission request, and no console
+ * error. It looked exactly like an unwired button, and the toast on dismissal
+ * ("You can turn alerts on any time from the header") was a lie, because the
+ * header button hit the same silent return.
+ *
+ * So: a tap is a request and always does something. Only the automatic prompt is
+ * allowed to be quiet, because nobody asked for it.
+ *
+ * @param {{deliberate?: boolean}} [options]
  * @returns {Promise<boolean>} true once notifications are permitted
  */
-export async function ensureAlertPermission() {
+export async function ensureAlertPermission({ deliberate = false } = {}) {
   const permission = push.getPermission();
-  if (permission === 'granted') return true;
+  if (permission === 'granted') {
+    if (deliberate) {
+      showToast('Alerts are already on for this device.', { type: 'info' });
+      push.startBroadcastPolling();
+    }
+    return true;
+  }
+
   if (!config.pushBroadcastsEnabled) {
     showToast('The owner has paused alerts for now.', { type: 'info' });
     return false;
@@ -161,12 +183,67 @@ export async function ensureAlertPermission() {
     });
     return false;
   }
-  if (hasAnswered()) return false;
+
+  if (hasAnswered() && !deliberate) {
+    // Quiet is correct here: nobody asked, so there is nothing to report.
+    return false;
+  }
+
+  // A browser permission that is already 'denied' cannot be re-requested from
+  // script -- the promise resolves 'denied' without ever prompting. So a reader
+  // who taps the button again gets the INSTRUCTIONS, not a request that cannot
+  // possibly work. Saying "still blocked" is the honest outcome; showing the
+  // same silent failure again is what caused this report.
+  if (deliberate && permission === 'denied') {
+    const dialog = byId(GATE_ID);
+    if (dialog) {
+      const body = byId('alert-gate-body');
+      if (body) body.innerHTML = gateMarkup(permission);
+      dialog.classList.remove('hidden');
+      dialog.removeAttribute('aria-hidden');
+
+      return new Promise((resolve) => {
+        const finish = () => {
+          dialog.classList.add('hidden');
+          dialog.setAttribute('aria-hidden', 'true');
+          document.removeEventListener('keydown', onKey);
+          resolve(false);
+        };
+        const onKey = (event) => {
+          if (event.key === 'Escape') finish();
+        };
+        // Re-offered on a tap, so the buttons are live again -- the ones bound on
+        // first display were removed when that pass closed.
+        byId('alert-gate-allow')?.addEventListener('click', finish);
+        byId('alert-gate-dismiss')?.addEventListener('click', finish);
+        document.addEventListener('keydown', onKey);
+      });
+    }
+
+    showInstructions('Notifications are blocked for this site');
+    showToast(
+      'Your browser is blocking notifications for this site. Allow them in the padlock beside the address bar, then tap again.',
+      { type: 'error', duration: 9000 }
+    );
+    return false;
+  }
 
   const dialog = byId(GATE_ID);
   if (!dialog) {
     // No dialog in the DOM — ask directly rather than trapping the reader.
-    return (await push.requestPermission()) === 'granted';
+    const asked = await push.requestPermission().catch((error) => {
+      console.warn('[alerts] permission request failed', error);
+      return 'denied';
+    });
+    if (asked === 'granted') {
+      showToast('Alerts are on for this device.', { type: 'success' });
+      return true;
+    }
+    showToast(
+      'Alerts could not be turned on. Your browser may be blocking notifications for this site.',
+      { type: 'error', duration: 8000 }
+    );
+    return false;
   }
 
   const body = byId('alert-gate-body');
@@ -300,13 +377,22 @@ function renderOptInBar() {
     </div>
   `;
 
+  // `deliberate: true` -- this is a tap on the button, not the automatic prompt,
+  // so it must act even for a reader who has answered before. And the result is
+  // awaited with a catch: the handler used to discard the promise, so any
+  // rejection inside it became an unhandled rejection with nothing on screen.
   byId('alert-optin-button')?.addEventListener('click', () => {
     if (isBlocker) {
       showInstructions('Blocked by your ad blocker');
       return;
     }
 
-    ensureAlertPermission();
+    ensureAlertPermission({ deliberate: true }).catch((error) => {
+      console.warn('[alerts] opting in failed', error);
+      showToast('Alerts could not be turned on just now. Please try again.', {
+        type: 'error'
+      });
+    });
   });
 
   // Un-hide only now that there is a real bar to show.

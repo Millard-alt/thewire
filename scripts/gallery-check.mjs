@@ -84,6 +84,41 @@ function overflow(page) {
   );
 }
 
+/**
+ * Navigate to the gallery the way a reader does, at whatever width this is.
+ *
+ * Wide viewports: tap the inline nav link.
+ * Narrow viewports: the links live in a modal drawer that COVERS the inline nav,
+ * so the entry is tapped from inside the drawer instead.
+ *
+ * Returns true if a tap actually happened, so a caller can tell "navigated" from
+ * "the destination was unreachable" rather than silently continuing.
+ */
+async function openGalleryFromNav(page) {
+  const toggle = await page.$("#mobile-nav-toggle");
+  if (toggle && (await toggle.isVisible())) {
+    await toggle.click();
+    await page.waitForTimeout(400);
+
+    // Prefer the drawer's own entry; fall back to the inline link only if the
+    // drawer somehow did not contain it.
+    const inDrawer = await page.$("#nav-drawer [data-nav='gallery'], #nav-drawer a[href='#gallery']");
+    if (inDrawer && (await inDrawer.isVisible())) {
+      await inDrawer.click();
+      return true;
+    }
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+  }
+
+  const inline = await page.$("[data-nav='gallery']");
+  if (inline && (await inline.isVisible())) {
+    await inline.click();
+    return true;
+  }
+  return false;
+}
+
 const browser = await chromium.launch();
 try {
   /* --- 1. the gallery door, and that it opens the gallery page --- */
@@ -107,16 +142,20 @@ try {
     check("the nav still opens the gallery page", Boolean(navButton));
 
     if (navButton) {
-      // At 390px the primary links sit behind the Menu disclosure, so a real
-      // user opens that first. Skipping it left the button unclickable and the
-      // test timed out on its visibility wait rather than on the navigation.
-      const menuToggle = await page.$("#mobile-nav-toggle");
-      if (menuToggle && (await menuToggle.isVisible())) {
-        await menuToggle.click();
-        await page.waitForTimeout(400);
-      }
-
-      await navButton.click();
+      /*
+       * At 390px the links are NOT behind an inline disclosure any more: they
+       * live in a modal drawer, which COVERS the inline nav button. So the old
+       * "click the hamburger, then click the nav button" sequence no longer
+       * works -- the drawer is on top, and the second click waits forever for a
+       * button that is no longer hit-testable.
+       *
+       * What a reader actually does now is open the drawer and tap the entry
+       * inside it, which is what this does -- and it has the side benefit of
+       * asserting the destination is really IN the drawer rather than assuming
+       * it.
+       */
+      const opened = await openGalleryFromNav(page);
+      if (!opened) check("the drawer opens the gallery page", false, "no reachable entry");
       await page.waitForTimeout(900);
 
       const cards = await page.$$("[data-gallery-category]");
@@ -242,14 +281,9 @@ try {
     await page.waitForTimeout(1000);
     const door = await page.$("[data-nav=gallery]");
     if (door) {
-      // The nav links sit behind the mobile Menu disclosure at this width, so a
-      // real reader opens that first.
-      const menuToggle = await page.$("#mobile-nav-toggle");
-      if (menuToggle && (await menuToggle.isVisible())) {
-        await menuToggle.click();
-        await page.waitForTimeout(400);
-      }
-      await door.click();
+      // See the first site: at this width the drawer covers the inline nav, so
+      // the entry has to be tapped from inside the drawer.
+      await openGalleryFromNav(page);
       await page.waitForTimeout(900);
     }
     const cardNames = await page.$$eval("[data-gallery-category]", (els) =>

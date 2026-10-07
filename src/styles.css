@@ -55,6 +55,14 @@
     --surface: var(--color-paper);
     --surface-raised: #ffffff;
     --surface-sunken: var(--color-paper-dark);
+    /* Team member cards. A hair lighter than --surface-raised in dark mode and a
+       hair off --surface-raised in light mode, so a card reads as a card sitting
+       ON the page rather than as a hole cut in it. Defined here rather than
+       hardcoded in .about-card/.credits-card because the two themes need
+       different values and the site really does ship both -- the requested
+       #18181b / #27272a pair is the DARK half. */
+    --surface-card: #faf8f5;
+    --surface-card-edge: color-mix(in srgb, var(--color-ink) 14%, transparent);
     --rule: color-mix(in srgb, var(--color-ink) 85%, transparent);
     --rule-soft: color-mix(in srgb, var(--color-ink) 18%, transparent);
     --text: var(--color-ink);
@@ -72,6 +80,10 @@
     --surface: #12100e;
     --surface-raised: #1b1815;
     --surface-sunken: #0c0a09;
+    /* The dark half of the team-member card surface, one step above
+       --surface-raised so a card does not flatten into the page behind it. */
+    --surface-card: #18181b;
+    --surface-card-edge: #27272a;
     --rule: color-mix(in srgb, #f7f4ec 82%, transparent);
     --rule-soft: color-mix(in srgb, #f7f4ec 16%, transparent);
     --text: #f2ede2;
@@ -90,12 +102,31 @@
   html {
     scroll-behavior: smooth;
     -webkit-text-size-adjust: 100%;
+    /*
+     * `max-width: 100%` only. NOT `overflow-x: hidden`, and that omission is
+     * deliberate:
+     *
+     *   • It does not fix anything. It clips the overflow and lets the document
+     *     keep its true scroll width, so a layout that is 295px too wide still
+     *     reports 295px too wide -- it just stops the reader seeing it. The bug
+     *     that shipped (a nav row wider than a phone) would have been invisible
+     *     in exactly the way that let it reach production.
+     *
+     *   • It breaks `position: sticky` for the masthead nav in some engines,
+     *     because an `overflow` other than `visible` on an ancestor turns it
+     *     into the scroll container for its descendants.
+     *
+     * The real fix is to make the row fit, which is what the rules below do.
+     * `box-sizing: border-box` is already global via Tailwind's preflight.
+     */
+    max-width: 100%;
   }
 
   body {
     background-color: var(--surface);
     color: var(--text);
     font-family: var(--font-body);
+    max-width: 100%;
     transition:
       background-color 280ms var(--ease-out-expo),
       color 280ms var(--ease-out-expo);
@@ -1883,246 +1914,130 @@ class because the ratio is the whole point.
   }
 }
 
-/* --- member card ----------------------------------------------------------- */
-
-/* Sharp corners, thin border, plain background, everything left-aligned. The
-   hover/focus treatment is a hard offset shadow rather than a colour change, so
-   it reads as a pressed key and cannot be missed by a keyboard user. */
-.credits-card {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 1rem;
-  /* A fixed neutral-700 border on a near-black surface was almost invisible too,
-     so the card lost its edge and the name floated on nothing. Derived from
-     --text-muted so it is a visible hairline in dark and unchanged in light. */
-  border: 1px solid color-mix(in srgb, var(--text-muted, #666) 55%, transparent);
-  border-radius: 0;
-  background: transparent;
-  transition:
-    box-shadow 120ms ease,
-    border-color 120ms ease;
-}
-
-.credits-card:hover,
-.credits-card:focus-within {
-  border-color: var(--band, var(--color-newsred, #c8102e));
-  box-shadow: 4px 4px 0 0 var(--band, var(--color-newsred, #c8102e));
-}
-
-.credits-card__avatar {
-  flex: 0 0 auto;
-  width: 3rem;
-  height: 3rem;
-  border-radius: 999px;
-  overflow: hidden;
-  object-fit: cover;
-  background: color-mix(in srgb, var(--text-muted, #666) 18%, transparent);
-}
-
-.credits-card__avatar--empty {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: color-mix(in srgb, var(--text-muted, #666) 18%, transparent);
-  color: var(--text-muted);
-}
-
-.credits-card__body {
-  min-width: 0;
-  text-align: left;
-}
-
-.credits-card__name {
-  font-family: var(--font-headline, inherit);
-  font-size: 1rem;
-  font-weight: 700;
-  text-align: left;
-  /* THE BUG. This was var(--color-ink, inherit). --color-ink is a fixed
-     LIGHT-mode literal (#18130f, near-black) declared once in @theme and never
-     redefined under .dark, so in dark mode every name was drawn near-black on
-     the near-black --surface (#12100e): invisible. --text is the theme-aware
-     token (near-black in light, #f2ede2 in dark), so light mode is unchanged
-     and dark mode finally has contrast. */
-  color: var(--text);
-}
-
-.credits-card__blurb {
-  margin-top: 0.25rem;
-  font-size: 0.75rem;
-  line-height: 1.4;
-  text-align: left;
-  /* Same class of bug: neutral-400 is a fixed Tailwind grey with no dark-mode
-     value. --text-muted is the semantic token (#5a544b light, #a9a196 dark). */
-  color: var(--text-muted);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .credits-card {
-    transition: none;
-  }
-}
-
-/* --- Owner panel: the reorderable role bands ------------------------------ */
-
-/* One draggable-looking block per role in the Credits tab. The border picks up
-   the role colour so the Owner recognises the same band they see on the page. */
-.credits-band-editor {
-  --band: #c8102e;
-  margin-bottom: 1.5rem;
-  border-radius: 0.875rem;
-  border: 1px solid color-mix(in srgb, var(--band) 30%, transparent);
-  background: color-mix(in srgb, var(--band) 5%, transparent);
-  padding: 0.75rem;
-}
-
-.credits-band-editor__head {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-  padding: 0.25rem;
-}
-
-.credits-band-editor__name {
-  font-family: var(--font-headline, inherit);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--band) 70%, var(--text, #111));
-}
-
-.credits-band-editor__count {
-  font-size: 0.6875rem;
-  color: var(--text-muted, #666);
-}
-
-/* Move buttons sit on the right on desktop, and wrap to a full-width pair on a
-   phone, where a 32px target is too small to hit reliably. */
-.credits-band-editor__moves {
-  margin-left: auto;
-  display: flex;
-  gap: 0.25rem;
-}
-
-@media (width < 30rem) {
-  .credits-band-editor__moves {
-    margin-left: 0;
-    width: 100%;
-  }
-
-  .credits-band-editor__moves > button {
-    flex: 1 1 0;
-    justify-content: center;
-  }
-}
-
 /* =============================================================================
-   ABOUT US
+   TEAM MEMBER CARDS + ROLE PILLS
    -----------------------------------------------------------------------------
-   Two rosters on one page. The hero is the loudest thing on the site on purpose:
-   it is the first line a visitor reads about the paper, and it should not
-   compete with the news for attention once they scroll into it.
+   WHAT CHANGED AND WHY
+   ---------------------
+   The role badge was `background: var(--role-colour); color: #fff` � a solid
+   slab of whatever colour the Owner picked, set in cramped uppercase. Three
+   separate problems with that:
+
+     1. UNREADABLE BY CONSTRUCTION. The Owner picks from a colour wheel with no
+        contrast guidance, and `color: #fff` was hardcoded. #b45309 and #7c2d12
+        are dark enough that white text on them fails WCAG AA outright. The
+        renderer now lightens the accent until it clears 4.5:1 � see
+        `rolePalette()` in src/lib/credits.js.
+     2. TOO LOUD. A full-width saturated block next to a name makes the badge
+        the first thing read and the person the second, which is backwards on a
+        roster page. The colour is now a 12% wash with a faint edge, and only the
+        TEXT carries the accent.
+     3. SQUEEZED. It sat inline against the name, so a long title like
+        "ASSISTANT PRESIDENT/COORDINATOR" wrapped inside the pill and broke the
+        card's vertical rhythm. The pill is now a block-level element directly
+        under the name, so it wraps as text on its own line.
+
+   The `--role-accent` / `--role-wash` / `--role-edge` custom properties are set
+   INLINE by `paletteVars()`, and every value here has a `var(--x, fallback)`
+   default. That is deliberate: a row with no colour, or a colour that is not a
+   hex, must still render as a legible pill rather than collapsing to
+   transparent text on a dark card.
    ========================================================================== */
-.about-hero {
-  border-block: 1px solid var(--rule);
-  padding-block: 2.5rem 2rem;
-  margin-bottom: 2rem;
+
+/* --- the pill --------------------------------------------------------------- */
+
+.role-pill {
+  /*
+    The Owner's colour, as a wash.
+
+    TWO ACCENTS, ONE PER THEME. `rolePalette()` in src/lib/credits.js emits both a
+    light-surface and a dark-surface variant, each already nudged until it clears
+    4.5:1, because contrast depends on the colour VALUES and only JS can compute
+    that. The first version emitted one accent tuned for the dark card and lightened
+    everything against it — which produced 1.79:1 pills in light mode. The theme
+    picks here.
+
+    Every value has a `var(--x, fallback)` default so a row with no colour, or a
+    colour that is not a hex, still renders as a legible pill rather than
+    collapsing to transparent text on a dark card.
+  */
+  --role-accent-light: #a51a24;
+  --role-accent-dark: #ff8f85;
+  --role-accent: var(--role-accent-light);
+  --role-wash: color-mix(in srgb, var(--role-solid, #c8102e) 12%, transparent);
+  --role-edge: color-mix(in srgb, var(--role-solid, #c8102e) 28%, transparent);
+
+  display: inline-block;
+  max-width: 100%;
+  margin-top: 0.375rem;
+  padding: 4px 10px;
+  border: 1px solid var(--role-edge);
+  border-radius: 9999px;
+  background: var(--role-wash);
+  color: var(--role-accent);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 1.35;
+  text-transform: uppercase;
+
+  /*
+    LONG TITLES WRAP, AND THEY WRAP INSIDE THE PILL.
+    "ASSISTANT PRESIDENT/COORDINATOR" is 30 characters and a pill has no natural
+    break, so `anywhere` is what lets it fold at all. The alternative �
+    `overflow-wrap: normal` � pushes the text out past the card's padding, which
+    is exactly the "breaks the card margins" complaint this replaced.
+  */
+  overflow-wrap: anywhere;
+
+  /*
+    A pill is decoration around a role, not an interactive control, so it must
+    not look selectable. Without this it inherits the cursor from a parent that
+    may be clickable, implying an action that does not exist.
+  */
+  cursor: default;
 }
 
-.about-hero__title {
-  margin-top: 0.75rem;
-  font-family: var(--font-headline, Georgia, serif);
-  font-size: clamp(1.75rem, 5vw, 3rem);
-  font-weight: 900;
-  line-height: 1.05;
-  letter-spacing: -0.01em;
-  text-wrap: balance;
-}
-
-.about-mission {
-  max-width: 46rem;
-}
-
-.about-mission__tagline {
-  margin-top: 0.5rem;
+/* The Owner panel's live preview of the same pill, beside the colour picker. */
+.role-pill--preview {
+  margin-top: 0;
+  /* Larger target than the public 12px so the Owner can judge it, same colours
+     and same wrap behaviour so what they judge is what readers get. */
   font-size: 0.8125rem;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--color-newsred);
 }
 
-.dark .about-mission__tagline {
-  color: var(--color-newsgold-bright);
+/* The dark half of the pill. A separate rule rather than a token swap because
+   `--role-accent` is also the thing `paletteVars()` writes inline per person, and
+   overriding that inline value from a theme selector needs enough specificity to
+   win. */
+.dark .role-pill {
+  --role-accent: var(--role-accent-dark, #ff8f85);
 }
 
-.about-mission__sub {
-  margin-top: 1.75rem;
-  font-family: var(--font-headline, Georgia, serif);
-  font-size: 1.125rem;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.about-mission__body {
-  margin-top: 0.5rem;
-  color: var(--text-muted);
-  line-height: 1.7;
-  max-width: 40rem;
-}
-
-.about-roster {
-  margin-top: 2.5rem;
-}
-
-.about-roster__heading {
-  font-family: var(--font-headline, Georgia, serif);
-  font-size: 1.25rem;
-  font-weight: 900;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding-bottom: 0.5rem;
-  border-bottom: 2px solid var(--color-newsred);
-  margin-bottom: 1.25rem;
-}
-
-.dark .about-roster__heading {
-  border-bottom-color: var(--color-newsgold-bright);
-}
-
-.about-grid {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
-}
+/* --- the card --------------------------------------------------------------- */
 
 .about-card {
   display: flex;
-  gap: 0.875rem;
+  gap: 1.25rem;
   align-items: flex-start;
-  padding: 1rem;
-  background: var(--surface-raised);
-  border: 1px solid var(--rule-soft);
-  border-radius: 0.5rem;
+  padding: 1.25rem;
+  background: var(--surface-card, #18181b);
+  border: 1px solid var(--surface-card-edge, #27272a);
+  border-radius: 12px;
 }
 
-/* Square and shrink-proof, so one non-square upload cannot make the whole grid
-   ragged -- the same constraint .staff-portrait already carries. */
 .about-card__photo {
-  width: 4rem;
-  height: 4rem;
+  /* Square and shrink-proof, so one non-square upload cannot make the whole grid
+     ragged -- the same constraint .staff-portrait already carries. 72px rather
+     than the old 64px because the card is now roomier and a 64px face beside an
+     18px name reads as a thumbnail rather than a portrait. */
+  width: 72px;
+  height: 72px;
   flex-shrink: 0;
-  border-radius: 0.375rem;
+  border-radius: 10px;
   object-fit: cover;
-  background: var(--surface-sunken);
+  background: var(--surface-sunken, #0f0f11);
 }
 
 .about-card__photo--empty {
@@ -2131,74 +2046,138 @@ class because the ratio is the whole point.
 }
 
 .about-card__initials {
-  font-size: 1rem;
+  font-size: 1.125rem;
   font-weight: 900;
-  color: var(--text-muted);
+  color: var(--text-muted, #a1a1aa);
 }
 
 .about-card__body {
+  /* The column that has to shrink. Without this a long name or a long role title
+     pushes the card wider than its grid track instead of wrapping inside it. */
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .about-card__name {
-  font-family: var(--font-headline, Georgia, serif);
-  font-size: 1rem;
-  font-weight: 800;
-  line-height: 1.2;
+  font-size: 1.125rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--text, #f4f4f5);
+  overflow-wrap: anywhere;
 }
 
 .about-card__role {
-  display: inline-block;
+  /* The pill owns its own margin and layout; this rule only exists so the About
+     card and the Credits card can target the same element if they ever need to
+     differ. */
   margin-top: 0.375rem;
-  background: var(--role-colour, #1d4ed8);
-  color: #fff;
 }
 
 .about-card__note {
   margin-top: 0.5rem;
-  font-size: 0.8125rem;
-  line-height: 1.5;
-  color: var(--text-muted);
+  font-size: 0.875rem;
+  font-style: italic;
+  line-height: 1.4;
+  color: var(--text-muted, #a1a1aa);
+}
+
+/* --- the Credits card ------------------------------------------------------- */
+
+/*
+   The Credits page groups people under ROLE bands, so its card is the same
+   surface and the same avatar as the About card but carries no pill � the band
+   heading immediately above already names the role in its own colour. Two shapes
+   for two page structures; one visual language for both.
+*/
+.credits-card {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 1.25rem;
+  background: var(--surface-card, #18181b);
+  border: 1px solid var(--surface-card-edge, #27272a);
+  border-radius: 12px;
+  transition:
+    box-shadow 120ms ease,
+    border-color 120ms ease;
+}
+
+.credits-card:hover,
+.credits-card:focus-within {
+  /* The band's accent, as a rail rather than a slab � a 3px line can carry a
+     saturated colour without competing with the role. */
+  border-color: var(--band, var(--color-newsred, #c8102e));
+  box-shadow: 3px 3px 0 0 var(--band, var(--color-newsred, #c8102e));
+}
+
+.credits-card__avatar {
+  flex: 0 0 auto;
+  width: 72px;
+  height: 72px;
+  border-radius: 10px;
+  overflow: hidden;
+  object-fit: cover;
+  background: color-mix(in srgb, var(--text-muted, #a1a1aa) 18%, transparent);
+}
+
+.credits-card__avatar--empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--text-muted, #a1a1aa) 18%, transparent);
+  color: var(--text-muted, #a1a1aa);
+}
+
+.credits-card__body {
+  min-width: 0;
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.credits-card__name {
+  font-size: 1.125rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: left;
+  color: var(--text, #f4f4f5);
+  overflow-wrap: anywhere;
+}
+
+.credits-card__blurb {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  font-style: italic;
+  line-height: 1.4;
+  text-align: left;
+  color: var(--text-muted, #a1a1aa);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Below 380px a 72px avatar plus a 1.25rem gap is a third of the row before the
+   name gets a word in, so the two stack. */
+@media (width < 24rem) {
+  .about-card,
+  .credits-card {
+    flex-direction: column;
+    gap: 0.875rem;
+  }
 }
 
 /* =============================================================================
-   OWNER PANEL — ROSTER SCOPE SWITCHER (Credits page + the two About sections)
+   OWNER PANEL - ABOUT US / CREDITS SECTION HEADINGS
+   -----------------------------------------------------------------------------
+   The `.credits-scope` button row is gone with the scope switcher: About Us and
+   Credits are two real tabs now, so there is nothing left to switch between
+   inside a tab. What is left is the heading each tab puts above a group.
    ========================================================================== */
-.credits-scope {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.credits-scope__btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.75rem;
+.about-scope-note {
   font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  border: 1px solid var(--rule);
-  border-radius: 999px;
   color: var(--text-muted);
-  background: transparent;
-  cursor: pointer;
-  transition: color 160ms ease, border-color 160ms ease;
 }
-
-.credits-scope__btn[aria-pressed='true'] {
-  color: var(--accent-contrast);
-  background: var(--color-newsred);
-  border-color: var(--color-newsred);
-}
-
-.credits-scope__count {
-  padding-inline: 0.375rem;
-  border-radius: 999px;
-  font-size: 0.6875rem;
-  background: color-mix(in srgb, currentColor 18%, transparent);
-}
-
 /* =============================================================================
    OWNER PANEL — "LATEST COVERAGE" LAYOUT
    -----------------------------------------------------------------------------
@@ -2732,6 +2711,79 @@ class because the ratio is the whole point.
     display: flex;
   }
   .nav-bar__burger,
+  .nav-bar__wordmark {
+    display: none;
+  }
+}
+
+/* =============================================================================
+   HEADER FITTING — why the page scrolled sideways on a phone
+   -----------------------------------------------------------------------------
+   Measured, not guessed. On a 390px viewport the header row was 406px wide:
+   the burger and wordmark took 184px, and .nav-bar__tools could not shrink
+   because its contents were all `flex-shrink: 0` -- a 132px "Press Login"
+   button, the search button and the theme switch. The page then scrolled
+   horizontally by 15px at 390, 45px at 360 and 85px at 320, which is what
+   "clipping at about 80% width" looked like.
+
+   The fix keeps `flex-shrink: 0` on the ICON controls, where it belongs: an
+   icon is already as narrow as it can usefully be, and letting one squash just
+   moves the problem. What is allowed to shrink is the wordmark and the auth
+   slot's TEXT, because both have a sensible narrow form:
+     • the wordmark truncates with an ellipsis, and below 22rem it steps aside
+       entirely so the controls are never crowded;
+     • the auth button drops its label and keeps its icon, which is the same
+       pattern the account menu already used for the signed-in name.
+
+   Every one of these keeps an accessible name: the auth button carries an
+   aria-label, and the wordmark's text is the brand.
+   ========================================================================== */
+.nav-bar__tools,
+.nav-bar__links {
+  min-width: 0;
+}
+
+#auth-slot {
+  min-width: 0;
+}
+
+.nav-bar__wordmark {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Shrinkable, unlike the controls beside it: the wordmark has a legible
+     narrow form (an ellipsis), a button does not. */
+  flex-shrink: 1;
+}
+
+#open-auth,
+#open-admin {
+  max-width: 100%;
+  min-width: 0;
+}
+
+@media (width < 30rem) {
+  /* Icon-only. The aria-label on the button carries the full meaning, and the
+     icon is the same affordance the desktop version has. */
+  .auth-slot__text {
+    display: none;
+  }
+
+  .nav-bar {
+    gap: 0.5rem;
+    padding-inline: 0.75rem;
+  }
+
+  .nav-bar__tools {
+    gap: 0.25rem;
+  }
+}
+
+@media (width < 22rem) {
+  /* At this width the controls need every pixel: the masthead block above
+     already carries the full title, so the compact repeat steps aside rather
+     than pushing the theme toggle off-screen. */
   .nav-bar__wordmark {
     display: none;
   }

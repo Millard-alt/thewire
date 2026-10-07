@@ -289,6 +289,139 @@ try {
       bands.every((b) => b.members > 0),
       JSON.stringify(bands)
     );
+
+    /* --- 6. THE TWO PAGES ARE SEPARATE, IN THE PANEL AND ON SCREEN ---
+     *
+     * Everything above exercises the Credits page. These check that the About Us
+     * page is its own tab with its own fields, that a Credits card cannot acquire
+     * an About heading, and that the two survive each other.
+     */
+    await page.click('[data-admin-tab="about"]');
+    await page.waitForTimeout(1200);
+
+    const aboutPanel = await page.evaluate(() => ({
+      sections: [...document.querySelectorAll("[data-about-section]")].map((el) =>
+        el.dataset.aboutSection.trim()
+      ),
+      names: [...document.querySelectorAll("[data-credits-name]")].map((i) => i.value),
+      // Every About card must offer a roster; that is the field the Credits card
+      // deliberately does not have.
+      categorySelects: document.querySelectorAll("[data-credits-category]").length,
+      forms: document.querySelectorAll("[data-credits-form]").length,
+      scopes: [...document.querySelectorAll("[data-credits-form]")].map(
+        (f) => f.dataset.rosterScope
+      ),
+      // The bleed, as an editable field: a Credits-only card must have no way to
+      // pick a heading.
+      creditsOnlyPageField: document.body.innerText.includes("Credits page"),
+      previewHref: document.querySelector('a[href="#about"]')?.getAttribute("href")
+    }));
+    check(
+      "About Us renders both rosters as sections",
+      aboutPanel.sections.length === 2,
+      aboutPanel.sections.join(" | ")
+    );
+    check(
+      "the About tab is a separate tab, not a filter on the Credits one",
+      aboutPanel.previewHref === "#about",
+      `preview href=${aboutPanel.previewHref}`
+    );
+    check(
+      "every About card carries the scope it belongs to",
+      aboutPanel.scopes.length === 0 || aboutPanel.scopes.every((s) => s === "about_us"),
+      aboutPanel.scopes.join(",")
+    );
+    check(
+      "every About card offers a roster",
+      aboutPanel.categorySelects === aboutPanel.forms && aboutPanel.forms > 0,
+      `${aboutPanel.categorySelects} select(s) / ${aboutPanel.forms} card(s)`
+    );
+    check(
+      "the About tab does NOT list the Credits-page-only entries",
+      !aboutPanel.names.includes("School Athletic Association"),
+      aboutPanel.names.join(", ")
+    );
+
+    // Add somebody to About Us, then confirm they did NOT turn up on Credits.
+    await page.fill("#credits-add-name", "Grace Testbyliner");
+    await page.fill("#credits-add-role", "Assistant President/Coordinator");
+    await page.selectOption("#credits-add-category", "Behind the Bylines");
+    await page.click("#credits-add-form button[type=submit]");
+    await page.waitForTimeout(1600);
+
+    const afterAboutAdd = await page.evaluate(() => ({
+      onAbout: [...document.querySelectorAll("[data-credits-name]")].map((i) => i.value),
+      // The long title is the wrap case the pill exists for. Matched
+      // case-insensitively: `text-transform: uppercase` is a CSS effect, so
+      // textContent is still the Owner's original casing and an uppercase match
+      // finds nothing.
+      longBadge: [...document.querySelectorAll(".role-pill")]
+        .map((b) => b.textContent.trim())
+        .find((t) => /assistant president/i.test(t))
+    }));
+    check(
+      "a new About Us entry appears on the About tab",
+      afterAboutAdd.onAbout.includes("Grace Testbyliner"),
+      afterAboutAdd.onAbout.join(", ")
+    );
+    check(
+      "a long role title renders as a pill, not a broken block",
+      Boolean(afterAboutAdd.longBadge),
+      `pill="${afterAboutAdd.longBadge}"`
+    );
+
+    await page.click('[data-admin-tab="credits"]');
+    await page.waitForTimeout(1200);
+    const creditsAfter = await page.evaluate(() => ({
+      names: [...document.querySelectorAll("[data-credits-name]")].map((i) => i.value),
+      categorySelects: document.querySelectorAll("[data-credits-category]").length
+    }));
+    check(
+      "the About Us entry did NOT leak onto the Credits tab",
+      !creditsAfter.names.includes("Grace Testbyliner"),
+      creditsAfter.names.join(", ")
+    );
+    check(
+      "no Credits card offers a roster select",
+      creditsAfter.categorySelects === 0,
+      `${creditsAfter.categorySelects} select(s) found`
+    );
+
+    /* --- 7. AND THE PUBLIC PAGES AGREE WITH THE PANEL --- */
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(700);
+    const publicPages = await page.evaluate(async () => {
+      const click = (sel) => document.querySelector(sel)?.click();
+      const out = {};
+      click('[data-nav="about"]');
+      await new Promise((r) => setTimeout(r, 1500));
+      out.about = [...document.querySelectorAll(".about-card__name")]
+        .map((n) => n.textContent.trim())
+        .filter(Boolean);
+      out.aboutCards = document.querySelectorAll(".about-card").length;
+      click('[data-nav="credits"]');
+      await new Promise((r) => setTimeout(r, 1500));
+      out.credits = [...document.querySelectorAll(".credits-card__name")]
+        .map((n) => n.textContent.trim())
+        .filter(Boolean);
+      return out;
+    });
+
+    check(
+      "the About page shows the entry the Owner filed there",
+      publicPages.about.includes("Grace Testbyliner"),
+      publicPages.about.join(", ")
+    );
+    check(
+      "the Credits page shows only Credits people",
+      publicPages.credits.length > 0 && !publicPages.credits.includes("Grace Testbyliner"),
+      publicPages.credits.join(", ")
+    );
+    check(
+      "the two pages share no card",
+      !publicPages.credits.some((n) => publicPages.about.includes(n)),
+      `about=[${publicPages.about.join(",")}] credits=[${publicPages.credits.join(",")}]`
+    );
   }
   await page.close();
 } finally {

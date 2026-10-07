@@ -64,6 +64,7 @@ const EXPECTED = {
     'broadcasts',
     'curation',
     'staff',
+    'about',
     'credits',
     'accounts',
     'changelog',
@@ -75,11 +76,18 @@ const EXPECTED = {
 /**
  * Tabs only the Owner may open.
  *
- * `credits` is here because the Credits page was remade as a hand-curated page:
- * the Owner adds a photo, a name, a free-text role and a colour, and the entries
- * are contributors rather than accounts. Nobody but the Owner adds, edits or
- * removes them, and supabase/009_credits_page.sql enforces the same rule server
- * side so a leaked key is no help.
+ * `credits` and `about` are here because both public pages are hand-curated: the
+ * Owner adds a photo, a name, a free-text role and a colour, and the entries are
+ * contributors rather than accounts. Nobody but the Owner adds, edits or removes
+ * them, and supabase/009_credits_page.sql (with page_scope from 028) enforces
+ * the same rule server side so a leaked key is no help.
+ *
+ * BOTH roster tabs, not just `credits`. That omission shipped once already: the
+ * About Us tab was added with `ownerOnly: true` in the app and then forgotten
+ * here, so this suite — the thing that exists to catch exactly that — reported
+ * a failure against a correctly gated tab and nothing else. The list is the
+ * reminder, so it has to be updated when a tab is added, which is why it is a
+ * literal list rather than derived from the app.
  *
  * `podcasts` is here for a different reason, and the distinction matters. A writer
  * SUBMITS an episode -- the door for that is on the Interviews tab, which every
@@ -92,6 +100,7 @@ const OWNER_ONLY = [
   'changelog',
   'branding',
   'security',
+  'about',
   'credits',
   'podcasts'
 ];
@@ -123,14 +132,19 @@ try {
     await page.waitForTimeout(700);
 
     const username = ACCOUNTS[role];
-    await signIn(page, username, PASSWORD);
-    await page.waitForTimeout(1200);
+    const signedIn = await signIn(page, username, PASSWORD);
 
     // Confirm the app resolved the role we expect, so a wrong demo account
     // fails loudly here instead of passing by accident.
-    const liveRole = await page.evaluate(() => {
+    const live = await page.evaluate(() => {
       const raw = localStorage.getItem('wire.demoSession');
-      return raw ? JSON.parse(raw)?.role : null;
+      if (!raw) return null;
+      try {
+        const s = JSON.parse(raw);
+        return { role: s?.role, username: s?.user?.username ?? null };
+      } catch {
+        return null;
+      }
     });
     if (DEBUG) {
       const dump = await page.evaluate(() => ({
@@ -141,9 +155,28 @@ try {
       console.log(`[debug ${role}] demoSession = ${dump.demoSession}`);
       console.log(`[debug ${role}] localStorage keys = ${dump.keys.join(', ')}`);
     }
-    if (liveRole !== role) {
+    if (live?.role !== role) {
+      // Name BOTH halves of the failure. "role null" means no session was ever
+      // written; a wrong role for the right username is a different bug; and a
+      // session for a different username is a third. Collapsing them into one
+      // message is what made this file's flakiness so hard to diagnose — every
+      // run reported the same indistinguishable line.
+      let because;
+      if (!live) {
+        because =
+          ' -- no session was written at all. The app can repaint the dialog ' +
+          'after the fields are filled, so submit saw empty ones and answered ' +
+          '"Enter both your username and password." See the note in signIn().';
+      } else if (live.username && live.username !== username) {
+        because =
+          ` -- wire.demoSession holds a DIFFERENT account ("${live.username}"), ` +
+          'so the sign-in dialog was driven with stale input.';
+      } else {
+        because = '';
+      }
       throw new Error(
-        `demo account "${username}" resolved to role "${liveRole}", expected "${role}". ` +
+        `demo account "${username}" resolved to role "${live?.role ?? 'null'}", ` +
+          `expected "${role}"${because} ` +
           'Check VITE_ADMIN_USERNAMES in .env.demo, or set TEST_OWNER/TEST_MANAGER/TEST_EDITOR.'
       );
     }
@@ -342,6 +375,25 @@ process.exit(failed.length || consoleProblems.length ? 1 : 0);
  * server when running this against real credentials.
  */
 async function signIn(page, username, password) {
+  // WAIT FOR THE APP TO FINISH BOOTING FIRST.
+  //
+  // `wire.state.v1` is written by the store on first load. Opening the auth dialog
+  // before that lands means `renderAuthSlot()` repaints the dialog's inputs AFTER
+  // the test has typed into them, and the values go into a node that is then
+  // replaced by an empty one.
+  //
+  // That is not a theory: the submit handler rejects with "Enter both your
+  // username and password." — i.e. the fields really were empty at the moment of
+  // the click. Diagnosed by dumping the toast after a failed run, which said
+  // exactly that, while `localStorage` held no session and the console held no
+  // error. The symptom looks like "sign-in is flaky" and the cause is a repaint
+  // losing the input.
+  await page
+    .waitForFunction(() => Boolean(localStorage.getItem('wire.state.v1')), null, {
+      timeout: 20000
+    })
+    .catch(() => null);
+
   // The Login button is rendered by renderAuthSlot() after the app boots, so it
   // is not in the static HTML. Wait for it rather than assuming it already exists.
   const trigger = await page
@@ -353,7 +405,82 @@ async function signIn(page, username, password) {
   await trigger.click();
 
   await page.waitForSelector('#auth-signin-login', { timeout: 5000 });
-  await page.fill('#auth-signin-login', username);
-  await page.fill('#auth-signin-password', password);
+
+  /**
+   * Type into a field and CONFIRM it stuck, retrying once.
+   *
+   * The dialog repaints for reasons of its own (the app keeps the auth slot in
+   * step with the live session, and a slow boot can land after the dialog opens),
+   * so a single `fill()` is a coin flip on a loaded machine. Reading the value back
+   * turns a silent failure -- a submit with empty fields, and an error toast about
+   * a password nobody typed -- into either a retry or an accurate error.
+   */
+  const fillVerified = async (selector, value) => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await page.fill(selector, value);
+      const readBack = await page.inputValue(selector).catch(() => '');
+      if (readBack === value) return true;
+    }
+    return false;
+  };
+
+  const nameOk = await fillVerified('#auth-signin-login', username);
+  const passOk = await fillVerified('#auth-signin-password', password);
+
+  if (!nameOk || !passOk) {
+    // Read the dialog's own message, because that is what the reader would see and
+    // it names the real cause.
+    const toast = await page
+      .locator('[role="alert"], .toast')
+      .first()
+      .textContent()
+      .catch(() => '');
+    throw new Error(
+      `the sign-in fields would not hold "${username}"` +
+        `${passOk ? '' : ' / password'} after three attempts. ` +
+        `Dialog says: ${JSON.stringify((toast || '').trim())}`
+    );
+  }
+
   await page.click('#auth-form-signin button[type="submit"]');
+
+  /*
+   * WAIT FOR THE SESSION RATHER THAN SLEEPING FOR IT.
+   *
+   * This was `waitForTimeout(1200)`. Sign-in is asynchronous -- the demo path
+   * writes the session after a round trip -- so under load 1200ms was sometimes
+   * not enough and the caller read `role: null`.
+   *
+   * There is deliberately NO retry loop here. An earlier attempt did verify the
+   * signed-in identity and retry from a clean dialog, and it introduced a second,
+   * worse failure: re-opening the dialog while the auth slot was still settling
+   * meant `#auth-signin-login` sometimes never became visible, so the suite failed
+   * in a NEW place instead of an old one. Fixing a flaky suite by making it flaky
+   * somewhere else is not a fix.
+   *
+   * See the note above `signIn()` for what is known about the underlying race:
+   * the app can repaint the dialog's inputs after they have been typed into, so
+   * the submit sees empty fields and answers "Enter both your username and
+   * password." The verified fill below narrows that window; it does not close it,
+   * because the cause is in the app's boot sequence and out of scope here.
+   */
+  const settled = await page
+    .waitForFunction(
+      () => {
+        try {
+          return Boolean(JSON.parse(localStorage.getItem('wire.demoSession'))?.role);
+        } catch {
+          return false;
+        }
+      },
+      null,
+      { timeout: 15000 }
+    )
+    .then(() => true)
+    .catch(() => false);
+
+  // Named so the caller's error says WHICH half of the postcondition failed: no
+  // session at all, versus a session for somebody else.
+  if (!settled) return false;
+  return true;
 }

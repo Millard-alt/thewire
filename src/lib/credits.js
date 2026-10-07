@@ -1,27 +1,42 @@
 /* =============================================================================
-   src/lib/credits.js — THE CREDITS PAGE
+   src/lib/credits.js — THE CREDITS PAGE AND THE ABOUT US PAGE
    -----------------------------------------------------------------------------
-   The public "Credits" page: only the people the Owner has chosen to list, in the
-   order they chose, each with a role, a role colour and a photo.
+   TWO PUBLIC PAGES, ONE TABLE, AND A COLUMN THAT KEEPS THEM APART.
 
-   It reads the `credits_people` table (migration 009), NOT `staff`. That
-   distinction is the whole point of the feature:
+   `/credits` lists the people who made the paper. `/about` lists the board and
+   the bylines. They used to share one roster, and "which page is this row on?"
+   was answered by a NULL `category` column that the VIEW then filtered on. That
+   produced two bugs this module is now built to make impossible:
 
-     * An account does not put you on the Credits page. The Owner does. Someone
-       can be credited without ever signing in — a photographer, a designer, a
-       patron — and someone with an account can be left off entirely.
-     * `staff` holds e-mail and shadow addresses, so a page reading it would need
-       a SECURITY DEFINER view purely to avoid leaking them. `credits_people`
-       holds only what the page already shows.
+     1. THE BLEED. `listCredits()` selected every row and let the renderer
+        decide. The Credits page shipped board members' names, role colours,
+        notes and photos to the browser and dropped them client-side, so they
+        were in the page source for a page the reader was not on. Filtering in
+        the browser is a convention, not a boundary.
+
+     2. THE AMBIGUITY. "No category" had to mean both "not on About yet" and
+        "deliberately Credits only". Promoting somebody to the board therefore
+        also demoted them from the Credits page, which nobody asked for.
+
+   `page_scope` (migration 028) says which page a row belongs to, is NOT NULL,
+   is CHECK-constrained, and is enforced against `category` so the two can never
+   disagree. Every public read below filters on it in the QUERY.
+
+   THE BYLINE PORTRAIT CACHE IS DELIBERATELY NOT SCOPED
+   -----------------------------------------------------
+   `primePortraits()` builds the face cache used next to bylines, for people who
+   have no staff profile. It reads BOTH scopes. If it were scoped to `credits`,
+   every reporter listed on the About page would silently lose their portrait
+   next to their bylines -- a regression on the front page, caused by a change
+   to a page nobody was looking at. `listAllPeople()` exists for exactly this.
 
    `role_label` is free text and `role_color` is a hex triplet, so the Owner can
-   invent a role that does not exist anywhere else and give it its own colour.
-   Two people sharing a role colour is normal, which is what "Copy role colour"
-   is for.
+   invent a role that exists nowhere else and give it its own colour. Two people
+   sharing a role colour is normal, which is what "Copy role colour" is for.
 
    ONLY THE OWNER CAN WRITE. There is no insert/update/delete policy on the
    table — RLS denies by default — so every save goes through a SECURITY DEFINER
-   function that calls `is_owner()` first. An anon key cannot change this page.
+   function that calls `is_owner()` first. An anon key cannot change either page.
    ========================================================================== */
 
 import { getSupabase } from './supabase.js';
@@ -32,9 +47,48 @@ import { escapeHtml, safeUrl, imageFallbackAttr } from './dom.js';
 import { updateStaff } from './store.js';
 
 /**
+ * The two pages a row can belong to.
+ *
+ * EXACTLY ONE per row. A person who must appear on both pages is TWO rows --
+ * one per scope -- edited and ordered independently. This is the visible
+ * consequence of migration 028 and it is the intended behaviour, not a
+ * compromise.
+ *
+ * Constrained in three places, deliberately: the CHECK constraint on
+ * `credits_people.page_scope` (migration 028), the guard in
+ * `wire_credits_people_upsert`, and `normaliseScope()` here.
+ *
+ * @type {readonly ['about_us', 'credits']}
+ */
+export const PAGE_SCOPES = ['about_us', 'credits'];
+
+/** Human label for a scope, used in Owner-panel headings and errors. */
+const SCOPE_LABELS = { about_us: 'About Us', credits: 'Credits' };
+
+/**
+ * Fold a scope onto one this app knows.
+ *
+ * Deliberately forgiving about spelling -- 'about', 'About Us', 'ABOUT_US' all
+ * land on `about_us` -- because this is the first thing that runs when the Owner
+ * saves, and a rejected scope would be a rejection of a label the Owner can see
+ * in the UI. Anything unrecognised falls back to `credits`, the older and larger
+ * page, rather than to null: null would mean "belongs to neither page", which
+ * is not a state the schema permits.
+ *
+ * @param {unknown} value
+ * @returns {'about_us'|'credits'}
+ */
+export function normaliseScope(value) {
+  const wanted = String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (!wanted) return 'credits';
+  if (wanted === 'about_us' || wanted === 'about' || wanted === 'aboutus') return 'about_us';
+  return 'credits';
+}
+
+/**
  * Set when a roster read failed because `credits_people` does not exist yet.
- * Migration 009 has to be run in the Supabase SQL Editor before any of this can
- * work, and an empty page gives the Owner no way to tell that apart from
+ * Migrations 009 and 028 have to be run in the Supabase SQL Editor before any of
+ * this can work, and an empty page gives the Owner no way to tell that apart from
  * "nobody is on the page yet". The flag lets the UI say which it is.
  */
 let migrationMissing = false;
@@ -63,10 +117,16 @@ function isMissingSchema(error) {
 function describe(error, what) {
   const text = String(error?.message || '');
   if (error?.code === '42883' || /wire_credits_people_/.test(text)) {
-    return 'The newsroom server is missing the credits page. Run supabase/009_credits_page.sql in the Supabase SQL editor.';
+    return 'The newsroom server is missing the roster. Run supabase/migrations/009_credits_page.sql, then supabase/migrations/028_page_scopes.sql, in the Supabase SQL editor.';
   }
   if (/only the Owner can change the Credits page/.test(text)) {
-    return 'Only the Owner can change the Credits page.';
+    return 'Only the Owner can change this page.';
+  }
+  if (/unknown page scope/.test(text)) {
+    return 'That page was not recognised. Reload the page and try again.';
+  }
+  if (/needs a category/.test(text)) {
+    return 'An About Us entry needs a category: Board Members or Behind the Bylines.';
   }
   if (/role colour/.test(text)) {
     return 'The role colour must be a hex colour such as #1d4ed8.';
@@ -81,16 +141,92 @@ function describe(error, what) {
 /* Public roster                                                               */
 /* -------------------------------------------------------------------------- */
 
+/** Every column either page or the Owner panel needs, in one place. */
+const PERSON_COLUMNS =
+  'id, name, role_label, role_color, blurb, portrait_url, sort_order, category, about_order, page_scope';
+
 /**
- * Everyone the Owner has listed, in the Owner's chosen order.
+ * Read rows for ONE page.
  *
- * Rows come back snake_case because that is what the table stores. The public
- * renderer reads them as-is, and the byline portrait index needs `name` and
- * `portrait_url`, which kept their original column names.
+ * `page_scope` is filtered IN THE QUERY, not afterwards. That is the entire
+ * point of migration 028 and the reason this is a separate function rather than
+ * one reader with a `.filter()` on the result: a client-side filter still ships
+ * the whole table to the browser, which is how the Credits page ended up
+ * carrying the board's photographs in its HTML.
  *
+ * @param {'about_us'|'credits'} scope
  * @returns {Promise<Array<object>>} empty array when the table is missing
  */
+async function listPeopleInScope(scope) {
+  const wanted = normaliseScope(scope);
+
+  if (config.demoMode) return demoRoster().filter((row) => normaliseScope(row.page_scope) === wanted);
+
+  const client = getSupabase();
+  if (!client) return [];
+
+  const { data, error } = await client
+    .from('credits_people')
+    .select(PERSON_COLUMNS)
+    .eq('page_scope', wanted)
+    // The About page is ordered by its OWN column (about_order); the Credits page
+    // by sort_order. One integer serving both lists would mean promoting
+    // somebody to the board also reshuffled a published page.
+    .order(wanted === 'about_us' ? 'about_order' : 'sort_order', { ascending: true })
+    .order('name', { ascending: true });
+
+  if (error) {
+    // Migration 009 or 028 not applied yet. An empty page is a far better
+    // failure for a reader than a wall of console noise.
+    migrationMissing = isMissingSchema(error);
+    console.warn(`[credits] could not load the ${SCOPE_LABELS[wanted]} page`, error);
+    return [];
+  }
+  migrationMissing = false;
+  return data || [];
+}
+
+/**
+ * The Credits page roster: `page_scope = 'credits'` and nothing else.
+ *
+ * Board members and bylines are NOT here and cannot leak in — the query cannot
+ * return a row whose scope is `about_us`, whatever the renderer does next.
+ *
+ * @returns {Promise<Array<object>>}
+ */
 export async function listCredits() {
+  return listPeopleInScope('credits');
+}
+
+/**
+ * The About Us page roster: `page_scope = 'about_us'` and nothing else.
+ *
+ * Grouping by category happens in `loadAboutRoster()`, one level up, because the
+ * section headings are a presentation concern; this is just the scoped read.
+ *
+ * @returns {Promise<Array<object>>}
+ */
+export async function listAboutPeople() {
+  return listPeopleInScope('about_us');
+}
+
+/**
+ * EVERY row, both scopes, unscoped.
+ *
+ * USED BY EXACTLY TWO THINGS, both of which need the whole table:
+ *
+ *   1. `primePortraits()`, the byline face cache. A reporter on the About page
+ *      with no staff profile gets their portrait next to their bylines from
+ *      HERE. Scoping this to `credits` would strip the faces off the front page.
+ *   2. `listCreditsForOwner()`, because the Owner panel needs to see everything
+ *      before deciding which page a row belongs on.
+ *
+ * Nothing public calls it. If you are adding a page reader, use
+ * `listCredits()` or `listAboutPeople()` instead.
+ *
+ * @returns {Promise<Array<object>>}
+ */
+export async function listAllPeople() {
   if (config.demoMode) return demoRoster();
 
   const client = getSupabase();
@@ -98,17 +234,14 @@ export async function listCredits() {
 
   const { data, error } = await client
     .from('credits_people')
-    .select(
-      'id, name, role_label, role_color, blurb, portrait_url, sort_order, category, about_order'
-    )
+    .select(PERSON_COLUMNS)
+    .order('page_scope', { ascending: true })
     .order('sort_order', { ascending: true })
     .order('name', { ascending: true });
 
   if (error) {
-    // Migration 009 not applied yet. An empty credits page is a far better
-    // failure for a reader than a wall of console noise.
     migrationMissing = isMissingSchema(error);
-    console.warn('[credits] could not load the page', error);
+    console.warn('[credits] could not load the roster', error);
     return [];
   }
   migrationMissing = false;
@@ -118,15 +251,9 @@ export async function listCredits() {
 /**
  * The About Us page, grouped into its two rosters.
  *
- * Reads the SAME table as the Credits page rather than a parallel one: the six
- * fields a team card needs are the six fields a credits entry already has, and a
- * second table would mean a second uploader, a second avatar fallback, a second
- * colour picker and a second delete path in the Owner panel for identical data.
- *
- * Rows with no category are Credits-page-only and are excluded here. Ordering is
- * `about_order` -- the About page's OWN position column, deliberately not
- * `sort_order`, which orders the Credits page. One integer serving both lists
- * would mean promoting somebody to the board also reshuffled a published page.
+ * Reads `page_scope = 'about_us'` only. Rows with no category cannot appear
+ * here at all — the database CHECK forbids an `about_us` row without one — so
+ * the two sections below are guaranteed to cover every row that was fetched.
  *
  * Never rejects. A reader landing on /about with the database unreachable gets an
  * empty roster and a heading that says so, not a blank page.
@@ -135,7 +262,7 @@ export async function listCredits() {
  *   one entry per category, in ABOUT_CATEGORIES order, always all of them
  */
 export async function loadAboutRoster() {
-  const people = await listCredits();
+  const people = await listAboutPeople();
   return ABOUT_CATEGORIES.map((category) => ({
     category,
     people: people
@@ -168,17 +295,29 @@ export function renderAbout(mount) {
  * then the neutral glyph (imageFallbackAttr covers a URL that 404s), then the
  * initials. The third is a server render rather than an onerror swap because it
  * needs the name, which the browser does not have.
+ *
+ * THE ROLE BADGE IS A PILL, NOT A BLOCK
+ * -------------------------------------
+ * It used to be `background: var(--role-colour); color: #fff` — a solid slab of
+ * whatever colour the Owner picked, which is unreadable for every dark role
+ * colour and shouts at the reader. Now the colour is a WASH: a 12%-alpha
+ * background, a faint border, and the accent only on the text. The Owner's
+ * colour still identifies the role; it just stops competing with the name.
+ *
+ * The accent is lightened until it passes 4.5:1 against the card, because the
+ * Owner picks from a colour wheel with no contrast guidance and #1d4ed8 on
+ * #18181b is 2.1:1. See `rolePalette()`.
  */
 function aboutCard(person) {
   const url = safeUrl(person.portrait_url);
   const name = String(person.name || '').trim() || 'Team member';
   const role = String(person.role_label || '').trim();
-  const colour = normaliseColour(person.role_color) || '#1d4ed8';
   const note = String(person.blurb || '').trim();
+  const palette = rolePalette(person.role_color);
 
   const photo = url
     ? `<img class="about-card__photo" src="${escapeHtml(url)}" ${imageFallbackAttr()}
-         alt="${escapeHtml(name)}" width="96" height="96" loading="lazy" decoding="async" />`
+         alt="${escapeHtml(name)}" width="72" height="72" loading="lazy" decoding="async" />`
     : `<span class="about-card__photo about-card__photo--empty" aria-hidden="true">
          <span class="about-card__initials">${escapeHtml(initialsOf(name))}</span>
        </span>`;
@@ -190,9 +329,9 @@ function aboutCard(person) {
         <p class="about-card__name">${escapeHtml(name)}</p>
         ${
           role
-            ? `<span class="badge about-card__role" style="--role-colour:${escapeHtml(
-                colour
-              )}">${escapeHtml(role)}</span>`
+            ? `<span class="role-pill about-card__role"${
+                palette ? paletteVars(palette) : ''
+              }>${escapeHtml(role)}</span>`
             : ''
         }
         ${note ? `<p class="about-card__note">${escapeHtml(note)}</p>` : ''}
@@ -285,28 +424,19 @@ function initialsOf(name) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * The full Credits page as the Owner sees it, for editing.
+ * Everything, both scopes, for the Owner panel.
  *
- * Same table the public page reads, plus `sort_order` for reordering. There is
- * deliberately no second "roster" concept: if the Owner can see it here, it is
- * on the page, and if it is on the page, it is editable here.
+ * The panel is deliberately the ONE reader that is not scoped. It has to see a
+ * row in order to decide which page the row belongs on, so a scoped read here
+ * would make entries unreachable rather than tidy. Every PUBLIC read is scoped;
+ * this one is not, and that asymmetry is the design.
  *
  * @returns {Promise<Array<object>>} empty array when unreadable
  */
 export async function listCreditsForOwner() {
-  return listCredits();
+  return listAllPeople();
 }
 
-/**
- * Add someone to the Credits page.
- *
- * Note there is no `auth_user_id` and no account is created. That is the point:
- * the Credits page is a page about people, not about who can log in. A
- * photographer who has never opened the site belongs on it.
- *
- * @param {{name: string, role: string, color: string, blurb?: string,
- *          portraitUrl?: string}} person
- */
 /**
  * The two About Us rosters, in the order they appear on the page.
  *
@@ -318,13 +448,15 @@ export async function listCreditsForOwner() {
  * section that renders for nobody and looks like a layout bug rather than a
  * data error.
  *
- * `null` is the third state and is not a category: it means "Credits page only",
- * which is what every row written before the About page existed means.
+ * NOTE THE CHANGE FROM 024: an empty string is no longer "Credits page only".
+ * That state is `page_scope`, a separate column that says it directly. This
+ * function returning '' now means only "this row has no About Us category",
+ * which the database forbids for an `about_us` row anyway.
  */
 export const ABOUT_CATEGORIES = ['Board Members', 'Behind the Bylines'];
 
 /**
- * Fold a category onto one this app knows, or '' for "not on the About page".
+ * Fold a category onto one this app knows, or '' for "no category".
  *
  * @param {unknown} value
  * @returns {string} one of ABOUT_CATEGORIES, or ''
@@ -335,16 +467,32 @@ export function normaliseAboutCategory(value) {
   return ABOUT_CATEGORIES.find((option) => option.toLowerCase() === wanted) || '';
 }
 
+/**
+ * Add someone to ONE page.
+ *
+ * Note there is no `auth_user_id` and no account is created. That is the point:
+ * these pages are pages about people, not about who can log in. A photographer
+ * who has never opened the site belongs on them.
+ *
+ * `pageScope` decides which page. `category` is only sent when the scope is
+ * `about_us`, and the server refuses an About Us entry without one -- so a typo
+ * cannot create a section heading that renders for nobody.
+ *
+ * @param {{name: string, role: string, color: string, blurb?: string,
+ *          portraitUrl?: string, pageScope?: string, category?: string,
+ *          order?: number, aboutOrder?: number}} person
+ */
 export async function addPerson(person) {
   const name = String(person.name || '').trim();
   if (!name) return { ok: false, message: 'Give this person a name.' };
 
   const role = String(person.role || '').trim() || 'Contributor';
   const color = String(person.color || '').trim() || '#1d4ed8';
-  // '' means Credits-page-only. Never sent as an unrecognised value: the server
-  // refuses one, which is the point -- a typo must not become a third About
-  // heading that nothing renders.
-  const category = normaliseAboutCategory(person.category);
+  const scope = normaliseScope(person.pageScope);
+  // Only meaningful on the About page. normaliseAboutCategory returns '' for an
+  // unrecognised value, which the server turns into a loud error rather than a
+  // third heading that nothing renders.
+  const category = scope === 'about_us' ? normaliseAboutCategory(person.category) : '';
 
   if (config.demoMode) {
     const rows = demoRoster();
@@ -355,8 +503,11 @@ export async function addPerson(person) {
       role_color: color,
       blurb: String(person.blurb || '').trim(),
       portrait_url: String(person.portraitUrl || '').trim() || null,
-      sort_order: nextDemoOrder(rows),
-      category: category || null
+      sort_order: nextDemoOrder(rows, 'sort_order'),
+      page_scope: scope,
+      // The About page's own order column, independent of sort_order.
+      about_order: nextDemoOrder(rows, 'about_order'),
+      category: scope === 'about_us' ? category : null
     };
     writeDemoRoster([...rows, entry]);
     return { ok: true, person: entry };
@@ -365,7 +516,9 @@ export async function addPerson(person) {
   const client = getSupabase();
   if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
 
-  // RPC NAME AND ARG NAMES MUST MATCH supabase/migrations/024_about_podcasts_and_layout.sql.
+  // RPC NAME AND ARG NAMES MUST MATCH supabase/migrations/024_about_podcasts_and_layout.sql
+  // for p_category/p_about_order, and supabase/migrations/028_page_scopes.sql for
+  // p_page_scope.
   //
   // There is no wire_add_credits_person. The server exposes a single upsert,
   // wire_credits_people_upsert, where p_id = NULL means INSERT and p_id = the
@@ -376,7 +529,9 @@ export async function addPerson(person) {
   //
   // p_category arrived with 024, which DROPPED the old seven-argument signature
   // rather than overloading it -- two candidates for one PostgREST name is
-  // PGRST202 again, so the drop in that migration is load-bearing.
+  // PGRST202 again, so the drop in that migration is load-bearing. 028 dropped
+  // 024's nine-argument signature for the same reason: adding p_page_scope by
+  // OVERLOADING would have resurrected PGRST202 and killed both pages at once.
   const { data, error } = await client.rpc('wire_credits_people_upsert', {
     p_id: null,
     p_name: name,
@@ -384,12 +539,13 @@ export async function addPerson(person) {
     p_role_color: color,
     p_blurb: String(person.blurb || '').trim(),
     p_portrait: String(person.portraitUrl || '').trim(),
-    p_sort_order: 100,
+    p_sort_order: Number(person.order) > 0 ? Number(person.order) : 100,
+    p_about_order: Number(person.aboutOrder) > 0 ? Number(person.aboutOrder) : 100,
     p_category: category,
-    p_about_order: 100
+    p_page_scope: scope
   });
 
-  if (error) return { ok: false, message: describe(error, 'credits entry') };
+  if (error) return { ok: false, message: describe(error, 'entry') };
   return { ok: true, person: data };
 }
 
@@ -417,8 +573,9 @@ export async function addPerson(person) {
  * @param {{name?: string, role?: string, role_label?: string,
  *          color?: string, role_color?: string, blurb?: string,
  *          portraitUrl?: string, portrait_url?: string,
- *          category?: string|null,
- *          order?: number, sort_order?: number}} patch
+ *          category?: string|null, pageScope?: string, page_scope?: string,
+ *          order?: number, sort_order?: number,
+ *          aboutOrder?: number, about_order?: number}} patch
  */
 export async function updatePerson(id, patch) {
   // Accept either spelling, short or column-name, for every field.
@@ -432,17 +589,24 @@ export async function updatePerson(id, patch) {
   const colorValue = field('color', 'role_color');
   const portraitValue = field('portraitUrl', 'portrait_url');
   const orderValue = field('order', 'sort_order');
-  // `category` is the one field that cannot use coalesce() semantics on the
-  // server, because taking somebody OFF the About page is a real edit: they keep
-  // their Credits entry but stop appearing under a heading. So undefined means
-  // "leave it alone" here, and '' or null means "clear it" -- which is exactly
-  // the distinction a missing key cannot express in the RPC's argument list.
+  const aboutOrderValue = field('aboutOrder', 'about_order');
+  // page_scope is the "which page" column. Absent means "leave it alone", so an
+  // editor that never mentions it cannot quietly move somebody between pages.
+  // Each of the two Owner tabs always sends its own scope, which is what makes
+  // "promote to the board" a deliberate act rather than a side effect.
+  const scopeValue = field('pageScope', 'page_scope');
+  const scope = scopeValue === undefined ? undefined : normaliseScope(scopeValue);
+  // `category` is the other field that cannot use coalesce() semantics on the
+  // server, because taking somebody OFF a heading is a real edit. So undefined
+  // means "leave it alone" here, and '' or null means "clear it" -- which is
+  // exactly the distinction a missing key cannot express in the RPC's argument
+  // list. On the credits scope the server clears it regardless, because
+  // credits_people_scope_category_check forbids a category there.
   const categoryValue =
     patch.category === undefined ? undefined : normaliseAboutCategory(patch.category);
   // about_order is the About page's own position. Absent means "leave it", which
   // is coalesce()'s job server-side -- see the note on the column in migration
   // 024 for why it is not the same column as sort_order.
-  const aboutOrderValue = field('aboutOrder', 'about_order');
 
   if (config.demoMode) {
     const rows = demoRoster();
@@ -463,7 +627,16 @@ export async function updatePerson(id, patch) {
     }
     if (orderValue !== undefined) next.sort_order = Number(orderValue);
     if (aboutOrderValue !== undefined) next.about_order = Number(aboutOrderValue);
+    if (scope !== undefined) {
+      next.page_scope = scope;
+      // Keep the demo store honest about the CHECK constraint: a credits row
+      // carries no category, and an about_us row must carry one.
+      if (scope === 'credits') next.category = null;
+    }
     if (categoryValue !== undefined) next.category = categoryValue || null;
+    if (next.page_scope === 'about_us' && !next.category) {
+      next.category = 'Behind the Bylines';
+    }
 
     rows[index] = next;
     writeDemoRoster(rows);
@@ -492,12 +665,15 @@ export async function updatePerson(id, patch) {
     p_sort_order: orderValue === undefined ? null : Number(orderValue),
     p_about_order: aboutOrderValue === undefined ? null : Number(aboutOrderValue),
     // Absent from the payload entirely when the caller did not mention the
+    // scope, so the server keeps the row on the page it is already on.
+    ...(scope === undefined ? {} : { p_page_scope: scope }),
+    // Absent from the payload entirely when the caller did not mention the
     // category, so the server's unconditional assignment does not clear a
     // heading the panel simply did not render.
     ...(categoryValue === undefined ? {} : { p_category: categoryValue })
   });
 
-  if (error) return { ok: false, message: describe(error, 'credits entry') };
+  if (error) return { ok: false, message: describe(error, 'entry') };
 
   // A save that matched no row is a failure, not a success. Confirm the row the
   // caller asked about actually carries the new role, rather than reporting
@@ -699,6 +875,12 @@ const DEMO_KEY = 'wire.credits.demo.v1';
  * Same contract as the Postgres path: read returns the list, writes persist,
  * and a corrupt payload falls back to the seed rather than throwing.
  *
+ * THE SEED IS SCOPED, and it is seeded so BOTH pages have something to show:
+ * three About Us entries across the two rosters, and two Credits entries that
+ * exist only on the Credits page. Before `page_scope` existed every seed row
+ * carried an About category, so `/credits` rendered empty in demo mode — which
+ * looks exactly like the page being broken.
+ *
  * @returns {Array<object>}
  */
 export function demoRoster() {
@@ -711,7 +893,8 @@ export function demoRoster() {
       blurb: 'Sets the line, and answers for it.',
       portrait_url: null,
       sort_order: 1,
-      // Demo-only: gives /about both rosters something to render.
+      about_order: 1,
+      page_scope: 'about_us',
       category: 'Board Members'
     },
     {
@@ -722,6 +905,8 @@ export function demoRoster() {
       blurb: 'Covers local government and civic affairs.',
       portrait_url: null,
       sort_order: 10,
+      about_order: 10,
+      page_scope: 'about_us',
       category: 'Behind the Bylines'
     },
     {
@@ -732,9 +917,15 @@ export function demoRoster() {
       blurb: 'Football, athletics, and the people who fund them.',
       portrait_url: null,
       sort_order: 20,
+      about_order: 20,
+      page_scope: 'about_us',
       category: 'Behind the Bylines'
     },
     {
+      // Credits page only. No category, which credits_people_scope_category_check
+      // now REQUIRES for a credits row — the seed has to obey the constraint the
+      // migration adds, or demo mode would teach the Owner a shape the database
+      // refuses.
       id: 'demo-3',
       name: 'Lilian W.',
       role_label: 'Photo Editor',
@@ -742,7 +933,21 @@ export function demoRoster() {
       blurb: 'Runs the picture desk and the gallery.',
       portrait_url: null,
       sort_order: 30,
-      category: 'Behind the Bylines'
+      about_order: 30,
+      page_scope: 'credits',
+      category: null
+    },
+    {
+      id: 'demo-4',
+      name: 'School Athletic Association',
+      role_label: 'Special Thanks',
+      role_color: '#6d28d9',
+      blurb: 'Scorekeeping, fixtures and the scoreboard.',
+      portrait_url: null,
+      sort_order: 40,
+      about_order: 40,
+      page_scope: 'credits',
+      category: null
     }
   ];
 
@@ -756,8 +961,40 @@ export function demoRoster() {
 
   if (!Array.isArray(rows)) rows = fallback;
 
+  /*
+   * SEED MIGRATION. A roster saved by an older build has no `page_scope`, and
+   * `normaliseScope('')` returns 'credits' — so every pre-existing demo row
+   * would silently jump from the About page to the Credits page on the first
+   * load after this change. Re-derive it from `category` instead, which is the
+   * rule migration 028 used for real rows, so a demo roster saved before the
+   * upgrade keeps the people where the Owner last saw them.
+   *
+   * Written back on the spot, so the repair happens once rather than on every
+   * read.
+   */
+  let repaired = false;
+  for (const row of rows) {
+    if (row.page_scope === undefined || row.page_scope === null || row.page_scope === '') {
+      row.page_scope = normaliseAboutCategory(row.category) ? 'about_us' : 'credits';
+      repaired = true;
+    }
+    // Same invariant as the CHECK constraint: a credits row carries no category.
+    if (row.page_scope === 'credits' && row.category) {
+      row.category = null;
+      repaired = true;
+    }
+  }
+  if (repaired) {
+    try {
+      window.localStorage.setItem(DEMO_KEY, JSON.stringify(rows));
+    } catch {
+      /* private mode / quota: the repair still applies to this page view */
+    }
+  }
+
   return [...rows].sort(
-    (a, b) => (a.sort_order ?? 100) - (b.sort_order ?? 100) || String(a.name).localeCompare(String(b.name))
+    (a, b) =>
+      (a.sort_order ?? 100) - (b.sort_order ?? 100) || String(a.name).localeCompare(String(b.name))
   );
 }
 
@@ -770,9 +1007,18 @@ function writeDemoRoster(rows) {
   }
 }
 
-/** Highest sort_order in use, so a new entry lands last. */
-function nextDemoOrder(rows) {
-  return rows.reduce((max, row) => Math.max(max, Number(row.sort_order) || 0), 0) + 10;
+/**
+ * Highest value in use for one order column, so a new entry lands last.
+ *
+ * Takes the column name because the two pages order independently: seeding both
+ * `sort_order` and `about_order` from a single running maximum would make adding
+ * somebody to the Credits page renumber the About page.
+ *
+ * @param {Array<object>} rows
+ * @param {'sort_order'|'about_order'} column
+ */
+function nextDemoOrder(rows, column) {
+  return rows.reduce((max, row) => Math.max(max, Number(row[column]) || 0), 0) + 10;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -780,12 +1026,12 @@ function nextDemoOrder(rows) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Approved portraits from the CREDITS page, keyed by normalised name.
+ * Approved portraits from BOTH pages, keyed by normalised name.
  *
- * This is the roster of people the Owner hand-picked for the public Credits
- * page. It legitimately includes contributors who have no staff profile and no
- * account at all, which is why it stays -- but it is the LOWER-precedence of the
- * two name sources (see `staffPortraitByName` below).
+ * This is the roster of people the Owner hand-picked for the public pages, both
+ * of them. It legitimately includes contributors who have no staff profile and
+ * no account at all, which is why it stays -- but it is the LOWER-precedence of
+ * the two name sources (see `staffPortraitByName` below).
  */
 let portraitIndex = new Map();
 
@@ -876,7 +1122,26 @@ function candidateKeys(name) {
 
 /**
  * Cache the approved portraits so a byline can be rendered synchronously.
- * Called once per credits load; safe to call repeatedly.
+ * Called once per roster load; safe to call repeatedly.
+ *
+ * ROW ORDER IS PART OF THE CONTRACT
+ * ---------------------------------
+ * A person can now hold TWO rows -- one on About Us, one on Credits -- because
+ * `page_scope` gives a row exactly one page. If those two rows carry DIFFERENT
+ * photographs, only one can win for the byline, and "first one wins" would make
+ * the face depend on the order the database happened to return rows in. So the
+ * winner is chosen on purpose instead:
+ *
+ *   1. `listAllPeople()` sorts `page_scope` ascending, so 'about_us' rows are
+ *      handed over first. That is the deterministic input this function relies
+ *      on, and the reason the sort is there.
+ *   2. Within a name, the FIRST row with a usable portrait keeps the key. Since
+ *      About rows come first, an About Us portrait wins over a Credits one.
+ *
+ * The About page is the better default for this specific reason: its entries are
+ * the ones the Owner curates as the paper's identity (board, bylines), whereas
+ * the Credits page is the longer tail of one-off contributions.
+ *
  * @param {Array<{name: string, portrait_url: string|null}>} people
  */
 export function indexPortraits(people) {
@@ -970,18 +1235,25 @@ export function indexStaffPortraits(people) {
 }
 
 /**
- * Populate the portrait cache from the public roster.
+ * Populate the portrait cache from the public rosters.
+ *
+ * READS BOTH SCOPES, and that is load-bearing. Scoping this to the Credits page
+ * would be the obvious tidy-up after migration 028, and it would strip the face
+ * off every byline belonging to a reporter the Owner listed on the About page
+ * instead — a regression on the front page, caused by a change to a page nobody
+ * was looking at, which is the worst shape a regression takes. `listAllPeople()`
+ * is unscoped for exactly this reason.
  *
  * This MUST run before the first paint of the publication. Bylines are rendered
  * synchronously by `bylineSticker`, so if the cache is still empty the article
  * cards are built with the plain-text fallback and the stickers never appear —
- * visiting the Credits page later would not retroactively fix them.
+ * visiting either roster page later would not retroactively fix them.
  *
  * Safe to call repeatedly; resolves quietly when migration 005 is not applied.
  * @returns {Promise<number>} how many portraits are now cached
  */
 export async function primePortraits() {
-  const people = await listCredits();
+  const people = await listAllPeople();
   indexPortraits(people);
   // Count people, not index keys — the index holds several aliases per person.
   return people.filter((p) => safeUrl(p.portrait_url)).length;
@@ -1265,14 +1537,175 @@ export function readableOn(hex) {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.179 ? '#111111' : '#ffffff';
 }
 
+/* -------------------------------------------------------------------------- */
+/* Role pills -- the Owner colour, used as a wash instead of a slab            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * THE CARD SURFACES A PILL IS READ AGAINST.
+ *
+ * Both are real: the site ships a light and a dark theme, so a pill has to clear
+ * 4.5:1 on EITHER. Hardcoding one of these is not a simplification, it is a
+ * bug that only appears in the theme you happened to be looking at while
+ * developing -- the first version of this file did exactly that, lightened every
+ * accent against the dark surface, and shipped pills at 1.79:1 in light mode.
+ *
+ * Mirrors --surface-card in src/styles.css.
+ */
+const CARD_SURFACES = {
+  light: '#faf8f5',
+  dark: '#18181b'
+};
+
+/** WCAG relative luminance of a `#rrggbb`. @param {string} hex */
+function luminance(hex) {
+  const clean = normaliseColour(hex) || '#000000';
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const channel = parseInt(clean.slice(i, i + 2), 16) / 255;
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/**
+ * Contrast ratio between two colours, WCAG 2.1 form.
+ * @returns {number} 1 (identical) to 21 (black on white)
+ */
+export function contrastRatio(foreground, background) {
+  const a = luminance(foreground);
+  const b = luminance(background);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
+/** Linear blend of two `#rrggbb` values. @param {number} amount 0..1 */
+function blend(hex, toward, amount) {
+  const from = normaliseColour(hex) || '#000000';
+  const to = normaliseColour(toward) || '#ffffff';
+  const channel = (i) => {
+    const a = parseInt(from.slice(i, i + 2), 16);
+    const b = parseInt(to.slice(i, i + 2), 16);
+    return Math.round(a + (b - a) * amount)
+      .toString(16)
+      .padStart(2, '0');
+  };
+  return `#${channel(1)}${channel(3)}${channel(5)}`;
+}
+
+/**
+ * Nudge a colour toward black or white until it clears a contrast target against
+ * a surface.
+ *
+ * The direction is chosen by which side of the surface we start on, so a
+ * near-white accent is darkened for a light card rather than being lightened
+ * into invisibility -- which is what a fixed "lighten until it passes" loop does
+ * to a colour that is already on the wrong side.
+ *
+ * @param {string} hex      the Owner's colour
+ * @param {string} surface  what it sits on
+ * @param {number} target   minimum ratio, 1..21
+ * @returns {string} an adjusted `#rrggbb`
+ */
+function ensureContrast(hex, surface, target) {
+  let out = normaliseColour(hex) || '#000000';
+  // Toward black on a light surface, toward white on a dark one. Twelve steps of
+  // 12% is more than enough to reach an endpoint from anywhere, and the bound
+  // keeps a degenerate value from looping.
+  const toward = luminance(surface) > 0.5 ? '#000000' : '#ffffff';
+  for (let step = 0; step < 12 && contrastRatio(out, surface) < target; step += 1) {
+    out = blend(out, toward, 0.12);
+  }
+  return out;
+}
+
+/**
+ * The CSS values a role pill needs, derived from one Owner-chosen hex.
+ *
+ * WHY THIS IS NOT JUST `rgba(${hex}, 0.12)`
+ * -----------------------------------------
+ * Translating the hex to rgba is the easy half, and on its own it produces an
+ * unreadable result. The Owner picks from a colour wheel with no contrast
+ * guidance, and roughly a third of the spectrum is too dark to read as text on
+ * a card: #1d4ed8 is 2.1:1 on #18181b, #7c2d12 is 1.9:1, #b45309 is 3.4:1. The
+ * badge would pass a visual review and fail every reader with low vision.
+ *
+ * So TWO accents are computed — one for each theme — and CSS picks between them:
+ *
+ *   accentLight  darkened until it clears 4.5:1 on the light card
+ *   accentDark   lightened until it clears 4.5:1 on the dark card
+ *
+ * Both are emitted, and `.dark .role-pill` selects the second. Doing this in JS
+ * for a single surface would break whichever theme it was not tuned for, and
+ * doing it in CSS is not possible: contrast depends on the colour VALUES, which
+ * only JS knows.
+ *
+ * 4.5:1 is WCAG AA for text below 18.66px, which is what a 12px uppercase pill
+ * is. The wash and the border keep the ORIGINAL saturation, because those are
+ * decoration and a washed-out tint would not identify the role.
+ *
+ * @param {unknown} value  an Owner-supplied hex, in any accepted spelling
+ * @returns {{accentLight: string, accentDark: string, wash: string, edge: string,
+ *           solid: string}|null}
+ *   null when `value` is not a hex at all, so the caller can fall back to CSS
+ */
+export function rolePalette(value) {
+  const clean = normaliseColour(value);
+  if (!clean) return null;
+
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(clean.slice(i, i + 2), 16));
+
+  return {
+    accentLight: ensureContrast(clean, CARD_SURFACES.light, 4.5),
+    accentDark: ensureContrast(clean, CARD_SURFACES.dark, 4.5),
+    // 12% and 28% are the values the design calls for. The wash is deliberately
+    // weak: it is a tint behind 12px text, and anything stronger reintroduces
+    // the slab this replaced.
+    wash: `rgba(${r}, ${g}, ${b}, 0.12)`,
+    edge: `rgba(${r}, ${g}, ${b}, 0.28)`,
+    // The fully saturated original, for the 3px rail on a card edge and for the
+    // swatch in the Owner panel's colour picker.
+    solid: clean
+  };
+}
+
+/**
+ * A role palette as an escaped inline `style` attribute.
+ *
+ * EVERY value here is derived by `rolePalette()` from a hex that has already
+ * been through `normaliseColour()`, so none of it can contain a quote or a
+ * semicolon of its own accord -- but it is escaped anyway, because the next
+ * person to edit `rolePalette()` should not have to know that.
+ *
+ * @param {ReturnType<typeof rolePalette>} palette
+ * @returns {string} ` style="--role-accent-light:…;…"`
+ */
+export function paletteVars(palette) {
+  if (!palette) return '';
+  const v = (name, value) => `${name}:${escapeHtml(value)};`;
+  return ` style="${v('--role-accent-light', palette.accentLight)}${v(
+    '--role-accent-dark',
+    palette.accentDark
+  )}${v('--role-wash', palette.wash)}${v('--role-edge', palette.edge)}${v(
+    '--role-solid',
+    palette.solid
+  )}"`;
+}
+
+/**
+ * One card in a Credits role band.
+ *
+ * NO ROLE BADGE HERE, and that is deliberate rather than an omission: the band
+ * heading immediately above already names the role and carries its colour, so a
+ * pill on every card said the same thing forty times. The band IS the badge.
+ * (The About page is the opposite shape — one section, many roles — so its cards
+ * each carry their own pill.)
+ *
+ * Everything else matches the About card: the same dark surface, the same square
+ * 72px avatar, the same muted italic note, so a reader moving between the two
+ * pages does not feel the design change underneath them.
+ */
 function card(person) {
   const portrait = safeUrl(person.portrait_url);
 
-  /*
-    Sharp-cornered, left-aligned row card. The role chip is deliberately NOT
-    repeated here: the heading above the grid already names the role and carries
-    its colour, so a per-card chip said the same thing twice.
-  */
   return `
     <li class="credits-card">
       ${
@@ -1282,8 +1715,8 @@ function card(person) {
               src="${escapeHtml(portrait)}"
               ${imageFallbackAttr()}
               alt=""
-              width="48"
-              height="48"
+              width="72"
+              height="72"
               loading="lazy"
               decoding="async"
             />`

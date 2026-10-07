@@ -41,7 +41,9 @@ import { uploadImage, uploadImages, bindImagePicker } from '../lib/upload.js';
 import { squareUpImage } from '../lib/portrait.js';
 import { MAX_ARTICLE_PHOTOS } from '../lib/store.js';
 import {
-  listCredits,
+  // `listCredits` is deliberately NOT imported. The panel reads the whole roster
+  // through `listCreditsForOwner()` and filters it per tab; a scoped read here
+  // would make rows on the other page unreachable rather than merely hidden.
   listCreditsForOwner,
   addPerson,
   updatePerson,
@@ -53,7 +55,12 @@ import {
   indexStaffPortraits,
   isCreditsMigrationMissing,
   normaliseColour,
-  readableOn,
+  normaliseScope,
+  // rolePalette/paletteVars build the accent wash the role pill is drawn in, so
+  // the preview in this panel is the SAME rendering the public page does -- not a
+  // second approximation of it that drifts.
+  rolePalette,
+  paletteVars,
   groupByRole,
   moveRoleBand,
   ABOUT_CATEGORIES,
@@ -2899,24 +2906,51 @@ async function savePasswordFromForm() {
 
 /** Every workspace tab: label, icon, renderer. */
 /* -------------------------------------------------------------------------- */
-/* Tab - Credits (public page)                                                  */
 /* -------------------------------------------------------------------------- */
+/* Tabs - About Us and Credits, two separate pages                            */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * TWO TABS, TWO TABLES' WORTH OF MEANING, ONE TABLE.
+ *
+ * These used to be ONE tab with a row of scope buttons above it: a "Credits
+ * page" button plus one per About roster, which set a module-level
+ * `creditsScope` and filtered the same list. That looked like two pages and was
+ * not one:
+ *
+ *   * A row could not belong to both, because it could not belong to either
+ *     cleanly -- "no category" was doing duty as both "not on About yet" and
+ *     "Credits only", and promoting somebody to the board silently demoted them
+ *     from Credits.
+ *   * The Credits editor rendered a "Appears under: <select>" on every card,
+ *     which is the bleed made editable. Choosing "Board Members" there was how
+ *     people quietly left the Credits page without anyone deciding that.
+ *
+ * Now they are two real tabs. `page_scope` (migration 028) says which page a row
+ * is on, the database forbids a row contradicting its own category, and each
+ * editor only ever sends its own scope. The scope is DERIVED FROM THE OPEN TAB
+ * rather than stored in a variable, so there is no module state that can drift
+ * out of step with what the Owner is looking at.
+ */
 
 /**
  * Rows load asynchronously, so the latest fetch is kept here and the tab
- * repainted when it lands. Named `creditsPeople` rather than the old
- * `creditsRoster` because it no longer mirrors the staff roster: these are
- * hand-picked entries, most of which have no account at all.
+ * repainted when it lands.
+ *
+ * DELIBERATELY UNSCOPED — this is the whole roster, both pages. The panel is the
+ * one reader that must see every row, because deciding which page a row belongs
+ * on is something the Owner does here. Every PUBLIC read filters by page_scope;
+ * this one does not, and that asymmetry is the design.
  */
 let creditsPeople = null;
 
 /**
- * Re-read the Credits page from the database.
+ * Re-read the whole roster from the database.
  *
- * Every write goes through here so the Owner never sees a card the database
- * has already forgotten. A failure returns the previous list rather than
- * blanking the tab, because a network blip is not a reason to make the Owner
- * think their whole page was deleted.
+ * Every write goes through here so the Owner never sees a card the database has
+ * already forgotten. A failure returns the previous list rather than blanking the
+ * tab, because a network blip is not a reason to make the Owner think their
+ * whole page was deleted.
  *
  * @returns {Promise<Array>}
  */
@@ -2930,166 +2964,165 @@ async function refreshCreditsPeople() {
 }
 
 /**
- * The Credits page as the Owner edits it.
+ * Which page a panel tab edits.
  *
- * This tab is OWNER-ONLY. The page itself is a curated list of people, not a
- * roster of accounts, and the whole point of the redesign is that only the Owner
- * decides who appears. `TABS` enforces that client-side and every write RPC in
- * supabase/009_credits_page.sql re-checks `is_owner()` server-side, so the
- * restriction survives a leaked anon key.
+ * Read from the tab id rather than held in a variable. The earlier module-level
+ * `creditsScope` was written by the scope buttons and read by the save handlers,
+ * with nothing checking that the two agreed — and a save dispatched after a tab
+ * switch would write `about_order` onto a Credits row. Deriving it means there is
+ * nothing to keep in step.
  *
- * Rows load asynchronously, so it returns a loading placeholder and fills itself
- * in when the page arrives.
+ * @param {string} tabId  e.g. 'about', 'credits'
+ * @returns {'about_us'|'credits'}
  */
-/**
- * Which roster the Credits tab is editing: '' is the Credits page, otherwise one
- * of ABOUT_CATEGORIES.
- *
- * This is a VIEW filter over one shared table, not three editors. The Credits
- * page and the two About rosters hold the same six fields, so they share the same
- * cards, the same forms and the same handlers; only the category differs. A
- * separate About tab with its own copy of that code would be a second thing to
- * keep in step with the first -- and the two lists of ids in this project have
- * already drifted once.
- */
-let creditsScope = '';
-
-function renderCreditsTab() {
-  const body = byId('admin-tab-body');
-  if (!body) return '';
-
-  // Guard the live session, not a cached value: someone signed in before a
-  // demotion must not keep reading this tab.
-  if (!isOwner()) {
-    return emptyState('Only the Owner can edit the Credits page.', 'fa-lock');
-  }
-
-  if (creditsPeople) return creditsPanel(creditsPeople);
-
-  listCreditsForOwner().then((people) => {
-    creditsPeople = people;
-    if (!body.isConnected || body.dataset.tab !== 'credits') return;
-    body.innerHTML = creditsPanel(people);
-  });
-
-  return `<div class="panel-sunken p-10 text-center">
-    <i class="fa-solid fa-circle-notch spin-slow ink-muted text-xl" aria-hidden="true"></i>
-    <p class="ink-muted mt-3 text-sm">Loading the Credits page…</p>
-  </div>`;
+function tabScope(tabId) {
+  return tabId === 'about' ? 'about_us' : 'credits';
 }
 
 /** Colour a new person starts from, so the picker is never empty. */
 const DEFAULT_ROLE_COLOR = '#c8102e';
 
 /**
- * The roster switcher: Credits page, then the two About Us sections.
- *
- * Rendered as real buttons rather than tabs because they are not tabs -- they do
- * not change which panel is open, they filter what the panel shows. `aria-pressed`
- * rather than a role, because a tablist would promise keyboard arrow navigation
- * this is not built for.
+ * The About Us page as the Owner edits it.
+ * Owner-only: both public pages are hand-curated, and a Board Manager must not
+ * be able to add or remove names from either.
  */
-function creditsScopeSwitcher(people) {
-  const options = [
-    { scope: '', label: 'Credits page' },
-    ...ABOUT_CATEGORIES.map((category) => ({ scope: category, label: category }))
-  ];
+function renderAboutTab() {
+  return renderRosterTab('about_us');
+}
 
-  const counts = new Map(
-    options.map(({ scope }) => [
-      scope,
-      scope ? people.filter((p) => normaliseAboutCategory(p.category) === scope).length : people.length
-    ])
-  );
-
-  return `
-    <div class="credits-scope" role="group" aria-label="Which roster you are editing">
-      ${options
-        .map(
-          ({ scope, label }) => `
-        <button
-          type="button"
-          class="credits-scope__btn"
-          data-action="credits-scope"
-          data-scope="${escapeHtml(scope)}"
-          aria-pressed="${creditsScope === scope}"
-        >
-          ${escapeHtml(label)}
-          <span class="credits-scope__count">${counts.get(scope)}</span>
-        </button>`
-        )
-        .join('')}
-    </div>
-  `;
+/** The Credits page as the Owner edits it. Owner-only, same reason. */
+function renderCreditsTab() {
+  return renderRosterTab('credits');
 }
 
 /**
- * Render the Credits editor: an "add someone" form plus one card per person.
+ * One page's editor: an "add" form plus one card per person on THAT page.
  *
- * @param {Array<object>} people  the WHOLE roster; filtered here by creditsScope
+ * Both tabs land here. The differences are all data — the scope, which order
+ * column is offered, whether a category is asked for, and whether cards are
+ * grouped by role (Credits, where the role is the organising principle) or by
+ * category (About Us, where the roster is). The markup is shared so a fix to the
+ * card cannot land on one page and miss the other.
+ *
+ * @param {'about_us'|'credits'} scope
  */
-function creditsPanel(people) {
-  // The cache always holds every row. Filtering a copy for display means a save
-  // that changes somebody's category cannot make them vanish from the list the
-  // Owner is looking at until the next refetch -- and, worse, cannot make the
-  // whole panel render as empty.
-  const scoped = creditsScope
-    ? people.filter((person) => normaliseAboutCategory(person.category) === creditsScope)
-    : people;
+function renderRosterTab(scope) {
+  const body = byId('admin-tab-body');
+  if (!body) return '';
 
-  const onAboutPage = Boolean(creditsScope);
+  // Guard the live session, not a cached value: someone signed in before a
+  // demotion must not keep reading this tab.
+  if (!isOwner()) {
+    return emptyState(
+      scope === 'about_us'
+        ? 'Only the Owner can edit the About Us page.'
+        : 'Only the Owner can edit the Credits page.',
+      'fa-lock'
+    );
+  }
+
+  // Read the tab id back out of `tabScope` rather than spelling the mapping twice,
+  // so the tab that renders and the variable the async repaint checks against
+  // cannot drift.
+  const tabId = tabScope(scope) === 'about_us' ? 'about' : 'credits';
+
+  if (creditsPeople) return rosterPanel(creditsPeople, scope);
+
+  listCreditsForOwner().then((people) => {
+    creditsPeople = people;
+    if (!body.isConnected || body.dataset.tab !== tabId) return;
+    body.innerHTML = rosterPanel(people, scope);
+  });
+
+  return `<div class="panel-sunken p-10 text-center">
+    <i class="fa-solid fa-circle-notch spin-slow ink-muted text-xl" aria-hidden="true"></i>
+    <p class="ink-muted mt-3 text-sm">Loading the ${escapeHtml(scopeLabel(scope))} page…</p>
+  </div>`;
+}
+
+/** Human name of a page, for headings and messages. */
+function scopeLabel(scope) {
+  return scope === 'about_us' ? 'About Us' : 'Credits';
+}
+
+/** Only this page's rows. The filter the panel applies on top of its unscoped read. */
+function rowsInScope(people, scope) {
+  return people.filter((person) => normaliseScope(person.page_scope) === scope);
+}
+
+/**
+ * Render one page's editor.
+ *
+ * The list is filtered from the full cache rather than refetched per tab, so
+ * switching tabs is instant and a save that moves somebody between pages cannot
+ * make the whole panel render empty.
+ *
+ * @param {Array<object>} people  the WHOLE roster; filtered here by scope
+ * @param {'about_us'|'credits'} scope
+ */
+function rosterPanel(people, scope) {
+  const scoped = rowsInScope(people, scope);
+  const onAbout = scope === 'about_us';
 
   return `
     <div class="space-y-5">
       ${panelHeader(
-        onAboutPage ? `About Us — ${creditsScope}` : 'Credits page',
-        onAboutPage
-          ? `${scoped.length} ${scoped.length === 1 ? 'person' : 'people'} in this section, in the order readers see them`
-          : `${people.length} ${people.length === 1 ? 'person' : 'people'} listed` +
+        onAbout ? 'About Us page' : 'Credits page',
+        onAbout
+          ? `${scoped.length} ${scoped.length === 1 ? 'person' : 'people'} across the board and the bylines, in the order readers see them`
+          : `${scoped.length} ${scoped.length === 1 ? 'person' : 'people'} listed` +
             ' · only people you add here appear on the page',
-        `<a class="btn btn-ghost" href="#${onAboutPage ? 'about' : 'credits'}"
-            data-nav="${onAboutPage ? 'about' : 'credits'}">
+        `<a class="btn btn-ghost" href="#${onAbout ? 'about' : 'credits'}"
+             data-nav="${onAbout ? 'about' : 'credits'}">
            <i class="fa-solid fa-eye" aria-hidden="true"></i> Preview page
          </a>`
       )}
 
-      ${creditsScopeSwitcher(people)}
-
       <p class="panel-sunken p-4 text-xs ink-muted">
         <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
         ${
-          onAboutPage
-            ? `This section lists the people shown under <strong>${escapeHtml(
-                creditsScope
-              )}</strong> on the About Us page. The same person can appear on both pages; the
-             section only decides where they sit on About Us, and each page is
-             ordered independently.`
-            : `This page is a list of <strong>people</strong>, not of accounts. Adding
-             someone here creates no login and grants no access — it only puts their
-             name, photo and role on the public page. The role is free text, so you can
-             write anything you like, and each role carries its own colour.`
+          onAbout
+            ? `This is the <strong>About Us</strong> page and nothing else. Every entry here is filed
+             under <strong>Board Members</strong> or <strong>Behind the Bylines</strong>, and none
+             of them appear on the Credits page. To put somebody on both pages, add them once on
+             each tab — that is how the two pages stay genuinely independent.`
+            : `This is the <strong>Credits</strong> page and nothing else. It is a list of
+             <strong>people</strong>, not of accounts: adding someone creates no login and grants
+             no access. Board members and writers are listed on the About Us tab instead and never
+             appear here. The credit is free text, so write anything you like.`
         }
       </p>
 
-      ${creditsAddForm(scoped)}
+      ${rosterAddForm(scoped, scope)}
 
       ${
         scoped.length
-          ? (creditsScope ? scoped.map(creditsPersonCard) : groupByRole(scoped).map(creditsRoleBand).join(''))
+          ? onAbout
+            ? ABOUT_CATEGORIES.map((category) =>
+                aboutCategorySection(
+                  scoped.filter((person) => normaliseAboutCategory(person.category) === category),
+                  category
+                )
+              )
+                .filter(Boolean)
+                .join('')
+            : groupByRole(scoped).map(creditsRoleBand).join('')
           : isCreditsMigrationMissing()
             ? `<div class="panel-raised p-6 text-sm">
                  <p class="flex items-center gap-2 font-bold">
                    <i class="fa-solid fa-triangle-exclamation ink-muted" aria-hidden="true"></i>
-                   The Credits table is not there yet
+                   The roster table is not there yet
                  </p>
                  <p class="ink-muted mt-2">
-                   Run <code>supabase/009_credits_page.sql</code> in the Supabase SQL
+                   Run <code>supabase/migrations/009_credits_page.sql</code> and then
+                   <code>supabase/migrations/028_page_scopes.sql</code> in the Supabase SQL
                    Editor, then reopen this tab.
                  </p>
                </div>`
             : emptyState(
-                creditsScope
-                  ? `Nobody is listed under ${creditsScope} yet.`
+                onAbout
+                  ? 'Nobody on the About Us page yet. Add a board member or a byline above.'
                   : 'Nobody on the Credits page yet.',
                 'fa-user-plus'
               )
@@ -3098,6 +3131,35 @@ function creditsPanel(people) {
   `;
 }
 
+/**
+ * One About Us section: a heading and the people filed under it.
+ *
+ * An empty section is NOT rendered. Showing "Nobody listed under Behind the
+ * Bylines" on a page the Owner has simply not filled in yet reads as a broken
+ * page; the public About page still renders both headings with a placeholder, so
+ * the reader-facing promise is kept without the panel showing empty furniture.
+ *
+ * @param {Array<object>} people
+ * @param {string} category
+ * @returns {string} '' when nobody is filed here
+ */
+function aboutCategorySection(people, category) {
+  if (!people.length) return '';
+
+  return `
+    <section class="credits-band-editor" data-about-section="${escapeHtml(category)}">
+      <div class="credits-band-editor__head">
+        <span class="credits-band-editor__name">${escapeHtml(category)}</span>
+        <span class="credits-band-editor__count">
+          ${people.length} ${people.length === 1 ? 'person' : 'people'}
+        </span>
+      </div>
+      <ul class="space-y-4">
+        ${people.map((person) => rosterPersonCard(person, 'about_us')).join('')}
+      </ul>
+    </section>
+  `;
+}
 
 /**
  * One role band in the Credits editor: the role heading with its two move
@@ -3143,36 +3205,49 @@ function creditsRoleBand(band, index, total) {
         </span>
       </div>
 
-      <ul class="space-y-4">${band.members.map(creditsPersonCard).join('')}</ul>
+      <ul class="space-y-4">
+        ${band.members.map((person) => rosterPersonCard(person, 'credits')).join('')}
+      </ul>
     </section>
   `;
 }
 
 /**
- * One person's card: photo, name, free-text role with its colour, blurb, order.
+ * One person's editable card.
  *
- * The role is free text rather than a dropdown of staff roles on purpose: a
- * credits page credits contributors, and contributors are not all accounts.
- * Whatever the Owner types is what appears.
+ * The FIELDS DEPEND ON THE PAGE, and that is the point of the split:
  *
- * @param {{id: string, name: string, role_label: string, role_color: string,
- *          blurb: string, portrait_url: string, sort_order: number}} person
+ *   About Us  — Name, Category (which roster), Role title, Accent colour,
+ *               One-line note, Display order (about_order), Photo.
+ *   Credits   — Name, Credit role, Accent colour, Description, Display order
+ *               (sort_order), Photo.
+ *
+ * There is deliberately NO "appears under" select on either one any more. That
+ * field is how a person used to be moved off one page by editing a card on the
+ * other; the page you are editing decides the page, and the scope travels with
+ * the save so the server can enforce it.
+ *
+ * The order field that is EDITED depends on the page — `about_order` on About Us,
+ * `sort_order` on Credits — and BOTH values are always carried, so saving one
+ * page cannot reset the other page's order. `data-roster-scope` is what the save
+ * handler reads instead of a module variable.
+ *
+ * @param {object} person
+ * @param {'about_us'|'credits'} scope
  */
-function creditsPersonCard(person) {
+function rosterPersonCard(person, scope) {
   const id = escapeHtml(person.id || '');
   const colour = normaliseColour(person.role_color) || DEFAULT_ROLE_COLOR;
-  const order = Number(person.sort_order) || 100;
   const name = escapeHtml(person.name || 'Unnamed');
-  // The two order columns are different numbers for different pages, so the
-  // field that is EDITED depends on which roster is open -- and both are always
-  // carried in the form so a save cannot silently blank the other page's order.
-  const onAbout = Boolean(creditsScope);
-  const aboutOrder = Number(person.about_order) || 100;
+  const onAbout = scope === 'about_us';
   const category = normaliseAboutCategory(person.category);
+  const order = onAbout ? Number(person.about_order) : Number(person.sort_order);
+  const palette = rolePalette(person.role_color);
 
   return `
-    <li class="panel-raised p-4" data-credits-row="${id}">
-      <form class="space-y-3" data-credits-form="${id}" novalidate>
+    <li class="panel-raised p-4" data-roster-row="${id}">
+      <form class="space-y-3" data-credits-form="${id}"
+        data-roster-scope="${onAbout ? 'about_us' : 'credits'}" novalidate>
         <div class="flex items-start gap-3">
           ${avatar(person, 56)}
 
@@ -3184,44 +3259,53 @@ function creditsPersonCard(person) {
 
           <button type="button" class="btn btn-ghost shrink-0 text-rose-600"
             data-action="credits-remove" data-id="${id}"
-            aria-label="Remove ${name} from ${onAbout ? creditsScope : 'the Credits page'}">
+            aria-label="Remove ${name} from the ${escapeHtml(scopeLabel(scope))} page">
             <i class="fa-solid fa-trash" aria-hidden="true"></i>
           </button>
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2">
           <div>
-            <label class="field-label" for="credits-role-${id}">Role title</label>
+            <label class="field-label" for="credits-role-${id}">
+              ${onAbout ? 'Role title' : 'Credit / contribution'}
+            </label>
             <input id="credits-role-${id}" class="field" type="text" maxlength="60"
-              data-credits-role value="${escapeHtml(person.role_label || '')}" />
+              data-credits-role
+              value="${escapeHtml(person.role_label || '')}"
+              placeholder="${onAbout ? 'Assistant President/Coordinator' : 'Special Thanks'}" />
           </div>
-          <div>
-            <label class="field-label" for="credits-category-${id}">Appears under</label>
-            <select id="credits-category-${id}" class="field" data-credits-category>
-              <option value="" ${category ? '' : 'selected'}>Credits page only</option>
-              ${ABOUT_CATEGORIES.map(
-                (option) =>
-                  `<option value="${escapeHtml(option)}" ${
-                    category === option ? 'selected' : ''
-                  }>${escapeHtml(option)}</option>`
-              ).join('')}
-            </select>
-          </div>
+          ${
+            onAbout
+              ? `<div>
+                   <label class="field-label" for="credits-category-${id}">Roster</label>
+                   <select id="credits-category-${id}" class="field" data-credits-category required>
+                     ${ABOUT_CATEGORIES.map(
+                       (option) =>
+                         `<option value="${escapeHtml(option)}" ${
+                           category === option ? 'selected' : ''
+                         }>${escapeHtml(option)}</option>`
+                     ).join('')}
+                   </select>
+                 </div>`
+              : `<div>
+                   <p class="field-label">Page</p>
+                   <p class="field pointer-events-none opacity-70">Credits page</p>
+                   <p class="mt-1 text-[0.6875rem] ink-muted">
+                     Board members and writers are added on the About Us tab.
+                   </p>
+                 </div>`
+          }
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2">
           <div>
             <label class="field-label" for="credits-order-${id}">
-              ${
-                onAbout
-                  ? `Order in ${escapeHtml(creditsScope)}`
-                  : 'Order on the Credits page'
-              }
+              ${onAbout ? 'Order on the About Us page' : 'Order on the Credits page'}
             </label>
             <input id="credits-order-${id}" class="field" type="number" min="1"
               max="999" ${
                 onAbout ? 'data-credits-about-order' : 'data-credits-order'
-              } value="${onAbout ? aboutOrder : order > 0 ? order : 100}" />
+              } value="${Number(order) > 0 ? Number(order) : 100}" />
           </div>
           <p class="self-end text-[0.7rem] ink-muted">
             Lower numbers appear first. Each page is ordered on its own, so
@@ -3230,7 +3314,9 @@ function creditsPersonCard(person) {
         </div>
 
         <div>
-          <label class="field-label" for="credits-blurb-${id}">Note (optional)</label>
+          <label class="field-label" for="credits-blurb-${id}">
+            ${onAbout ? 'One-line note' : 'Description'}
+          </label>
           <textarea id="credits-blurb-${id}" class="field" rows="2" maxlength="220"
             data-credits-blurb>${escapeHtml(person.blurb || '')}</textarea>
         </div>
@@ -3240,16 +3326,16 @@ function creditsPersonCard(person) {
             class="h-10 w-12 shrink-0 cursor-pointer rounded-lg border
               border-ink/20 bg-transparent p-1"
             data-credits-color value="${colour}"
-            aria-label="Role colour for ${name}" />
+            aria-label="Accent colour for ${name}" />
 
-          <span class="badge" style="background:${colour};color:${readableOn(colour)}">
+          <span class="role-pill role-pill--preview"${palette ? paletteVars(palette) : ''}>
             ${escapeHtml(person.role_label || 'Contributor')}
           </span>
 
           <button type="button" class="btn btn-ghost"
             data-action="credits-copy-colour" data-target="credits-color-${id}"
             data-source="">
-            <i class="fa-solid fa-copy" aria-hidden="true"></i> Copy role colour
+            <i class="fa-solid fa-copy" aria-hidden="true"></i> Copy accent colour
           </button>
         </div>
 
@@ -3278,7 +3364,145 @@ function creditsPersonCard(person) {
 }
 
 /**
- * Circular avatar for a Credits card, falling back to initials.
+ * The "add someone" form for one page.
+ *
+ * The two forms share a skeleton but ask different questions, because the pages
+ * answer different ones. About Us must ask for a roster, because an About Us row
+ * without a heading renders under nothing; Credits has no such field, and adding
+ * one back as a disabled-looking dropdown would be the bleed returning in
+ * disguise.
+ *
+ * @param {Array<object>} people  entries already on this page, for the datalist
+ * @param {'about_us'|'credits'} scope
+ */
+function rosterAddForm(people, scope) {
+  const onAbout = scope === 'about_us';
+  const used = [...new Set(people.map((p) => p.role_label).filter(Boolean))];
+
+  // Offered as suggestions only. The Credits page credits photographers,
+  // patrons and a one-off school athletic association, none of which are staff
+  // roles, so a fixed list would be wrong more often than it was right.
+  const presets = [
+    'Special Thanks',
+    'Former Editor',
+    'Lead Contributor',
+    'Photographer',
+    'Designer',
+    'Patron'
+  ];
+  const suggestions = [...new Set([...used, ...(onAbout ? [] : presets)])];
+
+  return `
+    <form id="credits-add-form" class="panel-raised space-y-4 p-4"
+      data-roster-scope="${onAbout ? 'about_us' : 'credits'}" novalidate>
+      <div class="flex items-center gap-2">
+        <i class="fa-solid fa-user-plus ink-accent" aria-hidden="true"></i>
+        <h3 class="text-sm font-black tracking-tight">
+          Add to the ${escapeHtml(scopeLabel(scope))} page
+        </h3>
+      </div>
+
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label class="field-label" for="credits-add-name">Name</label>
+          <input id="credits-add-name" class="field" type="text" maxlength="80"
+            placeholder="Amina Mohamed" required />
+        </div>
+        <div>
+          <label class="field-label" for="credits-add-role">
+            ${onAbout ? 'Role title' : 'Credit / contribution'}
+          </label>
+          <input id="credits-add-role" class="field" type="text" maxlength="60"
+            list="credits-role-suggestions" required
+            placeholder="${onAbout ? 'Assistant President/Coordinator' : 'Special Thanks'}" />
+          <datalist id="credits-role-suggestions">
+            ${suggestions.map((role) => `<option value="${escapeHtml(role)}"></option>`).join('')}
+          </datalist>
+          <p class="mt-1 text-[0.6875rem] ink-muted">
+            ${
+              onAbout
+                ? 'Any wording you like. It does not have to match a staff role.'
+                : 'Free text. These are suggestions, not a fixed list.'
+            }
+          </p>
+        </div>
+      </div>
+
+      ${
+        onAbout
+          ? `<div>
+               <label class="field-label" for="credits-add-category">Roster</label>
+               <select id="credits-add-category" class="field" required>
+                 ${ABOUT_CATEGORIES.map(
+                   (option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`
+                 ).join('')}
+               </select>
+               <p class="mt-1 text-[0.6875rem] ink-muted">
+                 Board Members or Behind the Bylines. Everyone here appears on
+                 About Us only — never on the Credits page.
+               </p>
+             </div>`
+          : ''
+      }
+
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label class="field-label" for="credits-add-photo">
+            ${onAbout ? 'Photo' : 'Photo / avatar'}
+          </label>
+          <input id="credits-add-photo" class="field" type="file"
+            accept="image/jpeg,image/png,image/webp" />
+        </div>
+        <div>
+          <label class="field-label" for="credits-add-color">Accent colour</label>
+          <div class="flex items-center gap-2">
+            <input id="credits-add-color" type="color"
+              class="h-11 w-14 shrink-0 cursor-pointer rounded-lg border
+                border-ink/20 bg-transparent p-1"
+              value="${DEFAULT_ROLE_COLOR}" />
+            <button type="button" class="btn btn-ghost shrink-0"
+              data-action="credits-copy-colour" data-target="credits-add-color"
+              data-source="">
+              <i class="fa-solid fa-copy" aria-hidden="true"></i> Copy accent colour
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label class="field-label" for="credits-add-order">Display order</label>
+        <input id="credits-add-order" class="field" type="number" min="1"
+          max="999" value="100"
+          ${onAbout ? 'data-credits-about-order' : 'data-credits-order'} />
+        <p class="mt-1 text-[0.6875rem] ink-muted">
+          Lower numbers appear first, on this page only.
+        </p>
+      </div>
+
+      <details class="text-xs">
+        <summary class="cursor-pointer ink-muted">Or paste a photo URL</summary>
+        <input id="credits-add-url" class="field mt-2" type="url"
+          placeholder="https://example.com/photo.jpg" />
+      </details>
+
+      <div>
+        <label class="field-label" for="credits-add-blurb">
+          ${onAbout ? 'One-line note' : 'Description'}
+        </label>
+        <input id="credits-add-blurb" class="field" type="text" maxlength="300"
+          placeholder="Covers local government and civic affairs." />
+      </div>
+
+      <button type="submit" class="btn btn-accent w-full sm:w-auto">
+        <i class="fa-solid fa-plus" aria-hidden="true"></i>
+        Add to ${escapeHtml(scopeLabel(scope))}
+      </button>
+    </form>
+  `;
+}
+
+/**
+ * Circular avatar for a roster card, falling back to initials.
  *
  * `safeUrl` rejects anything that is not an http(s) or data image, so a hostile
  * `portrait_url` cannot become a javascript: link.
@@ -3315,110 +3539,6 @@ function initialsOf(name) {
   if (!parts.length) return '?';
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-
-/**
- * The "Add new person" form.
- *
- * A photo is optional — plenty of contributors deserve a credit without a
- * portrait, and the card falls back to their initials. Name and role are
- * required, because a nameless card on a credits page is worse than no card.
- *
- * @param {Array<object>} people  used to offer existing roles as suggestions
- */
-function creditsAddForm(people) {
-  const used = [...new Set(people.map((p) => p.role_label).filter(Boolean))];
-
-  return `
-    <form id="credits-add-form" class="panel-raised space-y-4 p-4" novalidate>
-      <div class="flex items-center gap-2">
-        <i class="fa-solid fa-user-plus ink-accent" aria-hidden="true"></i>
-        <h3 class="text-sm font-black tracking-tight">Add new person</h3>
-      </div>
-
-      <div class="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label class="field-label" for="credits-add-name">Name</label>
-          <input id="credits-add-name" class="field" type="text" maxlength="80"
-            placeholder="Amina Mohamed" required />
-        </div>
-        <div>
-          <label class="field-label" for="credits-add-role">Role</label>
-          <input id="credits-add-role" class="field" type="text" maxlength="60"
-            list="credits-role-suggestions" placeholder="Photographer" required />
-          <datalist id="credits-role-suggestions">
-            ${used.map((role) => `<option value="${escapeHtml(role)}"></option>`).join('')}
-          </datalist>
-          <p class="mt-1 text-[0.6875rem] ink-muted">
-            Any wording you like. It does not have to match a staff role.
-          </p>
-        </div>
-      </div>
-
-      <div class="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label class="field-label" for="credits-add-photo">Photo</label>
-          <input id="credits-add-photo" class="field" type="file"
-            accept="image/jpeg,image/png,image/webp" />
-        </div>
-        <div>
-          <label class="field-label" for="credits-add-color">Role colour</label>
-          <div class="flex items-center gap-2">
-            <input id="credits-add-color" type="color"
-              class="h-11 w-14 shrink-0 cursor-pointer rounded-lg border
-                border-ink/20 bg-transparent p-1"
-              value="${DEFAULT_ROLE_COLOR}" />
-            <button type="button" class="btn btn-ghost shrink-0"
-              data-action="credits-copy-colour" data-target="credits-add-color"
-              data-source="">
-              <i class="fa-solid fa-copy" aria-hidden="true"></i> Copy role colour
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div class="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label class="field-label" for="credits-add-category">Appears under</label>
-          <select id="credits-add-category" class="field">
-            <option value="" ${creditsScope ? '' : 'selected'}>Credits page only</option>
-            ${ABOUT_CATEGORIES.map(
-              (option) =>
-                `<option value="${escapeHtml(option)}" ${
-                  creditsScope === option ? 'selected' : ''
-                }>${escapeHtml(option)}</option>`
-            ).join('')}
-          </select>
-        </div>
-        <div>
-          <label class="field-label" for="credits-add-about-order">Order position</label>
-          <input id="credits-add-about-order" class="field" type="number" min="1"
-            max="999" value="100" />
-          <p class="mt-1 text-[0.6875rem] ink-muted">
-            Lower numbers appear first.
-          </p>
-        </div>
-      </div>
-
-      <details class="text-xs">
-        <summary class="cursor-pointer ink-muted">Or paste a photo URL</summary>
-        <input id="credits-add-url" class="field mt-2" type="url"
-          placeholder="https://…" />
-      </details>
-
-      <div>
-        <label class="field-label" for="credits-add-blurb">One line about them</label>
-        <input id="credits-add-blurb" class="field" type="text" maxlength="300"
-          placeholder="Covers local government and civic affairs." />
-      </div>
-
-      <button type="submit" class="btn btn-accent w-full sm:w-auto">
-        <i class="fa-solid fa-plus" aria-hidden="true"></i>
-        ${creditsScope ? `Add to ${escapeHtml(creditsScope)}` : 'Add to Credits page'}
-      </button>
-    </form>
-  `;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -3782,7 +3902,11 @@ function podcastLiveRow(episode) {
         }
 
         <div class="flex flex-wrap items-center gap-2">
-          <button type="submit" class="btn btn-accent" data-action="podcast-save-edit">
+          <!-- No data-action here on purpose. This is a plain submit control:
+               the form branch in the delegated submit listener is the route that
+               saves it, and a data-action with no matching handler reads as a
+               delegated button that was wired up and then lost its route. -->
+          <button type="submit" class="btn btn-accent">
             <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save changes
           </button>
           <button type="button" class="btn btn-ghost text-rose-600"
@@ -4141,10 +4265,16 @@ const TABS = [
   { id: 'broadcasts', label: 'Broadcasts', icon: 'fa-paper-plane', render: renderBroadcastsTab, minRole: 'Board Manager' },
   { id: 'curation', label: 'Curation', icon: 'fa-star', render: renderCurationTab, minRole: 'Board Manager' },
   { id: 'staff', label: 'Staff', icon: 'fa-users', render: renderStaffTab, minRole: 'Board Manager' },
-  // Owner only. The Credits page is a hand-curated public page, not a view of
-  // the staff roster: anybody the Owner chooses to list appears, and nobody
-  // listed by an account gets in automatically. A Board Manager must not be
-  // able to add or remove names from it.
+  // Owner only, and TWO tabs rather than one with a filter above it. About Us and
+  // Credits are separate pages with separate purposes, `page_scope` decides which
+  // page a row is on, and the database refuses a row whose category contradicts
+  // its scope. A view filter over one shared list made all three of those things
+  // editable from the wrong page.
+  { id: 'about', label: 'About Us', icon: 'fa-address-book', render: renderAboutTab, ownerOnly: true },
+  // The Credits page is a hand-curated public page, not a view of the staff
+  // roster: anybody the Owner chooses to list appears, and nobody listed by an
+  // account gets in automatically. A Board Manager must not be able to add or
+  // remove names from it.
   { id: 'credits', label: 'Credits', icon: 'fa-id-badge', render: renderCreditsTab, ownerOnly: true },
   { id: 'changelog', label: 'Changelog', icon: 'fa-clock-rotate-left', render: renderChangelogTab, ownerOnly: true },
   { id: 'branding', label: 'Branding', icon: 'fa-font', render: renderBrandingTab, ownerOnly: true },
@@ -5417,13 +5547,19 @@ async function saveBrandingFromForm() {
  *
  * @param {HTMLFormElement} form
  */
-/** Clamp a typed order into the range the form and the page both accept. */
-function readOrderField(scope) {
-  const raw = Number(
-    document.querySelector(
-      scope ? '[data-credits-about-order]' : '[data-credits-order]'
-    )?.value
-  );
+/**
+ * Clamp a typed order into the range the form and the page both accept.
+ *
+ * The field is found WITHIN the form that asked for it. The earlier version used
+ * `document.querySelector`, which returns the FIRST match on the page — so with
+ * several cards rendered, every card's save read the top card's order number.
+ *
+ * @param {HTMLFormElement} form
+ * @param {'about_us'|'credits'} scope
+ */
+function readOrderField(form, scope) {
+  const selector = scope === 'about_us' ? '[data-credits-about-order]' : '[data-credits-order]';
+  const raw = Number(form.querySelector(selector)?.value);
   return Number.isFinite(raw) ? Math.min(999, Math.max(1, Math.round(raw))) : 100;
 }
 
@@ -5431,28 +5567,40 @@ async function saveCreditsFromForm(form) {
   const personId = form.dataset.creditsForm;
   if (!personId) return;
 
+  // The page comes from the form that was submitted, not from module state and
+  // not from "which tab is open". A save dispatched after a tab switch then wrote
+  // `about_order` onto a Credits row; reading it off the form makes that
+  // impossible, because the form only ever carries its own page's scope.
+  const scope = normaliseScope(form.dataset.rosterScope);
+  const onAbout = scope === 'about_us';
+
   const name = form.querySelector('[data-credits-name]')?.value.trim() || '';
   if (!name) {
     showToast('A person needs a name.', { type: 'error' });
     return;
   }
 
-  // Which order field this form even renders depends on the open roster, so it is
-  // read through the same switch the renderer used. Reading the other one would
-  // return undefined, `Number(undefined)` is NaN, and the save would write 100 --
-  // silently resetting somebody's position to the bottom of the page.
-  const orderKey = creditsScope ? 'about_order' : 'sort_order';
+  if (onAbout && !form.querySelector('[data-credits-category]')?.value) {
+    showToast('An About Us entry needs a roster: Board Members or Behind the Bylines.', {
+      type: 'error'
+    });
+    return;
+  }
+
+  const orderKey = onAbout ? 'about_order' : 'sort_order';
 
   const result = await updatePerson(personId, {
     name,
     role_label: form.querySelector('[data-credits-role]')?.value.trim() || '',
     role_color: form.querySelector('[data-credits-color]')?.value || '',
     blurb: form.querySelector('[data-credits-blurb]')?.value.trim() || '',
-    // Always sent: '' clears the person from the About page and keeps their
-    // Credits entry, which is a real edit the Owner may be making by accident --
-    // so it is written explicitly rather than inferred from the open roster.
-    category: form.querySelector('[data-credits-category]')?.value ?? '',
-    [orderKey]: readOrderField(creditsScope)
+    // Always sent, and always this page's own scope. The server derives the
+    // category FROM the scope, so a Credits card cannot acquire an About heading
+    // no matter what this form sends -- which is the whole reason the "appears
+    // under" select is gone from the Credits card.
+    page_scope: scope,
+    category: onAbout ? form.querySelector('[data-credits-category]')?.value ?? '' : '',
+    [orderKey]: readOrderField(form, scope)
   });
 
   if (!result.ok) {
@@ -5460,29 +5608,36 @@ async function saveCreditsFromForm(form) {
     return;
   }
 
-  showToast(
-    creditsScope ? `${name} saved to ${creditsScope}.` : `${name} saved to the Credits page.`,
-    { type: 'success' }
-  );
+  showToast(`${name} saved to the ${scopeLabel(scope)} page.`, { type: 'success' });
   await refreshCreditsPeople();
   paintActiveTab();
 }
 
 /**
- * Add a brand-new person to the Credits page.
+ * Add a brand-new person to ONE page.
  *
  * Note what is NOT required here: an account, a username, an e-mail or a staff
- * role. The Owner types any role they like and picks its colour. That is the
- * whole point of the page -- it credits contributors, who are not all staff.
+ * role. The Owner types any credit they like and picks its accent colour. That
+ * is the whole point of the page -- it credits contributors, who are not all
+ * staff.
  *
  * @param {HTMLFormElement} form
  */
 async function addCreditsPersonFromForm(form) {
+  const scope = normaliseScope(form.dataset.rosterScope);
+  const onAbout = scope === 'about_us';
+
   const name = byId('credits-add-name')?.value.trim() || '';
   const role = byId('credits-add-role')?.value.trim() || '';
 
   if (!name || !role) {
     showToast('A person needs both a name and a role.', { type: 'error' });
+    return;
+  }
+
+  const category = byId('credits-add-category')?.value.trim() || '';
+  if (onAbout && !category) {
+    showToast('Choose a roster: Board Members or Behind the Bylines.', { type: 'error' });
     return;
   }
 
@@ -5510,6 +5665,8 @@ async function addCreditsPersonFromForm(form) {
     portrait = byId('credits-add-url')?.value.trim() || '';
   }
 
+  const order = readOrderField(form, scope);
+
   // FIELD NAMES MUST MATCH addPerson().
   //
   // This handler used to send { role_label, role_color, portrait_url } while
@@ -5523,12 +5680,14 @@ async function addCreditsPersonFromForm(form) {
     color: byId('credits-add-color')?.value || '',
     blurb: byId('credits-add-blurb')?.value.trim() || '',
     portraitUrl: portrait,
-    // The open roster decides where a new person lands by default, and the select
-    // lets the Owner override it. Without the select a person added to
-    // "Board Members" would silently land on the Credits page instead, because
-    // the add handler has no idea which roster the panel is showing.
-    category: byId('credits-add-category')?.value ?? creditsScope,
-    aboutOrder: readOrderField(creditsScope)
+    // The scope comes from the form, so an entry cannot land on the page the
+    // Owner is not looking at. There is no longer a select that can contradict
+    // it — the old `creditsScope` default plus "Appears under" dropdown is what
+    // let a Credits entry quietly become a board member.
+    pageScope: scope,
+    category: onAbout ? category : '',
+    // One field, whichever page's order column this form renders.
+    ...(onAbout ? { aboutOrder: order } : { order })
   });
 
   if (!result.ok) {
@@ -5539,7 +5698,7 @@ async function addCreditsPersonFromForm(form) {
   form.reset();
   await refreshCreditsPeople();
   paintActiveTab();
-  showToast(`${name} added.`, { type: 'success' });
+  showToast(`${name} added to the ${scopeLabel(scope)} page.`, { type: 'success' });
 }
 
 /**
@@ -6525,15 +6684,14 @@ function handleClick(event) {
       break;
 
     /* --- credits --- */
-    // Switching which roster the tab is editing. Purely local state: the cards,
-    // the forms and the handlers are identical either way -- only the filter and
-    // two labels change. Repainted from the CACHE rather than refetched, because
-    // the whole roster is already loaded and a round-trip on every switch makes
-    // the switcher feel like a page load.
-    case 'credits-scope':
-      creditsScope = trigger.dataset.scope ?? '';
-      paintActiveTab();
-      break;
+    // There is no scope-switcher case any more.
+    //
+    // About Us and Credits are two TABS now, not three views behind one button
+    // row, so which page you are editing is `admin-tab-body.dataset.tab` and the
+    // scope is derived from that by `tabScope()`. The `credits-scope` action and
+    // the `creditsScope` module variable are both gone; leaving a handler here
+    // that could set a scope would reintroduce exactly the "which page is this
+    // save for?" ambiguity the split exists to remove.
 
     // Every one of the rest writes to public.credits_people through an RPC that
     // re-checks is_owner() in Postgres, so this client-side gate is a
@@ -6556,8 +6714,33 @@ function handleClick(event) {
         });
         return;
       }
+
+      /*
+       * SCOPE THE LIST BEFORE REORDERING.
+       *
+       * `creditsPeople` is the whole roster, both pages, because the panel has to
+       * be able to see every row. Passing that straight to `moveRoleBand()` is
+       * wrong now that pages are separate: the RPC rewrites `sort_order` from the
+       * ARRAY POSITION of every id it is handed, so handing it board members
+       * mixed in with Credits entries would renumber the About page's people with
+       * Credits positions. The About page reads `about_order`, so the visible
+       * damage is nil -- but the Credits page's own order would be corrupted by
+       * the presence of rows that are not on it.
+       *
+       * `moveRoleBand` also uses the array to decide which BANDS exist, and a band
+       * named "Contributor" appearing on both pages would otherwise be one band
+       * holding both rosters' people.
+       */
+      const creditsOnly = rowsInScope(creditsPeople, 'credits');
+      if (creditsOnly.length < 2) {
+        showToast('There are not enough people on the Credits page to reorder.', {
+          type: 'error'
+        });
+        return;
+      }
+
       guard(async () => {
-        const result = await moveRoleBand(creditsPeople, role, direction);
+        const result = await moveRoleBand(creditsOnly, role, direction);
         if (!result.ok) {
           showToast(result.message, { type: 'error' });
           return;
@@ -6605,15 +6788,39 @@ function handleClick(event) {
         const ownId = creditsPeople?.find(
           (p) => `credits-color-${p.id}` === targetId
         )?.id;
-        const other = (creditsPeople || []).find((p) => p.id !== ownId);
+
+        /*
+         * THE SOURCE MUST BE SOMEONE WHO IS ON SCREEN.
+         *
+         * `creditsPeople` is the whole roster, both pages — the panel needs it
+         * that way so a row is never unreachable. But this fallback used to pick
+         * "the first person who is not this one" from that list and read their
+         * colour input by id, and with the pages split that first person is
+         * routinely a board member whose card is NOT rendered on the Credits tab.
+         * `byId()` then returned null, `copyRoleColour` had nothing to read, and
+         * the button silently did nothing at all — the exact failure the comment
+         * above this block was written to prevent.
+         *
+         * So the fallback is scoped to the tab that is open, which is also the
+         * only set whose colour inputs actually exist in the DOM.
+         */
+        const onScreen = rowsInScope(
+          creditsPeople || [],
+          tabScope(byId('admin-tab-body')?.dataset.tab)
+        );
+        const other = onScreen.find((p) => p.id !== ownId);
         if (other) sourceId = `credits-color-${other.id}`;
       }
 
       if (!sourceId) {
+        const onScreenCount = rowsInScope(
+          creditsPeople || [],
+          tabScope(byId('admin-tab-body')?.dataset.tab)
+        ).length;
         showToast(
-          (creditsPeople || []).length
-            ? 'Add a second person first, then copy their role colour.'
-            : 'Add a person first, then copy their role colour.',
+          onScreenCount
+            ? 'Add a second person on this page first, then copy their accent colour.'
+            : 'Add a person to this page first, then copy their accent colour.',
           { type: 'info' }
         );
         break;

@@ -222,7 +222,7 @@ report(
 );
 report(
   'the width measured is the sum of the items, NOT the list scrollWidth',
-  /widths\.reduce\(\(sum, w\) => sum \+ w, 0\)/.test(publicSrc) &&
+  /shown\.reduce\(\(sum, item\) => sum \+ item\.offsetWidth, 0\)/.test(publicSrc) &&
     !/const needed = list\.scrollWidth/.test(publicSrc),
   'the <ul> is itself a shrinkable flex item, so its scrollWidth reads back the width it was squeezed to and the check reports "fits" while labels wrap'
 );
@@ -332,24 +332,34 @@ report(
 
 console.log('\nSECTION 4 — About Us management in the Owner panel\n');
 
+/*
+ * These four used to assert the old shape: ONE tab with a three-way roster
+ * switcher and a per-card "Appears under" dropdown. That shape is gone, and two
+ * of the things it asserted are now bugs rather than features.
+ *
+ * What is preserved is the CONCERN behind them — "a second editor for the same
+ * six fields would be a second thing to keep in step" — which is now answered by
+ * one `renderRosterTab`/`rosterPersonCard` pair behind two tabs, rather than by
+ * collapsing both pages into one.
+ */
 report(
-  'the About rosters are managed from the existing Credits component',
-  /let creditsScope = ''/.test(adminSrc) && /function creditsScopeSwitcher/.test(adminSrc),
-  'a second editor for the same six fields would be a second thing to keep in step'
+  'both pages share one renderer, so a card fix cannot land on one page only',
+  /function renderRosterTab\(scope\)/.test(adminSrc) &&
+    /function rosterPersonCard\(person, scope\)/.test(adminSrc) &&
+    /renderAboutTab[\s\S]*?return renderRosterTab\('about_us'\);/.test(adminSrc) &&
+    /renderCreditsTab[\s\S]*?return renderRosterTab\('credits'\);/.test(adminSrc),
+  'the two editors share a card and a form; only the scope, the order column, the category field and the grouping differ'
 );
 report(
-  'the switcher offers all three rosters',
-  /'Credits page'/.test(adminSrc) &&
-    /ABOUT_CATEGORIES\.map/.test(adminSrc)
+  'an About Us card can be filed under a roster',
+  /id="credits-category-\$\{id\}"[\s\S]*?data-credits-category required/.test(adminSrc),
+  'the About page renders rosters under those two headings, and the database refuses an about_us row without a category'
 );
+report('the About add form can place a new person in a roster', /credits-add-category/.test(adminSrc));
 report(
-  'each person card can be moved between rosters',
-  /data-credits-category/.test(adminSrc)
-);
-report('the add form can place a new person in a roster', /credits-add-category/.test(adminSrc));
-report(
-  'a save sends the category, so a promotion is one edit',
-  /category: form\.querySelector\('\[data-credits-category\]'\)/.test(adminSrc)
+  'a save sends BOTH the scope and the category, in that order of authority',
+  /page_scope: scope,\s*\n\s*category: onAbout \? form\.querySelector/.test(adminSrc),
+  'the server derives the category FROM the scope, so a contradictory pair resolves to the credits interpretation rather than failing at COMMIT time'
 );
 report(
   'the About page and the Credits page are ordered by SEPARATE columns',
@@ -552,7 +562,14 @@ report(
   'the Owner can edit an episode in place',
   /export async function updatePodcastText/.test(podcastsSrc) &&
     /data-podcast-edit-form/.test(adminSrc) &&
-    /data-action="podcast-save-edit"/.test(adminSrc)
+    /form\.dataset\.podcastEditForm/.test(adminSrc) &&
+    /savePodcastEditFromForm/.test(adminSrc),
+  'the save is a plain submit control routed by the delegated form listener, so it carries no data-action'
+);
+report(
+  'no button claims a delegated action that has no handler',
+  !/data-action="podcast-save-edit"/.test(adminSrc),
+  'a data-action with no matching case reads as a delegated button that lost its handler; scripts/control-audit.mjs reports this class'
 );
 report(
   'editing text does NOT offer to swap the audio',
@@ -662,6 +679,351 @@ report(
 );
 
 /** Evaluate formatClock straight out of the module, without a DOM. */
+console.log('\nSECTION 7 — the alert opt-in is not a dead button\n');
+
+const alertsSrc = read('src/views/alerts.js');
+/**
+ * Only the BODY of ensureAlertPermission, so an assertion about the deliberate
+ * path cannot be satisfied by the legitimate automatic-prompt guard in
+ * shouldPromptForAlerts() -- which is a different function and is supposed to
+ * stay silent.
+ */
+const permissionFn = alertsSrc.slice(
+  alertsSrc.indexOf('export async function ensureAlertPermission'),
+  alertsSrc.indexOf('/* ----', alertsSrc.indexOf('export async function ensureAlertPermission'))
+);
+
+report(
+  'a deliberate tap is distinguished from the automatic prompt',
+  /export async function ensureAlertPermission\(\{ deliberate = false \} = \{\}\)/.test(alertsSrc),
+  'the "already answered" guard used to swallow deliberate clicks too, so the button did nothing at all -- no dialog, no toast, no error'
+);
+report(
+  'the already-answered guard is conditional on the prompt being automatic',
+  /if \(hasAnswered\(\) && !deliberate\)/.test(permissionFn) &&
+    !/if \(hasAnswered\(\)\) return false;/.test(permissionFn),
+  'silence is only correct for a prompt nobody asked for'
+);
+report(
+  'the opt-in button passes deliberate and catches',
+  /ensureAlertPermission\(\{ deliberate: true \}\)\.catch/.test(alertsSrc),
+  'the handler used to discard the promise, so a rejection became an unhandled rejection with nothing on screen'
+);
+report(
+  'a browser-level denied permission is explained, not re-requested',
+  /deliberate && permission === 'denied'/.test(alertsSrc) &&
+    /blocking notifications for this site/.test(alertsSrc),
+  'requestPermission() cannot re-prompt after a denial, so it resolves "denied" forever and looks like a dead button'
+);
+report(
+  'the automatic prompt guard is left intact',
+  /export function shouldPromptForAlerts\(\)[\s\S]*?if \(hasAnswered\(\)\) return false;/.test(
+    alertsSrc
+  ),
+  'that guard is correct where it lives: it stops the modal reappearing on every article'
+);
+
+console.log('\nSECTION 8 — About Us and Credits are two pages, not one filtered list\n');
+
+/*
+ * THE GUARD THAT MATTERS FOR THE BLEED, and it has to be STATIC.
+ *
+ * The browser probe in scripts/scope-check.mjs watches the network payload for an
+ * About Us name arriving on the Credits page, which is the real assertion. But it
+ * is VACUOUS IN DEMO MODE: `listPeopleInScope()` short-circuits to
+ * `demoRoster()` — localStorage — so no `credits_people` request is ever made and
+ * there is nothing to inspect. Measured: deleting `.eq('page_scope', wanted)` from
+ * src/lib/credits.js entirely still gave that probe 23/23 green.
+ *
+ * So the load-bearing version reads the source. It cannot be vacuous, and it
+ * runs in every `npm test`.
+ */
+report(
+  'both public pages filter in the QUERY, not in the renderer',
+  /\.eq\('page_scope', wanted\)/.test(creditsSrc) &&
+    /listPeopleInScope\('credits'\)/.test(creditsSrc) &&
+    /listPeopleInScope\('about_us'\)/.test(creditsSrc),
+  'filtering after the fetch still SHIPS the whole table to the browser: the board names, roles, notes and photo URLs were all in the HTML of the Credits page for a reader who never opened About Us. Filtering in the renderer is a convention, not a boundary.'
+);
+report(
+  'the About page reads only the about_us scope',
+  /export async function loadAboutRoster\(\)\s*\{\s*const people = await listAboutPeople\(\);/.test(
+    creditsSrc
+  ) && /export async function listAboutPeople\(\)\s*\{\s*return listPeopleInScope\('about_us'\);/.test(
+    creditsSrc
+  )
+);
+report(
+  'the Credits page reads only the credits scope',
+  /export async function listCredits\(\)\s*\{\s*return listPeopleInScope\('credits'\);/.test(
+    creditsSrc
+  )
+);
+report(
+  'the ONE unscoped reader is named, justified, and only two callers use it',
+  /export async function listAllPeople\(\)/.test(creditsSrc) &&
+    /primePortraits[\s\S]*?await listAllPeople\(\)/.test(creditsSrc) &&
+    /listCreditsForOwner[\s\S]*?return listAllPeople\(\);/.test(creditsSrc),
+  'scoping primePortraits() to the Credits page would strip the face off every byline belonging to a reporter the Owner listed on About Us -- a front-page regression caused by a change to a page nobody was looking at'
+);
+report(
+  'a person on both pages is two rows, and the panel says so',
+  /EXACTLY ONE per row/.test(creditsSrc) && /To put somebody on both pages, add them once on/.test(
+    adminSrc
+  ),
+  'the old design let one row serve both pages, so promoting somebody to the board silently demoted them from Credits'
+);
+
+report(
+  'the database forbids a row contradicting its own scope',
+  /credits_people_page_scope_check[\s\S]*?check \(page_scope in \('about_us', 'credits'\)\)/.test(
+    read('supabase/migrations/028_page_scopes.sql')
+  ) &&
+    /credits_people_scope_category_check[\s\S]*?page_scope = 'about_us' and category is not null[\s\S]*?page_scope = 'credits'\s+and category is null/.test(
+      read('supabase/migrations/028_page_scopes.sql')
+    ),
+  'without the second constraint a leftover category is exactly the value loadAboutRoster() matches on, so a Credits-only row reappears under "Board Members" the moment the About filter is widened by accident'
+);
+report(
+  'the backfill preserves migration 024 rule instead of guessing',
+  /set page_scope = case when category is null then 'credits' else 'about_us' end/.test(
+    read('supabase/migrations/028_page_scopes.sql')
+  ),
+  '"category IS NULL means Credits only" was the rule in force, so re-deriving it from category keeps every existing row on the page the Owner last saw'
+);
+report(
+  'page_scope is NOT NULL and defaults to credits',
+  /alter column page_scope set default 'credits'/.test(
+    read('supabase/migrations/028_page_scopes.sql')
+  ) &&
+    /alter column page_scope set not null/.test(read('supabase/migrations/028_page_scopes.sql')),
+  'a nullable scope means PostgREST can return a row belonging to neither page'
+);
+report(
+  'the RPC DROPS the old signature rather than overloading it',
+  /drop function if exists public\.wire_credits_people_upsert\(uuid, text, text, text, text, text, integer, text, integer\);/.test(
+    read('supabase/migrations/028_page_scopes.sql')
+  ) &&
+    /drop function if exists public\.wire_credits_people_upsert\(uuid, text, text, text, text, text, integer, text, integer, text\);/.test(
+      read('supabase/migrations/028_page_scopes.sql')
+    ),
+  'PostgREST resolves one RPC name to its single candidate: adding p_page_scope by OVERLOADING is PGRST202 "Could not find the function" on every add, save and remove, and it kills BOTH pages at once. This is the trap migration 024 walked into.'
+);
+report(
+  'the RPC derives the category FROM the scope, so the two cannot disagree',
+  /if v_scope = 'credits' then\s*v_category := null;/.test(
+    read('supabase/migrations/028_page_scopes.sql')
+  ) &&
+    /raise exception 'an About Us entry needs a category/.test(
+      read('supabase/migrations/028_page_scopes.sql')
+    )
+);
+
+console.log('\nSECTION 9 — two panel tabs, not one tab with a filter\n');
+
+report(
+  'About Us and Credits are two entries in TABS',
+  /\{ id: 'about', label: 'About Us'[\s\S]*?render: renderAboutTab, ownerOnly: true \}/.test(
+    adminSrc
+  ) &&
+    /\{ id: 'credits', label: 'Credits'[\s\S]*?render: renderCreditsTab, ownerOnly: true \}/.test(
+      adminSrc
+    )
+);
+report(
+  'there is no scope-switcher button row any more',
+  !/creditsScopeSwitcher/.test(adminSrc) &&
+    !/data-action="credits-scope"/.test(adminSrc) &&
+    !/case 'credits-scope'/.test(adminSrc),
+  'one tab behind three filter buttons is what made a Credits card offer "Appears under: Board Members" -- the bleed, made editable'
+);
+report(
+  'the "appears under" select is gone from every card',
+  !/data-credits-category[^]*?Credits page only/.test(adminSrc) &&
+    !/<option value="" \$\{creditsScope/.test(adminSrc),
+  'that dropdown is how a person used to be moved off one page by editing a card on the other'
+);
+report(
+  'the page a card belongs to comes from the form that was submitted',
+  /data-roster-scope="\$\{onAbout \? 'about_us' : 'credits'\}"/.test(adminSrc) &&
+    /const scope = normaliseScope\(form\.dataset\.rosterScope\);/.test(adminSrc),
+  'the old module-level `creditsScope` was written by the switcher and read by the save handlers with nothing checking they agreed -- a save dispatched after a tab switch wrote about_order onto a Credits row'
+);
+report(
+  'a typed order is read from ITS OWN form, not the first on the page',
+  /function readOrderField\(form, scope\)/.test(adminSrc) &&
+    /form\.querySelector\(selector\)/.test(adminSrc) &&
+    !/function readOrderField\(scope\)/.test(adminSrc),
+  'document.querySelector returns the FIRST match on the page, so with several cards rendered every card saved the top card order number'
+);
+report(
+  'reordering a role band is scoped before the ids are sent',
+  /const creditsOnly = rowsInScope\(creditsPeople, 'credits'\);[\s\S]*?moveRoleBand\(creditsOnly, role, direction\)/.test(
+    adminSrc
+  ) && !/moveRoleBand\(creditsPeople, role, direction\)/.test(adminSrc),
+  'the reorder RPC rewrites sort_order from the ARRAY POSITION of every id it is handed, so passing the whole roster renumbers the Credits page using About Us positions'
+);
+report(
+  'the About add form asks for a roster; the Credits one does not',
+  /id="credits-add-category"[\s\S]*?required/.test(adminSrc) &&
+    /onAbout\s*\? `[\s\S]*?id="credits-add-category"[\s\S]*?`\s*:\s*''/.test(adminSrc),
+  'an About Us row with no heading renders under nothing; a disabled-looking dropdown on the Credits form would be the bleed back in disguise'
+);
+
+console.log('\nSECTION 10 — the role pill is a wash, and it is legible\n');
+
+report(
+  'the badge is a pill, not a solid slab',
+  /\.role-pill \{[\s\S]*?border-radius: 9999px[\s\S]*?background: var\(--role-wash\)/.test(css) &&
+    !/\.about-card__role \{[\s\S]*?background: var\(--role-colour/.test(css),
+  '`background: var(--role-colour); color: #fff` was a solid block of whatever colour the Owner picked, which is unreadable for every dark role colour and shouts over the name'
+);
+report(
+  'the pill is uppercase, tracked, semibold, and wraps INSIDE itself',
+  /\.role-pill \{[\s\S]*?text-transform: uppercase[\s\S]*?overflow-wrap: anywhere/.test(css) &&
+    /\.role-pill \{[\s\S]*?font-weight: 600[\s\S]*?letter-spacing: 0\.05em/.test(css) &&
+    /\.role-pill \{[\s\S]*?font-size: 0\.75rem/.test(css),
+  '"ASSISTANT PRESIDENT/COORDINATOR" is 30 characters and a pill has no natural break, so without `anywhere` it pushes out past the card padding -- exactly the complaint this replaced'
+);
+report(
+  'the wash is translucent and the text keeps the accent',
+  /\.role-pill \{[\s\S]*?--role-wash: color-mix\(in srgb, var\(--role-solid[^)]*\) 12%/.test(css) &&
+    /\.role-pill \{[\s\S]*?color: var\(--role-accent\)/.test(css)
+);
+report(
+  'TWO accents are emitted, one per theme, and CSS picks',
+  /--role-accent-light/.test(creditsSrc) &&
+    /--role-accent-dark/.test(creditsSrc) &&
+    /\.role-pill \{[\s\S]*?--role-accent: var\(--role-accent-light\)/.test(css) &&
+    /\.dark \.role-pill \{[\s\S]*?--role-accent: var\(--role-accent-dark/.test(css),
+  'contrast depends on the colour VALUES, so only JS can compute a passing accent -- but WHICH theme is on screen is not known at render time. Emitting one accent tuned for the dark card produced 1.79:1 pills in light mode.'
+);
+report(
+  'the accent is NUDGED toward contrast, in the right direction per theme',
+  /function ensureContrast\(hex, surface, target\)/.test(creditsSrc) &&
+    /luminance\(surface\) > 0\.5 \? '#000000' : '#ffffff'/.test(creditsSrc) &&
+    /CARD_SURFACES = \{\s*light: '#faf8f5',\s*dark: '#18181b'\s*\}/.test(creditsSrc),
+  'a fixed "lighten until it passes" loop drives an already-pale accent straight up to invisible on a light card'
+);
+report(
+  'the card surface is a THEME TOKEN, not a hardcoded dark pair',
+  /:root \{[\s\S]*?--surface-card: #faf8f5/.test(css) &&
+    /\.dark \{[\s\S]*?--surface-card: #18181b/.test(css) &&
+    /\.about-card \{[\s\S]*?background: var\(--surface-card/.test(css),
+  'the site ships both themes; hardcoding #18181b made every card dark-on-light for a light-mode reader'
+);
+report(
+  'the details column is the thing that shrinks',
+  /\.about-card__body \{[\s\S]*?min-width: 0[\s\S]*?flex: 1 1 auto/.test(css) &&
+    /\.credits-card__body \{[\s\S]*?min-width: 0/.test(css),
+  'without min-width:0 a long name pushes the card wider than its grid track instead of wrapping inside it'
+);
+report(
+  'a 72px avatar is shrink-proof and square',
+  /\.about-card__photo \{[\s\S]*?width: 72px[\s\S]*?height: 72px[\s\S]*?flex-shrink: 0[\s\S]*?border-radius: 10px[\s\S]*?object-fit: cover/.test(
+    css
+  )
+);
+report(
+  'the Owner panel previews the SAME pill the public page draws',
+  /class="role-pill role-pill--preview"\$\{palette \? paletteVars\(palette\) : ''\}/.test(adminSrc) &&
+    /rolePalette,\s*\n\s*paletteVars,/.test(adminSrc),
+  'a second approximation of the pill in the panel is a second thing that drifts from the page'
+);
+report(
+  'the note is muted italic body text',
+  /\.about-card__note \{[\s\S]*?font-style: italic[\s\S]*?font-size: 0\.875rem[\s\S]*?color: var\(--text-muted/.test(
+    css
+  )
+);
+
+console.log('\nSECTION 11 — the header fits, and nothing clips sideways\n');
+
+const authSrc = read('src/views/auth.js');
+report(
+  'the auth button has a narrow form that keeps its accessible name',
+  /class="auth-slot__text"/.test(authSrc) &&
+    /aria-label="Press login\. Press members only\."/.test(authSrc) &&
+    /@media \(width < 30rem\)[\s\S]*?\.auth-slot__text\s*\{\s*display:\s*none/.test(css),
+  'a 132px "Press Login" label beside a burger, wordmark, search and theme toggle is 15px too wide at 390 and 85px at 320'
+);
+report(
+  'the tools and links are allowed to shrink',
+  /\.nav-bar__tools,\s*\.nav-bar__links\s*\{\s*min-width:\s*0/.test(css) &&
+    /#auth-slot\s*\{\s*min-width:\s*0/.test(css)
+);
+report(
+  'the wordmark yields before the controls do',
+  /\.nav-bar__wordmark\s*\{[\s\S]*?flex-shrink:\s*1/.test(css) &&
+    /\.nav-bar__wordmark\s*\{[\s\S]*?text-overflow:\s*ellipsis/.test(css)
+);
+report(
+  'max-width is set on the root',
+  /html\s*\{[\s\S]*?max-width:\s*100%/.test(css) && /body\s*\{[\s\S]*?max-width:\s*100%/.test(css)
+);
+report(
+  'overflow-x: hidden is NOT used as a band-aid',
+  !/^\s*html\s*\{[^}]*overflow-x:\s*hidden/m.test(css) &&
+    !/^\s*body\s*\{[^}]*overflow-x:\s*hidden/m.test(css),
+  'it does not fix the width, it hides it -- and it can break position:sticky for the masthead nav'
+);
+report(
+  'the overflow measurement counts EVERY item, not just the movable ones',
+  /\[...list\.children\]\.filter\(\s*\(item\) => !item\.hidden/.test(publicSrc) ||
+    /\[\.\.\.list\.children\]/.test(publicSrc),
+  'summing only the overflow candidates returned 416px against 514px of space -- "it fits" -- while the five fixed links the reader could not avoid took another 530px the decision never saw, and the page scrolled 295px sideways'
+);
+report(
+  'the overflow menu is derived from the DOM, not from a log of moves',
+  /const hidden = overflowItems\.filter\(\(item\) => item\.hidden\)/.test(publicSrc) &&
+    !/const moved = \[\]/.test(publicSrc),
+  'an accumulator listed the same item twice when the loop revisited it -- the menu showed 7 entries for 5 destinations'
+);
+
+/*
+ * A BACKTICK INSIDE AN HTML COMMENT IN A TEMPLATE LITERAL.
+ *
+ * This shipped. A comment inside a template string read "...no matching `case`
+ * reads as a delegated button...", the backtick CLOSED the template, and `case`
+ * was parsed as JavaScript. The whole admin module failed to evaluate, which
+ * emptied the header's auth slot and killed every button in the Newsroom Panel --
+ * with a single "Unexpected token 'case'" in the console that nothing was reading.
+ *
+ * It is the cheapest possible mistake to make and the most expensive possible
+ * outcome, so it is asserted rather than remembered.
+ */
+{
+  const jsFiles = [
+    'src/app.js',
+    'src/views/admin.js',
+    'src/views/public.js',
+    'src/views/alerts.js',
+    'src/views/auth.js',
+    'src/lib/podcasts.js',
+    'src/lib/credits.js',
+    'src/lib/store.js'
+  ];
+  const offenders = [];
+  for (const file of jsFiles) {
+    const text = read(file);
+    text.split('\n').forEach((line, i) => {
+      // A backtick between <!-- and --> is inside a comment, and the comment is
+      // inside a template literal.
+      const comment = line.match(/<!--[\s\S]*?-->/);
+      if (comment && comment[0].includes('`')) {
+        offenders.push(`${file}:${i + 1}`);
+      }
+    });
+  }
+  report(
+    'no HTML comment inside a template literal contains a backtick',
+    offenders.length === 0,
+    offenders.length
+      ? `a backtick closes the template early and the rest becomes code: ${offenders.join(', ')}`
+      : ''
+  );
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 
 if (fail) {
