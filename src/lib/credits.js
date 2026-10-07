@@ -290,6 +290,20 @@ export function renderAbout(mount) {
 /**
  * One team card.
  *
+ * `variant` is presentation only and never changes what is rendered:
+ *
+ *   'lead'     the first person in a category, shown full width on a phone
+ *   'carousel' everyone else, in a horizontal swipe row on a phone
+ *   undefined  used on desktop, where all three collapse into one grid
+ *
+ * THE VARIANT IS NOT A SECOND COPY OF THE PERSON. Each person is rendered into
+ * exactly ONE card, and the layout differences are pure CSS: on desktop the
+ * carousel wrapper is `display: contents`, so its children become grid items of
+ * the same box the lead card sits in. Splitting the array here and re-merging it
+ * there means no name is duplicated into the DOM, which matters because a
+ * duplicated card is announced twice by a screen reader and counted twice by the
+ * scope check.
+ *
  * The avatar falls back three ways, in order, because a photo on this page is
  * optional and a broken one must not be worse than none: the stored portrait,
  * then the neutral glyph (imageFallbackAttr covers a URL that 404s), then the
@@ -307,23 +321,27 @@ export function renderAbout(mount) {
  * The accent is lightened until it passes 4.5:1 against the card, because the
  * Owner picks from a colour wheel with no contrast guidance and #1d4ed8 on
  * #18181b is 2.1:1. See `rolePalette()`.
+ *
+ * @param {object} person
+ * @param {'lead'|'carousel'} [variant]
  */
-function aboutCard(person) {
+function aboutCard(person, variant) {
   const url = safeUrl(person.portrait_url);
   const name = String(person.name || '').trim() || 'Team member';
   const role = String(person.role_label || '').trim();
   const note = String(person.blurb || '').trim();
   const palette = rolePalette(person.role_color);
+  const variantClass = variant ? ` about-card--${variant}` : '';
 
   const photo = url
     ? `<img class="about-card__photo" src="${escapeHtml(url)}" ${imageFallbackAttr()}
-         alt="${escapeHtml(name)}" width="72" height="72" loading="lazy" decoding="async" />`
+         alt="${escapeHtml(name)}" width="56" height="56" loading="lazy" decoding="async" />`
     : `<span class="about-card__photo about-card__photo--empty" aria-hidden="true">
          <span class="about-card__initials">${escapeHtml(initialsOf(name))}</span>
        </span>`;
 
   return `
-    <li class="about-card">
+    <li class="about-card${variantClass}">
       ${photo}
       <div class="about-card__body">
         <p class="about-card__name">${escapeHtml(name)}</p>
@@ -340,23 +358,55 @@ function aboutCard(person) {
   `;
 }
 
+/**
+ * ONE CATEGORY: a lead card plus a carousel on a phone, one grid on a desktop.
+ *
+ * WHO IS THE LEAD
+ * ---------------
+ * The first person in the Owner's display order, i.e. the lowest `about_order`.
+ *
+ * There is no "is lead" column and the brief named roles rather than a rule
+ * ("Lead Writer", "Assistant President", "Patron"), so matching on role text was
+ * the obvious alternative and the wrong one: it would silently promote whoever
+ * happened to write a certain word, ignore everyone else, and change which card
+ * is featured whenever somebody reworded a title.
+ *
+ * `about_order` is the signal the Owner actually controls, and putting somebody
+ * first is already how you say "this is the one". If a *separate* lead is wanted
+ * later, it wants an explicit column -- not a regular expression over free text.
+ *
+ * A category of one is the lead and nothing else: an empty carousel would leave
+ * a bare strip of padding under the card, so it is not rendered at all.
+ */
+function aboutCategory(category, people) {
+  const [lead, ...rest] = people;
+
+  return `
+    <section class="about-roster" aria-labelledby="about-${slug(category)}">
+      <h3 id="about-${slug(category)}" class="about-roster__heading">
+        ${escapeHtml(category)}
+      </h3>
+      ${
+        lead
+          ? `<div class="about-roster__people">
+               ${aboutCard(lead, 'lead')}
+               ${
+                 rest.length
+                   ? `<ul class="about-carousel" aria-label="More ${escapeHtml(
+                       category
+                     )}">${rest.map((p) => aboutCard(p, 'carousel')).join('')}</ul>`
+                   : ''
+               }
+             </div>`
+          : ''
+      }
+    </section>
+  `;
+}
+
 function aboutTemplate(sections) {
   const body = sections
-    .map(
-      ({ category, people }) => `
-      <section class="about-roster" aria-labelledby="about-${slug(category)}">
-        <h3 id="about-${slug(category)}" class="about-roster__heading">
-          ${escapeHtml(category)}
-        </h3>
-        ${
-          people.length
-            ? `<ul class="about-grid">${people.map(aboutCard).join('')}</ul>`
-            : `<p class="panel-sunken p-4 text-sm ink-muted">
-                 Nobody listed under ${escapeHtml(category)} yet.
-               </p>`
-        }
-      </section>`
-    )
+    .map(({ category, people }) => (people.length ? aboutCategory(category, people) : ''))
     .join('');
 
   return `
@@ -369,7 +419,7 @@ function aboutTemplate(sections) {
       </header>
 
       <section class="about-mission" aria-labelledby="about-mission-heading">
-        <h2 id="about-mission-heading" class="font-headline text-2xl font-black tracking-wide uppercase">
+        <h2 id="about-mission-heading" class="about-mission__title">
           Our mission &amp; Vision
         </h2>
         <p class="about-mission__tagline">Truth &#8226; Integrity &#8226; Voice</p>
@@ -390,10 +440,10 @@ function aboutTemplate(sections) {
       </section>
 
       <section class="mt-12" aria-labelledby="about-press-heading">
-        <h2 id="about-press-heading" class="font-headline text-2xl font-black tracking-wide uppercase">
+        <h2 id="about-press-heading" class="about-mission__title">
           Meet the press
         </h2>
-        <p class="ink-muted mt-2 text-sm">Behind every story is a team.</p>
+        <p class="about-standfirst">Behind every story is a team.</p>
         ${body}
       </section>
     </div>

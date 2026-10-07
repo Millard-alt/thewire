@@ -85,8 +85,47 @@ export function safeUrl(value, { allowedHosts } = {}) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Broken-image fallback                                                       */
-/* -------------------------------------------------------------------------- */
+/* --------------------------------------------------------------------------
+   Captions
+   -------------------------------------------------------------------------- */
+
+/**
+ * Placeholder caption strings that were written INTO the data instead of being
+ * left empty.
+ *
+ * "Untitled Image", "Untitled image" and "Untitled frame" all shipped as default
+ * values on the save paths. That is worse than an empty string: an empty caption
+ * is honest and every renderer already hides it, whereas a placeholder is
+ * indistinguishable from something a person typed — so the gallery grew a black
+ * caption bar reading "Untitled frame" under photographs that were perfectly
+ * well titled, and nobody could tell the difference from the outside.
+ *
+ * The write paths are fixed to store NULL instead. But fixing only the write path
+ * would leave every caption already in the database showing its placeholder bar
+ * forever, because nothing rewrites old rows. So the READ path has to recognise
+ * these too, which is what this is for.
+ *
+ * Matching is case-insensitive and trims, because the three spellings above were
+ * written by two different files.
+ *
+ * @param {unknown} value
+ * @returns {string} the caption to show, or '' when there is nothing to show
+ */
+export function captionText(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  if (/^untitled(\s+(image|frame|photo|dispatch|interview|pitch))?$/i.test(text)) return '';
+  return text;
+}
+
+/** True when `value` would render no caption bar at all. */
+export function hasCaption(value) {
+  return captionText(value) !== '';
+}
+
+/* --------------------------------------------------------------------------
+   Broken-image fallback
+   -------------------------------------------------------------------------- */
 
 /**
  * A neutral portrait glyph, used when a stored image URL turns out to be dead.

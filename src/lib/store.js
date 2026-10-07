@@ -25,6 +25,7 @@ import { config } from './config.js';
 import { getSupabase } from './supabase.js';
 import { createSeedState } from './seed.js';
 import { getSession, isOwner } from './auth.js';
+import { captionText } from './dom.js';
 
 const STORAGE_KEY = 'wire.state.v1';
 
@@ -2002,7 +2003,7 @@ export async function createMedia(input) {
   const item = {
     id: newId('media'),
     url: input.url?.trim() || '',
-    caption: input.caption?.trim() || 'Untitled frame',
+    caption: captionText(input.caption),
     // Opt-in: the Owner decides which uploads reach the public gallery.
     inGallery: Boolean(input.inGallery),
     galleryOrder: input.galleryOrder ?? null,

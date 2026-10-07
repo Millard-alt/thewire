@@ -60,6 +60,7 @@ const adminSrc = read('src/views/admin.js');
 const creditsSrc = read('src/lib/credits.js');
 const podcastsSrc = read('src/lib/podcasts.js');
 const storeSrc = read('src/lib/store.js');
+const domSrc = read('src/lib/dom.js');
 const stylesSrc = read('src/styles.css');
 const migration = read('supabase/migrations/024_about_podcasts_and_layout.sql');
 const repairSql = read('supabase/migrations/025_podcasts_storage_repair.sql');
@@ -937,10 +938,65 @@ report(
   'without min-width:0 a long name pushes the card wider than its grid track instead of wrapping inside it'
 );
 report(
-  'a 72px avatar is shrink-proof and square',
-  /\.about-card__photo \{[\s\S]*?width: 72px[\s\S]*?height: 72px[\s\S]*?flex-shrink: 0[\s\S]*?border-radius: 10px[\s\S]*?object-fit: cover/.test(
+  'the roster avatar is 56px, shrink-proof, square and rounded',
+  /\.about-card__photo \{[\s\S]*?width: 56px[\s\S]*?height: 56px[\s\S]*?flex-shrink: 0[\s\S]*?border-radius: 10px[\s\S]*?object-fit: cover/.test(
     css
-  )
+  ),
+  '56px rather than the earlier 72px: the card is now a compact row in a three-column grid, where 72px left roughly a third of the width for the name'
+);
+report(
+  'the avatar box is reserved before the image decodes',
+  /class="about-card__photo"[\s\S]{0,220}?width="56" height="56"/.test(creditsSrc),
+  'without width/height attributes the grid reflows as each portrait arrives, which moves the cards the reader is already looking at'
+);
+report(
+  'the role pill uses a clean sans-serif, not the typewriter mono face',
+  /\.role-pill \{[\s\S]*?font-family:\s*\n?\s*system-ui, -apple-system, 'Segoe UI', Roboto/.test(css) &&
+    !/\.role-pill \{[\s\S]{0,900}?font-family: var\(--font-mono/.test(css),
+  'the monospace face read as a terminal: a role title looked like a log line, and the wider tracking it needed is what made the text feel cramped rather than deliberate'
+);
+report(
+  'roster section headings are promoted from bare <h3> to real sections',
+  /\.about-roster__heading \{[\s\S]*?font-size: clamp\(1\.375rem[\s\S]*?font-weight: 700[\s\S]*?border-left: 4px solid #facc15[\s\S]*?padding-left: 0\.75rem[\s\S]*?margin-bottom: 1\.25rem/.test(
+    css
+  ),
+  'these classes were emitted by the template with NO rule anywhere in the stylesheet, so both rosters rendered at the browser default size — smaller than the body text beneath them, which is why they read as two lists rather than two sections'
+);
+report(
+  'the desktop grid re-merges the lead card and the carousel into ONE box',
+  /@media \(width >= 48rem\)[\s\S]*?\.about-roster__people \{[\s\S]*?display: grid[\s\S]*?repeat\(3, minmax\(0, 1fr\)\)[\s\S]*?\.about-carousel \{[\s\S]*?display: contents/.test(
+    css
+  ),
+  'display: contents is what lets one person be one DOM node and still appear as a full-width lead card on a phone and a uniform grid cell on a desktop — so a name is announced once by a screen reader rather than twice'
+);
+report(
+  'the phone carousel is a real swipe row',
+  /\.about-carousel \{[\s\S]*?overflow-x: auto[\s\S]*?scroll-snap-type: x mandatory[\s\S]*?overscroll-behavior-x: contain/.test(
+    css
+  ) &&
+    /\.about-card--carousel \{[\s\S]*?flex: 0 0 140px[\s\S]*?scroll-snap-align: start/.test(css),
+  'eight people is eight screens of scrolling on a phone, which is not many people to deserve that'
+);
+report(
+  'grid tracks have no automatic minimum, or one long name widens the row',
+  /repeat\(3, minmax\(0, 1fr\)\)/.test(css) && !/repeat\(3, 1fr\)/.test(css),
+  'a 1fr track has an automatic min-content floor, so one long unbreakable name sets the minimum for its column and the row stops fitting — while devtools still shows a grid that looks like it is working'
+);
+report(
+  'the About typography is actually declared',
+  /\.about-hero__title \{[\s\S]*?font-family: 'Playfair Display', Georgia, serif[\s\S]*?font-style: italic[\s\S]*?color: #e4e4e7/.test(
+    css
+  ) &&
+    /\.about-mission__tagline \{[\s\S]*?color: #facc15[\s\S]*?font-weight: 700[\s\S]*?letter-spacing: 0\.05em/.test(
+      css
+    ) &&
+    /\.about-mission__sub \{[\s\S]*?font-size: 1\.5rem[\s\S]*?font-weight: 700[\s\S]*?display: block/.test(
+      css
+    ) &&
+    /\.about-standfirst \{[\s\S]*?font-style: italic[\s\S]*?font-size: 1\.125rem[\s\S]*?color: #a1a1aa/.test(
+      css
+    ),
+  'all five of these were emitted by the template with no rule anywhere in the stylesheet, so the motto rendered in the body face and the subheadings were smaller than the text under them'
 );
 report(
   'the Owner panel previews the SAME pill the public page draws',
@@ -955,7 +1011,134 @@ report(
   )
 );
 
-console.log('\nSECTION 11 — the header fits, and nothing clips sideways\n');
+console.log('\nSECTION 11a — the header offers seven destinations, not ten\n');
+
+/**
+ * The header row and NAV_LINKS drifted apart before, which is how "Masthead"
+ * survived in index.html long after it left the array. Comparing them here is the
+ * only thing that makes the comment above them true.
+ */
+{
+  const html = read('index.html');
+  const listStart = html.indexOf('id="primary-links"');
+  const listEnd = html.indexOf('</ul>', listStart);
+  const staticList = html.slice(listStart, listEnd);
+
+  // Only non-empty text between tags: the list is indented across many lines, so
+  // a naive `>([^<>]+)<` also captures every empty run between `>` and `<`.
+  const staticLabels = [...staticList.matchAll(/>([^<>]{2,24})</g)]
+    .map((m) => m[1].trim())
+    .filter(Boolean);
+
+  /*
+    Scope the JS side to the NAV_LINKS array itself. A bare /\{ label: '([^']+)'/
+    over the whole file also matches the footer link list ("Feature of the week",
+    "On the record", "In pictures"), which is how this assertion first reported
+    ten destinations against a seven-item list.
+  */
+  const navStart = publicSrc.indexOf('const NAV_LINKS = [');
+  const navEnd = publicSrc.indexOf('\n];', navStart);
+  const navBody = publicSrc.slice(publicSrc.indexOf('[', navStart), navEnd);
+  const jsLabels = [...navBody.matchAll(/^\s*\{ label: '([^']+)'/gm)].map((m) => m[1]);
+
+  report(
+    'index.html and NAV_LINKS list the same destinations, in the same order',
+    JSON.stringify(staticLabels) === JSON.stringify(jsLabels),
+    `html=${JSON.stringify(staticLabels)} js=${JSON.stringify(jsLabels)}`
+  );
+  report(
+    'the header offers exactly the seven intended destinations',
+    JSON.stringify(jsLabels) ===
+      JSON.stringify([
+        'Latest',
+        'Assignments',
+        'Interviews',
+        'Podcasts',
+        'Photo Gallery',
+        'Credits',
+        'About Us'
+      ]),
+    JSON.stringify(jsLabels)
+  );
+  report(
+    'the removed destinations are gone from every rendering',
+    !/Today's Pick/.test(staticList) &&
+      !/Masthead<|>Weekly</.test(staticList) &&
+      !/label: "Today's Pick"/.test(publicSrc) &&
+      !/label: 'Weekly'/.test(publicSrc) &&
+      !/nav-drawer__link" href="#masthead-foot"/.test(html),
+    '"Today\'s Pick", "Weekly" and the drawer\'s "Masthead" must not survive in the static list, in NAV_LINKS, or in the drawer footer'
+  );
+  report(
+    'nav labels are strictly uppercase, via one declaration',
+    /\.nav-link \{[\s\S]*?text-transform: uppercase/.test(css),
+    'it was previously achieved per-renderer, which is how the drawer shipped in mixed case while the bar did not'
+  );
+  report(
+    'uppercase is presentational and does not leak into the accessible name',
+    /text-transform: uppercase/.test(css) &&
+      // The strings in NAV_LINKS stay in natural casing on purpose.
+      /\{ label: 'Latest'/.test(publicSrc) &&
+      !/label: 'LATEST'/.test(publicSrc),
+    'a screen reader announcing "LATEST" as letters is worse than announcing "Latest", so the transform is CSS and the data keeps its casing'
+  );
+  report(
+    'nav items and header controls cannot be squeezed',
+    /\.nav-bar__links > li \{[\s\S]*?flex-shrink: 0/.test(css) &&
+      /\.nav-bar__tools > \*,[\s\S]*?\.nav-bar__wordmark \{[\s\S]*?flex-shrink: 0[\s\S]*?white-space: nowrap/.test(
+        css
+      ),
+    'default flex-shrink: 1 makes a too-wide row COMPRESS rather than overflow, so labels wrap inside their own boxes and text collides — with no scrollbar and no console error to explain it'
+  );
+}
+
+console.log('\nSECTION 11b — an untitled photo is just a photo\n');
+
+report(
+  'no write path stores a placeholder caption',
+  // `\|\|`, escaped. Written as /|| 'Untitled image'/ this regex is two
+  // alternations whose first branch is EMPTY, so it matches the empty string and
+  // therefore everything -- which is not a check at all. It looked like one.
+  !/\|\|\s*'Untitled image'/.test(adminSrc) && !/\|\|\s*'Untitled frame'/.test(storeSrc),
+  'a placeholder is indistinguishable from something a person typed, so every photograph grew a black bar reading "Untitled frame". An empty string is honest and every renderer already hides it.'
+);
+report(
+  'article and episode TITLE fallbacks are left alone',
+  /\|\|\s*'Untitled dispatch'/.test(storeSrc) && /\|\|\s*'Untitled episode'/.test(adminSrc),
+  'these are not caption bars. podcasts_title_check is NOT NULL with a length CHECK, so a title placeholder is a real fallback for a row the constraint would otherwise reject, and it is never shown under a photograph'
+);
+report(
+  'captionText recognises the placeholders ALREADY in the database',
+  /export function captionText\(value\)/.test(domSrc) &&
+    /\^untitled\(\\s\+\(image\|frame\|photo\|dispatch\|interview\|pitch\)\)\?\$\/i/.test(domSrc),
+  'fixing only the write path leaves every caption already stored showing its placeholder bar forever, because nothing rewrites old rows'
+);
+report(
+  'every caption renderer hides the CONTAINER, not just the text',
+  /captionText\(item\.caption\)[\s\S]{0,200}?class="block min-w-0 truncate/.test(adminSrc) &&
+    /captionText\(shot\.caption\)/.test(publicSrc) &&
+    /captionText\(article\.caption\)/.test(publicSrc) &&
+    /captionText\(todaysPick\.caption\)/.test(publicSrc),
+  'the media library rendered its <figcaption> unconditionally, so the bar was there whatever the caption said'
+);
+report(
+  'the generated "Part N" caption is left alone',
+  /Part \$\{index\} of this interview/.test(publicSrc),
+  'it is always meaningful and never a stored placeholder, so it is not a caption bar to suppress'
+);
+
+console.log('\nSECTION 11c — placeholder branding is current\n');
+
+report(
+  'no user-facing placeholder still uses the old "W"',
+  !/"W"|'W'|The Wire|The Wire/g.test(domSrc + storeSrc + creditsSrc + publicSrc + adminSrc),
+  'the rebrand landed in 4c2b151; the surviving `wire_*` strings are SQL function names, CustomEvent names and a localStorage key, which are API and must NOT be renamed'
+);
+report(
+  'the image placeholders name the current publication',
+  /The Pulse<\/text>/.test(publicSrc) && /The Pulse<\/text>/.test(adminSrc),
+  'BLANK_IMAGE renders the wordmark, so it carries the rebrand automatically'
+);
 
 const authSrc = read('src/views/auth.js');
 report(

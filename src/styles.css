@@ -579,6 +579,23 @@
      wraps its own text rather than overflowing, which is what made this bar look
      like two uneven lines. */
   white-space: nowrap;
+
+  /*
+    STRICTLY CAPITALISED, EVERYWHERE.
+
+    This one declaration covers all three renderings of the header — the inline
+    bar, the "More" overflow menu and the phone drawer — because they all use
+    `.nav-link` or inherit from it. It was previously achieved per-renderer, which
+    is how the drawer drifted and shipped in mixed case while the bar did not.
+
+    `text-transform` rather than uppercasing the strings in NAV_LINKS, because the
+    accessible name must keep its natural casing: a screen reader announcing
+    "LATEST" as letters is worse than announcing "Latest". The transformation is
+    presentational only, and `aria-label` on the drawer is left in sentence case
+    for exactly that reason.
+  */
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--text);
     background-image: linear-gradient(var(--nav-underline), var(--nav-underline));
     background-repeat: no-repeat;
@@ -1975,7 +1992,23 @@ class because the ratio is the whole point.
   border-radius: 9999px;
   background: var(--role-wash);
   color: var(--role-accent);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  /*
+    A CLEAN SANS-SERIF, and no longer the monospace face.
+
+    This was `var(--font-mono)`, which is the typewriter look: it reads as a
+    terminal, so a role title looked like a log line and the tracking had to be
+    opened up to `0.06em` to stay legible, which is what made the text feel cramped
+    rather than deliberate. `system-ui` puts it in the same family as everything
+    else on the page and needs no font request.
+
+    The `system-ui, -apple-system, Segoe UI, Roboto, ...` chain is spelled out
+    rather than shortened to `sans-serif` so the Windows and Android faces are
+    named: the generic `sans-serif` on those platforms is a serif-ish fallback in
+    some older configurations, and a role badge picking up a serif would undo the
+    whole change.
+  */
+  font-family:
+    system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.05em;
@@ -2017,23 +2050,152 @@ class because the ratio is the whole point.
 
 /* --- the card --------------------------------------------------------------- */
 
+/* =============================================================================
+   ABOUT US — page typography, roster headings, cards
+   -----------------------------------------------------------------------------
+   MOST OF THIS DID NOT EXIST. `.about-roster__heading`, `.about-grid`,
+   `.about-hero__title`, `.about-mission__*` and `.about-standfirst` were all
+   emitted by the template with no rule anywhere in this file, so "Board Members"
+   and "Behind the Bylines" rendered as bare <h3> at the browser's default size —
+   smaller than the body text under them, which is why the two rosters read as
+   two lists rather than two sections. A class in the markup is not a style.
+   ========================================================================== */
+
+/* --- the motto and the mission ------------------------------------------------ */
+
+.about-hero__title {
+  /*
+    A display serif in italic, at a size that reads as a masthead line rather than
+    a heading. Playfair is the project face; Georgia is the fallback because it is
+    already present and needs no font request, and `serif` is the last resort so a
+    network failure still leaves italic serif rather than the app's sans.
+  */
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-weight: 500;
+  font-size: clamp(1.5rem, 1.1rem + 1.6vw, 2.25rem);
+  line-height: 1.2;
+  color: #e4e4e7;
+  margin-top: 0.5rem;
+}
+
+.about-mission__title {
+  /* Larger than the subheadings below it, smaller than nothing else. */
+  font-family: var(--font-headline, Georgia, serif);
+  font-size: clamp(1.5rem, 1.2rem + 1.2vw, 2rem);
+  font-weight: 800;
+  line-height: 1.15;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text, #f4f4f5);
+}
+
+.about-mission__tagline {
+  /*
+    Gold, not the site accent. The red that carries the masthead is for breaking
+    news; a values line in the same red as a live alert reads as one. The gold is
+    the only other accent on the page, so it is unmistakable here.
+  */
+  color: #facc15;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  margin-top: 0.5rem;
+  font-size: 0.9375rem;
+}
+
+.about-mission__sub {
+  /*
+    A real subheading, not a bolded paragraph: 1.5rem against the 2rem section
+    title above it, so the hierarchy is visible without either shouting.
+  */
+  display: block;
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #f4f4f5;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.about-mission__body {
+  font-size: 1rem;
+  line-height: 1.7;
+  color: var(--text-muted, #a1a1aa);
+  max-width: 62ch;
+}
+
+.about-standfirst {
+  font-style: italic;
+  font-size: 1.125rem;
+  color: #a1a1aa;
+  margin-bottom: 1rem;
+}
+
+/* --- the roster headings ------------------------------------------------------ */
+
+.about-roster {
+  margin-top: 2rem;
+}
+
+.about-roster__heading {
+  /*
+    THE heading that makes a roster a section. The gold left rule is the accent;
+    it is 4px of line rather than a filled block, so it marks the section without
+    becoming the loudest thing on the page — the same decision the Credits band
+    rail makes, for the same reason.
+  */
+  font-size: clamp(1.375rem, 1.15rem + 1vw, 1.75rem);
+  font-weight: 700;
+  line-height: 1.2;
+  color: #f4f4f5;
+  border-left: 4px solid #facc15;
+  padding-left: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+/* --- the people container ---------------------------------------------------- */
+
+/*
+  ONE CONTAINER, THREE PRESENTATIONS.
+
+  On a phone this is a block: the lead card, then a horizontal carousel.
+  On a desktop it is a grid, and the carousel becomes `display: contents` so its
+  cards become grid items of THIS box. That is the whole reason the lead is split
+  out in the template rather than duplicated: each person exists in the DOM once,
+  so a screen reader announces them once and the scope check counts them once,
+  while CSS still delivers a single uniform grid on a wide screen.
+*/
+.about-roster__people {
+  display: block;
+}
+
+/* --- the card ---------------------------------------------------------------- */
+
 .about-card {
   display: flex;
-  gap: 1.25rem;
-  align-items: flex-start;
-  padding: 1.25rem;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.85rem 1rem;
   background: var(--surface-card, #18181b);
   border: 1px solid var(--surface-card-edge, #27272a);
-  border-radius: 12px;
+  border-radius: 10px;
+  /*
+    min-width: 0 on the BODY is what makes a long name wrap instead of widening
+    the card. The body is the flexible child here, so without it the text is
+    pushed past the card's padding — which is exactly what a
+    "ASSISTANT PRESIDENT/COORDINATOR" title did before.
+  */
 }
 
 .about-card__photo {
-  /* Square and shrink-proof, so one non-square upload cannot make the whole grid
-     ragged -- the same constraint .staff-portrait already carries. 72px rather
-     than the old 64px because the card is now roomier and a 64px face beside an
-     18px name reads as a thumbnail rather than a portrait. */
-  width: 72px;
-  height: 72px;
+  /*
+    56px, square and shrink-proof, so one non-square upload cannot make the whole
+    grid ragged and a row cannot be dragged out of alignment by the widest file.
+    The width/height ATTRIBUTES are 56 too, so the box is reserved before the
+    image decodes and the grid does not reflow when it arrives.
+  */
+  width: 56px;
+  height: 56px;
   flex-shrink: 0;
   border-radius: 10px;
   object-fit: cover;
@@ -2046,39 +2208,216 @@ class because the ratio is the whole point.
 }
 
 .about-card__initials {
-  font-size: 1.125rem;
-  font-weight: 900;
+  font-size: 1rem;
+  font-weight: 800;
   color: var(--text-muted, #a1a1aa);
 }
 
 .about-card__body {
-  /* The column that has to shrink. Without this a long name or a long role title
-     pushes the card wider than its grid track instead of wrapping inside it. */
   min-width: 0;
   flex: 1 1 auto;
 }
 
 .about-card__name {
-  font-size: 1.125rem;
+  font-size: 1rem;
   font-weight: 700;
-  line-height: 1.25;
+  line-height: 1.3;
   color: var(--text, #f4f4f5);
   overflow-wrap: anywhere;
 }
 
 .about-card__role {
-  /* The pill owns its own margin and layout; this rule only exists so the About
-     card and the Credits card can target the same element if they ever need to
-     differ. */
-  margin-top: 0.375rem;
+  margin-top: 0.3rem;
 }
 
 .about-card__note {
-  margin-top: 0.5rem;
-  font-size: 0.875rem;
+  /*
+    One line on a desktop card, where the brief asks for a "brief 1-line
+    description": a two-line clamp rather than an ellipsis, so the second line is
+    faded rather than cut mid-glyph. The full text is still in the DOM for anyone
+    who needs it, and the carousel card on a phone shows it in full.
+  */
+  margin-top: 0.35rem;
+  font-size: 0.8125rem;
   font-style: italic;
   line-height: 1.4;
   color: var(--text-muted, #a1a1aa);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* --- phone: the lead card ---------------------------------------------------- */
+
+.about-card--lead {
+  padding: 0.875rem 1rem;
+  border-left: 3px solid #facc15;
+}
+
+.about-card--lead .about-card__photo {
+  width: 64px;
+  height: 64px;
+}
+
+.about-card--lead .about-card__note {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+/* --- phone: the carousel ----------------------------------------------------- */
+
+.about-carousel {
+  /*
+    A horizontal swipe row, which is the point: on a phone a roster of eight is
+    eight screens of scrolling, and eight is not many people to deserve that.
+
+    `scroll-snap-type: x mandatory` plus `scroll-snap-align: start` on the items
+    makes each card land squarely rather than wherever the gesture happened to
+    stop. `overscroll-behavior-x: contain` stops a flick at the end of the row
+    from being handed to the page, which otherwise scrolls sideways-looking while
+    the reader believes they are still moving through people.
+  */
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  padding: 0.75rem 0.25rem 0.5rem;
+  /* Room for the focus ring on the first and last card, which would otherwise be
+     clipped by the row's own overflow. */
+  margin-inline: -0.25rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.about-card--carousel {
+  /* A fixed-width slide. `flex: 0 0 140px` refuses to shrink AND refuses to
+     grow, which is what makes them slides rather than a squashed row. */
+  flex: 0 0 140px;
+  scroll-snap-align: start;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 10px;
+}
+
+.about-card--carousel .about-card__photo {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+}
+
+.about-card--carousel .about-card__body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.about-card--carousel .about-card__role {
+  margin-top: 0;
+  text-align: center;
+}
+
+.about-card--carousel .about-card__note {
+  /* No clamp in the carousel: the card is narrow, so the note is the one place
+     the full line is worth having, and a truncated one-liner on a card about a
+     person is worse than none. */
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  margin-top: 0;
+}
+
+/* --- desktop: one uniform grid ------------------------------------------------ */
+
+@media (width >= 48rem) {
+  .about-roster__people {
+    /*
+      Three columns. `minmax(0, 1fr)` rather than `1fr`, and the reason is the
+      whole grid: a `1fr` track has an automatic minimum of `min-content`, so one
+      long unbreakable name sets the floor for its column and the row stops
+      fitting — while looking, in devtools, like a grid that is working. `0` in
+      the minmax removes that floor and lets `overflow-wrap` on the name do its
+      job.
+    */
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.85rem;
+    align-items: start;
+  }
+
+  /*
+    The merge. With the carousel transparent to layout, its <li>s become grid
+    items of `.about-roster__people`, so the lead card and every carousel card
+    share one grid and there is no second row of cards to keep in step.
+
+    The variant styles above are mobile-scoped in effect: `display: contents`
+    takes the carousel out of flow, so its `flex: 0 0 140px`, its column
+    direction and its circular avatars would otherwise still apply to the cards
+    inside it. They are neutralised here rather than moved into a media query, so
+    adding a variant cannot reintroduce a desktop-only override by forgetting to
+    scope it.
+  */
+  .about-carousel {
+    display: contents;
+  }
+
+  .about-card--lead,
+  .about-card--carousel {
+    /* Back to the shared row-card shape. */
+    flex: initial;
+    flex-direction: row;
+    align-items: center;
+    text-align: left;
+    padding: 0.85rem 1rem;
+    gap: 0.85rem;
+    border-left: 1px solid var(--surface-card-edge, #27272a);
+  }
+
+  .about-card--lead .about-card__photo,
+  .about-card--carousel .about-card__photo {
+    width: 56px;
+    height: 56px;
+    border-radius: 10px;
+  }
+
+  .about-card--lead .about-card__body,
+  .about-card--carousel .about-card__body {
+    display: block;
+    align-items: initial;
+    text-align: left;
+  }
+
+  .about-card--lead .about-card__role,
+  .about-card--carousel .about-card__role {
+    margin-top: 0.3rem;
+    text-align: left;
+  }
+
+  .about-card--lead .about-card__note,
+  .about-card--carousel .about-card__note {
+    margin-top: 0.35rem;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  /* Two columns where three make the cards too narrow to read a role title. */
+  @media (width < 68rem) {
+    .about-roster__people {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+}
+
+/* Respect a stated preference for less motion: the carousel still works, it just
+   does not animate the snap. */
+@media (prefers-reduced-motion: reduce) {
+  .about-carousel {
+    scroll-behavior: auto;
+  }
 }
 
 /* --- the Credits card ------------------------------------------------------- */
@@ -2468,9 +2807,40 @@ class because the ratio is the whole point.
  * by moving links into "More" -- or it fits. There is no third state.
  */
 .nav-bar__links > li {
-  display: flex;
-  flex-shrink: 0;
-}
+    display: flex;
+    /*
+      flex-shrink: 0 IS LOAD-BEARING, AND `nowrap` ALONE IS NOT ENOUGH.
+
+      Default `flex-shrink: 1` means a row that is a few pixels too wide does not
+      overflow — it COMPRESSES, and each item wraps its own text inside a narrower
+      box. That is how this bar came to render as two uneven lines with "Today's
+      Pick" at 41px tall beside "Weekly" at 24.5px, with no scrollbar and no
+      console error to explain it. `.nav-link`'s `white-space: nowrap` cannot save
+      it: the text refuses to wrap, so the box is forced wide anyway and the row
+      ends up overflowing regardless.
+
+      So the row must either FIT or OVERFLOW deliberately, never squeeze.
+      `measureNav()` decides which, by comparing the real summed widths of every
+      item — including the ones it cannot move — against the space available, and
+      moves the surplus into the "More" menu before anything is painted.
+    */
+    flex-shrink: 0;
+  }
+
+  /*
+    THE HEADER CONTROLS BESIDE THE LINKS, SAME RULE.
+
+    Search, the theme toggle, the auth slot and the Owner dropdown are all in the
+    same flex line and all carry text. Without `flex-shrink: 0` a long nav label
+    takes their width instead, and the first thing to go is the auth button's
+    label — which is why that label now collapses to an icon below 30rem rather
+    than overlapping the search field.
+  */
+  .nav-bar__tools > *,
+  .nav-bar__wordmark {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
 
 /* Hidden below the drawer breakpoint. The links are not lost: navDrawer() renders
    the same list into the drawer, so a phone has every destination. */

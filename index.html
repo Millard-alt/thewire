@@ -185,15 +185,27 @@
             The Pulse
           </a>
 
+          <!--
+            MUST MATCH NAV_LINKS IN src/views/public.js, IN THE SAME ORDER.
+
+            This is the list a reader sees before any JavaScript runs, and the
+            JS then rebuilds it from NAV_LINKS. Two sources that can disagree is
+            exactly the drift the code warns about: this one had grown "Today's
+            Pick", "Weekly" and "Masthead" while NAV_LINKS still listed them,
+            so removing a destination from one left it in the other until a
+            reload.
+
+            `measureNav()` budgets the row against these widths, so an extra item
+            here is width the controls beside it do not get. tests/features.mjs
+            asserts the two lists match, item for item, so they cannot drift
+            again silently.
+          -->
           <ul
             id="primary-links"
             class="nav-bar__links"
           >
             <li><a class="nav-link" href="#latest">Latest</a></li>
-            <li><a class="nav-link" href="#today">Today's Pick</a></li>
-            <li><a class="nav-link" href="#weekly">Weekly</a></li>
             <li><a class="nav-link" href="#assignments">Assignments</a></li>
-            <li><a class="nav-link" href="#masthead-foot">Masthead</a></li>
             <li data-nav-overflow>
               <button class="nav-link" type="button" data-nav="interviews">Interviews</button>
             </li>
@@ -295,7 +307,6 @@
         </div>
         <ul class="nav-drawer__list" data-nav-drawer-list></ul>
         <div class="nav-drawer__foot">
-          <a class="nav-drawer__link" href="#masthead-foot">Masthead</a>
           <a class="nav-drawer__link" href="#latest">Latest Coverage</a>
           <a class="nav-drawer__link" href="#assignments">Assignment Board</a>
         </div>

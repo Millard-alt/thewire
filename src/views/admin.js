@@ -76,7 +76,8 @@ import {
   releaseDialogLocks,
   showToast,
   formatEditionDate,
-  imageFallbackAttr
+  imageFallbackAttr,
+  captionText
 } from '../lib/dom.js';
 
 /** Which article statuses the Content Desk is filtered to. */
@@ -1532,8 +1533,29 @@ function renderMediaTab() {
             <img class="h-40 w-full object-cover" src="${escapeHtml(
               artFor(item.url)
             )}" ${imageFallbackAttr(BLANK_IMAGE)} alt="${escapeHtml(item.caption)}" loading="lazy" />
-            <figcaption class="space-y-2 p-3">
-              <span class="block min-w-0 truncate text-xs">${escapeHtml(item.caption)}</span>
+<figcaption class="space-y-2 p-3">
+                ${
+                  /*
+                    THE CAPTION BAR IS OPTIONAL, AND THIS IS WHY.
+                    It used to render unconditionally, so every image in the
+                    library wore a bar -- usually reading "Untitled frame", because
+                    that placeholder used to be written into the record instead of
+                    being left empty. An untitled photograph should just be a
+                    photograph.
+
+                    captionText() also treats a LEGACY stored placeholder as empty,
+                    because fixing only the write path would leave every caption
+                    already in the database showing its placeholder bar forever --
+                    nothing rewrites old rows. The category badge below is a
+                    different thing and still renders, since a filed image always
+                    belongs to one.
+                  */
+                  captionText(item.caption)
+                    ? `<span class="block min-w-0 truncate text-xs">${escapeHtml(
+                        captionText(item.caption)
+                      )}</span>`
+                    : ''
+                }
               ${
                 item.categoryName
                   ? `<span class="badge badge-gold block w-fit text-[0.625rem]">${escapeHtml(
@@ -5075,7 +5097,7 @@ async function saveStaffFromForm(form) {
 async function saveMediaFromForm(form) {
   const urlField = byId('media-url');
   const files = Array.from(byId('media-file')?.files || []);
-  const caption = byId('media-caption')?.value.trim() || 'Untitled image';
+  const caption = captionText(byId('media-caption')?.value);
   const categoryId = byId('media-category')?.value.trim() || '';
 
   // ---- Batch path: several files chosen at once ----

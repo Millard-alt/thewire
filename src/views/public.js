@@ -16,8 +16,9 @@ import {
   openDialog,
   closeDialog,
   showToast,
-  formatEditionDate,
-  imageFallbackAttr
+formatEditionDate,
+    imageFallbackAttr,
+    captionText
 } from '../lib/dom.js';
 import { bylineSticker, renderAbout } from '../lib/credits.js';
 import { listPodcasts } from '../lib/podcasts.js';
@@ -194,9 +195,11 @@ function articleCard(article, { showBody = false, size = 'md' } = {}) {
             : ''
         }
         ${
-          article.caption
-            ? `<p class="mt-2 text-[0.6875rem] italic ink-muted">${escapeHtml(article.caption)}</p>`
-            : ''
+captionText(article.caption)
+              ? `<p class="mt-2 text-[0.6875rem] italic ink-muted">${escapeHtml(
+                  captionText(article.caption)
+                )}</p>`
+              : ''
         }
         <button type="button" class="btn btn-quiet mt-3 self-start px-0" data-read="${escapeHtml(article.id)}">
           Read the full dispatch <i class="fa-solid fa-arrow-right text-[0.5rem]" aria-hidden="true"></i>
@@ -464,9 +467,11 @@ function renderGalleryCategoryPage(group) {
                       decoding="async"
                     />
                     ${
-                      shot.caption
-                        ? `<span class="gallery-card__caption">${escapeHtml(shot.caption)}</span>`
-                        : ''
+captionText(shot.caption)
+                          ? `<span class="gallery-card__caption">${escapeHtml(
+                              captionText(shot.caption)
+                            )}</span>`
+                          : ''
                     }
                   </button>`
                 )
@@ -989,7 +994,11 @@ function renderTodaysPick(todaysPick) {
           cls: 'mt-2 text-[0.6875rem] ink-muted',
           suffix: ` · ${todaysPick.date}`
         })}
-        ${todaysPick.caption ? `<p class="mt-3 text-xs italic ink-muted">${escapeHtml(todaysPick.caption)}</p>` : ''}
+        ${captionText(todaysPick.caption)
+            ? `<p class="mt-3 text-xs italic ink-muted">${escapeHtml(
+                captionText(todaysPick.caption)
+              )}</p>`
+            : ''}
         <button type="button" class="btn btn-primary mt-4" data-read="${escapeHtml(todaysPick.id)}">
           <i class="fa-solid fa-book-open" aria-hidden="true"></i>
           Read the full dispatch
@@ -1090,10 +1099,10 @@ export async function openArticle(id) {
       ${
         image
           ? `<figure>
-              <img src="${escapeHtml(image)}" ${imageFallbackAttr(BLANK_IMAGE)} alt="${escapeHtml(article.caption || '')}" class="h-56 w-full object-cover md:h-72" />
+              <img src="${escapeHtml(image)}" ${imageFallbackAttr(BLANK_IMAGE)} alt="${escapeHtml(captionText(article.caption))}" class="h-56 w-full object-cover md:h-72" />
               ${
-                article.caption
-                  ? `<figcaption class="surface-sunken px-5 py-2 text-xs italic ink-muted">${escapeHtml(article.caption)}</figcaption>`
+                captionText(article.caption)
+                  ? `<figcaption class="surface-sunken px-5 py-2 text-xs italic ink-muted">${escapeHtml(captionText(article.caption))}</figcaption>`
                   : ''
               }
             </figure>`
@@ -1575,9 +1584,26 @@ export function initPublicInteractions() {
  * footer and the drawer both need the split to decide what markup to emit.
  */
 const NAV_LINKS = [
+  /*
+   * SEVEN DESTINATIONS, DELIBERATELY.
+   *
+   * "Today's Pick" and "Weekly" were removed from the header. Their SECTIONS still
+   * exist on the front page and are still rendered — they are simply no longer
+   * destinations the header offers, so a reader reaches them by scrolling rather
+   * than by picking from a row of labels.
+   *
+   * That matters for more than tidiness. This list is the single source for three
+   * renderings — the inline bar, the "More" overflow menu and the phone drawer —
+   * and it is also what `measureNav()` budgets against. Every entry here is a
+   * label competing for width at 320px, so each one removed is width given back
+   * to the controls beside it. The overflow menu exists precisely because this
+   * row used to be ten wide; at seven it is much closer to fitting outright.
+   *
+   * "Masthead" was removed from the drawer's footer at the same time, for the same
+   * reason: it is a masthead link, and the masthead is the thing you are already
+   * looking at.
+   */
   { label: 'Latest', anchor: '#latest' },
-  { label: "Today's Pick", anchor: '#today' },
-  { label: 'Weekly', anchor: '#weekly' },
   { label: 'Assignments', anchor: '#assignments' },
   { label: 'Interviews', page: 'interviews' },
   { label: 'Podcasts', page: 'podcasts' },

@@ -21,8 +21,38 @@
  *   BASE_URL=http://localhost:5201/ node scripts/layout-check.mjs
  */
 import { chromium } from 'playwright';
+import { readFileSync } from 'node:fs';
 
 const BASE = process.env.BASE_URL || 'http://localhost:5201/';
+
+/**
+ * How many destinations the header is supposed to offer, read from the source
+ * rather than written down here.
+ *
+ * It was a literal `10`, and when "Today's Pick", "Weekly" and "Masthead" were
+ * removed the check failed with "expected 10" -- correct behaviour, but it meant
+ * every nav change needed this file edited by hand, which is exactly how the two
+ * lists in NAV_LINKS and index.html had already drifted apart once.
+ *
+ * Parsing the array is deliberately not clever. If the shape of NAV_LINKS changes,
+ * this throws loudly rather than silently returning a wrong number, and a loud
+ * failure at the top of the run is a better outcome than a check that quietly
+ * stops testing reachability.
+ */
+const EXPECTED_DESTINATIONS = (() => {
+  const src = readFileSync('src/views/public.js', 'utf8');
+  const start = src.indexOf('const NAV_LINKS = [');
+  if (start === -1) throw new Error('NAV_LINKS not found in src/views/public.js');
+  const open = src.indexOf('[', start);
+  const close = src.indexOf('\n];', open);
+  if (close === -1) throw new Error('could not find the end of NAV_LINKS');
+  const body = src.slice(open, close);
+  return (body.match(/^\s*\{ label:/gm) || []).length;
+})();
+
+console.log(
+  `layout-check: expecting ${EXPECTED_DESTINATIONS} header destinations, read from NAV_LINKS\n`
+);
 
 /**
  * Each width is a case that actually broke, plus the extremes.
@@ -117,14 +147,16 @@ for (const { w, h, why } of WIDTHS) {
         'a squeezed flex item wraps its own text instead of overflowing'
     );
   }
-  if (!measured.burgerVisible && measured.totalDestinations !== 10) {
+  if (!measured.burgerVisible && measured.totalDestinations !== EXPECTED_DESTINATIONS) {
     problems.push(
-      `${measured.totalDestinations} destinations reachable, expected 10 ` +
+      `${measured.totalDestinations} destinations reachable, expected ${EXPECTED_DESTINATIONS} ` +
         '(the menu lists an item twice, or one is unreachable)'
     );
   }
-  if (measured.burgerVisible && measured.drawerItems < 9) {
-    problems.push(`drawer lists ${measured.drawerItems} destinations, expected 9`);
+  if (measured.burgerVisible && measured.drawerItems !== EXPECTED_DESTINATIONS) {
+    problems.push(
+      `drawer lists ${measured.drawerItems} destinations, expected ${EXPECTED_DESTINATIONS}`
+    );
   }
   if (errors.length) problems.push(`console: ${errors[0]}`);
 
