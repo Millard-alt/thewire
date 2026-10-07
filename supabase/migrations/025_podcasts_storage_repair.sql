@@ -105,10 +105,42 @@ select
        and p.policyname = 'podcasts_upload'
   ), false)                                                       as upload_policy_checks_path,
 
-  -- Who the SQL editor is talking to. false here with policies in place is the
-  -- other half of a refused upload: the policy is fine and the caller is not.
-  (select public.is_staff())                                      as caller_is_staff,
-  (select public.current_account_id() is not null)                as session_resolves,
+  -- WHO IS THE UPLOAD FAILING, IF ANYONE.
+  --
+  -- THE COLUMNS BELOW ARE ABOUT THE DATA, NOT THE RUNNER, ON PURPOSE.
+  --
+  -- The previous version reported caller_is_staff and session_resolves here.
+  -- Both are ALWAYS FALSE in the SQL Editor, for every user, every time, and
+  -- neither tells you anything about the browser session that is actually being
+  -- refused:
+  --
+  --   is_staff()   -> current_account_id() -> looks up wire_sessions by the
+  --                  SHA-256 of wire_bearer_token(), i.e. the Authorization
+  --                  header of the current HTTP request.
+  --   SQL Editor   -> no HTTP request, so no Authorization header, so
+  --                  wire_bearer_token() is empty, so the hash matches no session
+  --                  row, so current_account_id() is NULL.
+  --
+  -- So those two columns looked like the answer and were structurally incapable
+  -- of being one. Reading "caller_is_staff: false" as "my account is not staff"
+  -- is reasoning from a value that means nothing where it was measured.
+  --
+  -- What CAN be checked from the editor is the DATA the policy depends on: are
+  -- there accounts at all, is yours Active, and is there a live session for it.
+  -- The definitive live test is in the browser: checkPodcastStorage() uploads a
+  -- one-byte probe through the same policy before any real upload, so the Owner
+  -- Panel now names which of these it is without leaving the app.
+  (select count(*) from public.staff_accounts)                  as accounts_total,
+  (select count(*) from public.staff_accounts where status = 'active') as accounts_active,
+  (select count(*) from public.staff_accounts where is_owner)    as owners_total,
+  -- A session that is neither revoked nor expired. If this is 0 while accounts
+  -- exist, nobody can pass the policy until they sign in again.
+  (
+    select count(*)
+      from public.wire_sessions s
+     where s.revoked_at is null
+       and s.expires_at > now()
+  )                                                              as live_sessions,
 
   to_regclass('public.podcasts')                                  as podcasts_table,
   exists (
@@ -149,9 +181,44 @@ create policy podcasts_read on storage.objects
 -- NO SIZE CHECK HERE. Supabase enforces file_size_limit above, and a policy
 -- expression cannot see the payload size -- `storage.objects` has no size column
 -- at insert time. The previous octet_length(name) looked like a cap and was not.
+--
+-- NO `to authenticated` ON PURPOSE, AND THIS IS THE WHOLE BUG.
+--
+-- This policy said `for insert to authenticated`, and it was the only policy in
+-- the project that named a Postgres role. This application has no Supabase Auth
+-- JWT: credentials.sql states it outright ("There is no JWT in this project") and
+-- issues its own opaque token, carried in the `x-wire-token` header and resolved
+-- by wire_bearer_token() -> current_account_id() -> is_staff().
+--
+-- So a request to Storage arrives WITHOUT a Supabase Auth session. PostgREST
+-- resolves it as `anon`, `to authenticated` matches no policy, and the insert is
+-- refused with:
+--
+--     new row violates row-level security policy
+--
+-- Three facts pin this down, and none of them involve the Owner's account:
+--
+--   1. THE BUCKET READ WORKED. `public = true` serves reads to anon, which is why
+--      list() and getPublicUrl() never complained.
+--   2. EVERY RPC WORKED. rpc() goes through withSessionToken(), a custom fetch
+--      that sets x-wire-token -- so the database side authenticated fine all
+--      along.
+--   3. PORTRAIT UPLOADS WORK, through the SAME supabase-js Storage path. Their
+--      policy, wire_media_insert, is `for insert with check (bucket_id = ...)`
+--      with no role clause at all -- so the identical anon-role request is
+--      evaluated and allowed.
+--
+-- `is_staff()` is the real authorisation check and it is unchanged and still
+-- strict: an account with no Active row in staff_accounts, or a request with no
+-- session, still evaluates to false and is still refused. `to authenticated` was
+-- a coarse proxy for "is a signed-in human", and it is the wrong proxy for an
+-- architecture that does not use Supabase Auth roles.
+--
+-- Dropping it cannot widen access: the policy is evaluated for MORE roles, and
+-- every one of them still has to satisfy is_staff().
 drop policy if exists podcasts_upload on storage.objects;
 create policy podcasts_upload on storage.objects
-  for insert to authenticated
+  for insert
   with check (
     bucket_id = 'podcasts'
     and public.is_staff()
@@ -160,9 +227,14 @@ create policy podcasts_upload on storage.objects
 
 -- Delete: Owner only. Purging a refused episode is a decision about something
 -- that was submitted for publication, so it is not a writer's to make.
+--
+-- Same removal of the role clause as podcasts_upload, for the same reason: the
+-- request arrives as `anon`, so `to authenticated` would make this policy
+-- unreachable and the Owner could never purge a refused episode's audio. The
+-- `is_owner()` check is the real gate and is unchanged.
 drop policy if exists podcasts_delete on storage.objects;
 create policy podcasts_delete on storage.objects
-  for delete to authenticated
+  for delete
   using (bucket_id = 'podcasts' and public.is_owner());
 
 commit;

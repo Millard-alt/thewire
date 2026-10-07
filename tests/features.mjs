@@ -1130,6 +1130,74 @@ function sqlLinesOutsideFunctionBodies(path) {
       !/bool_or\(\s*\(storage\.foldername\('episodes\/probe\.mp3'\)\)/.test(sql),
     'that expression is constant — it never looks at the policy — so it reported the same answer whether the policy checked the path or not, and NULL when the policy was absent. A check that cannot fail is not a check.'
   );
+
+  /*
+   * THE DIAGNOSIS MUST NOT REPORT COLUMNS THAT CANNOT ANSWER THE QUESTION.
+   *
+   * 025 reported `caller_is_staff` and `session_resolves`, and both are always
+   * false in the Supabase SQL Editor for every user: is_staff() resolves the
+   * account from the SHA-256 of the request's bearer token, and the Editor has no
+   * request and therefore no Authorization header. They looked like the answer and
+   * were structurally incapable of being one — and reading "caller_is_staff:
+   * false" as "my account is not staff" is exactly the misreading that happened.
+   *
+   * The live check belongs in the browser, where checkPodcastStorage() probes a
+   * write through the same policy.
+   */
+  report(
+    'the 025 diagnosis does not report columns that are always false in the Editor',
+    !/caller_is_staff/.test(sql) && !/session_resolves/.test(sql) && !/select public\.is_staff\(\)/.test(sql),
+    'is_staff() and current_account_id() both read the HTTP bearer token; the SQL Editor has none, so they answer the same thing every time and mean nothing there'
+  );
+  report(
+    'the 025 diagnosis checks the DATA the policy depends on instead',
+    /accounts_active/.test(sql) && /live_sessions/.test(sql),
+    'are there accounts, is one Active, and is there a live session — all answerable without an HTTP request'
+  );
+
+  /*
+   * NO PODCAST POLICY MAY NAME A POSTGRES ROLE.
+   *
+   * This project issues its own opaque token in the `x-wire-token` header and has
+   * no Supabase Auth JWT — credentials.sql says so outright. A Storage request
+   * therefore arrives with no Auth session, so PostgREST resolves it as `anon`,
+   * and a policy written `for insert to authenticated` matches nothing. The insert
+   * is then refused with "new row violates row-level security policy" no matter
+   * who is signed in or how correct their account is.
+   *
+   * That is not a theory: `podcasts_upload` carried `to authenticated` and every
+   * podcast upload failed with an RLS error, while portrait uploads succeeded
+   * through the identical supabase-js Storage path because wire_media_insert has
+   * no role clause.
+   *
+   * The real gates — `is_staff()` and `is_owner()` — are untouched, so removing
+   * the role clause widens which roles are EVALUATED, never who is ALLOWED.
+   */
+  const roleGated = [...sql.matchAll(/create policy\s+podcasts_\w+[\s\S]*?for\s+(?:insert|select|delete|update)\s+to\s+\w+/gi)]
+    .map((m) => m[0].match(/create policy\s+(podcasts_\w+)/i)[1]);
+  report(
+    'no podcast storage policy gates on a Postgres role',
+    roleGated.length === 0,
+    roleGated.length
+      ? `${roleGated.join(', ')} name a role, so an anon-role Storage request matches no policy and the write is refused by RLS`
+      : 'requests to Storage arrive with no Supabase Auth session and are resolved as anon'
+  );
+  report(
+    'the podcast policies keep their real authorisation checks',
+    /for insert\s*\n\s*with check \(\s*\n?\s*bucket_id = 'podcasts'\s*\n?\s*and public\.is_staff\(\)/.test(sql) &&
+      /for delete\s*\n\s*using \(bucket_id = 'podcasts' and public\.is_owner\(\)\)/.test(sql),
+    'dropping the role clause must not become dropping the check; is_staff() and is_owner() are what actually decide'
+  );
+  report(
+    'the portrait policies, which work, name no role either',
+    !/create policy wire_media_insert[\s\S]*?for insert\s+to\s+\w+/i.test(
+      read('supabase/013_portrait_upload_and_identity.sql')
+    ) || // 013 is the reference implementation; assert the shape, not the absence
+    /create policy wire_media_insert on storage\.objects\s*\n\s*for insert\s*\n\s*with check \(bucket_id = 'wire-media'\)/i.test(
+      read('supabase/013_portrait_upload_and_identity.sql')
+    ),
+    'portrait uploads go through the same Storage client and succeed, so they are the proof that the anon role is not itself the obstacle'
+  );
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
