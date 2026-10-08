@@ -133,7 +133,7 @@ where not exists (
 update public.site_settings
    set title         = 'THE PULSE',
        subtitle      = 'MJLA PRESS CLUB   INDEPENDENT VERIFIED DISPATCHES',
-       edition       = 'VOL. CXIV... NO. 32,841   NAKURU, KENYA',
+       edition       = 'Nakuru, Kenya',
        breaking_news = '{"enabled":true,"label":"BREAKING DISPATCH","headline":"MJLA Press Club Launches Sovereign Editorial Control Suite","subtext":"Full administrative controls are live across the newsroom.","severity":"Breaking","color":"Red","sticky":true,"dismissible":false,"linkText":"Read the announcement","linkUrl":"#"}'::jsonb,
        weekly_slots  = '{"article":"seed-article-1","event":"seed-article-2","picture":"seed-article-3"}'::jsonb,
        show_this_week = true,

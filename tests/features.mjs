@@ -112,17 +112,17 @@ report(
   'a phrase left in the masthead is a phrase a reader sees'
 );
 report(
-  'the document title and description are the ones Search Console indexed',
-  /<title>The Pulse \| Official Press &amp; News<\/title>/.test(indexHtml) &&
-    /Stories that matter\. Voices that count\./.test(indexHtml),
-  'these were changed for SEO and are asserted by name here so a later rebrand cannot quietly swap them back without this failing'
+  'the document title and description name the organisation',
+  /<title>The Pulse \| Melvin Jones Press Club<\/title>/.test(indexHtml) &&
+    /name="description"[\s\S]{0,120}content="[^"]*Melvin Jones Press Club/.test(indexHtml),
+  'these were changed for SEO and are asserted by name here so a later rebrand cannot quietly swap them back without this failing. The description must still name the organisation, not just the site.'
 );
 report(
-  'the footer copyright is exactly as specified',
-  /&#169; <span id="footer-year">2026<\/span> The Pulse &#8212; MJLA Press Club\. All\s+rights reserved\./.test(
+  'the footer copyright names the organisation',
+  /The Pulse &#8212; the Melvin\s+Jones Press Club, Melvin Jones Lions Academy \(MJLA\), Nakuru, Kenya\./.test(
     indexHtml.replace(/\s+/g, ' ')
-  ) ||
-    /The Pulse &#8212; MJLA Press Club\. All/.test(indexHtml)
+  ),
+  'MJLA is expanded in the footer so the acronym is never the only form a reader or crawler meets'
 );
 
 /* The rebrand's real hazard. `the wire` is a prefix of `wire_login`, so a
@@ -2332,8 +2332,8 @@ report(
     indexHtml
   ) &&
     /<meta name="robots" content="index, follow" \/>/.test(indexHtml) &&
-    /<title>The Pulse \| Official Press &amp; News<\/title>/.test(indexHtml) &&
-    /<meta\s+name="description"[\s\S]{0,200}Stories that matter\. Voices that count\./.test(indexHtml) &&
+    /<title>The Pulse \| Melvin Jones Press Club<\/title>/.test(indexHtml) &&
+    /<meta\s+name="description"[\s\S]{0,200}Melvin Jones Press Club/.test(indexHtml) &&
     /<link rel="canonical" href="https:\/\/thepulse\.us\.ci\/" \/>/.test(indexHtml),
   'Search Console refuses a token that is not in the served HTML, and a crawler that does not run JavaScript would not find one injected by a script'
 );

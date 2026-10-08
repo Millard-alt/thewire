@@ -11,7 +11,7 @@ export function createSeedState() {
     branding: {
       title: 'THE PULSE',
       subtitle: 'MJLA PRESS CLUB • INDEPENDENT VERIFIED DISPATCHES',
-      edition: 'VOL. CXIV... NO. 32,841 — NAKURU, KENYA'
+      edition: 'Nakuru, Kenya'
     },
 
     breakingNews: {

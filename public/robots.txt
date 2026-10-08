@@ -2,4 +2,7 @@ User-agent: *
 Allow: /
 Disallow: /admin
 
-Sitemap: /sitemap.xml
+# Absolute URL rather than the relative /sitemap.xml. Google accepts both, but an
+# absolute URL is unambiguous about which host is authoritative, and this file
+# already disambiguates the crawl side below.
+Sitemap: https://thepulse.us.ci/sitemap.xml
