@@ -37,8 +37,15 @@
       publication is honest here because every view is one HTML document, and
       putting a canonical on each path would need one tag per view in a single
       static file, which the client-side router cannot rewrite for a crawler.
+
+      The host MUST agree with every <loc> in public/sitemap.xml. A canonical
+      naming one domain while the sitemap names another tells Google the two are
+      competing pages for the same content, and it will trust neither. There is a
+      check for exactly that in scripts/sitemap-check.mjs, because it is the kind
+      of thing that goes stale the moment a domain changes and nothing else in
+      the build complains.
     -->
-    <link rel="canonical" href="https://thewire.us.ci/" />
+    <link rel="canonical" href="https://thepulse.us.ci/" />
 
     <meta
       name="description"

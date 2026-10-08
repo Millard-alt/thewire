@@ -1,58 +1,33 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  public/sitemap.xml -- the routes Google Search Console indexes.
-
-  EVERY URL HERE MUST RESOLVE, or this file is worse than no file at all: a
-  sitemap of 404s gets a domain flagged in Search Console rather than ignored, so
-  adding a route means adding a rewrite to vercel.json AND a view to PATH_ROUTES
-  in src/app.js. tests/features.mjs asserts the three lists agree, because that
-  is the only thing keeping a hand-edited route from shipping a dead link.
-
-  A fragment is deliberately absent from every entry. `/about` is a real path and
-  `/#about` is a client-side state of `/` -- Google drops the fragment before
-  indexing, so listing `/#about` would produce a duplicate of `/` six times over.
-  See the note on PATH_ROUTES for why the clean paths exist at all.
-
-  lastmod is the DEPLOY date for every URL rather than a per-page date, because
-  the content is behind a login-free static shell and nothing here can know when
-  an article changed. A wrong per-page lastmod is a signal Google is taught to
-  ignore; an honest one it trusts.
--->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://thewire.us.ci/</loc>
-    <lastmod>2026-10-08</lastmod>
+    <loc>https://thepulse.us.ci/</loc>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://thewire.us.ci/podcasts</loc>
-    <lastmod>2026-10-08</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
+    <loc>https://thepulse.us.ci/about</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://thewire.us.ci/interviews</loc>
-    <lastmod>2026-10-08</lastmod>
+    <loc>https://thepulse.us.ci/credits</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://thepulse.us.ci/podcasts</loc>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://thewire.us.ci/assignments</loc>
-    <lastmod>2026-10-08</lastmod>
+    <loc>https://thepulse.us.ci/interviews</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://thepulse.us.ci/assignments</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://thewire.us.ci/about</loc>
-    <lastmod>2026-10-08</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.6</priority>
-  </url>
-  <url>
-    <loc>https://thewire.us.ci/credits</loc>
-    <lastmod>2026-10-08</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
   </url>
 </urlset>

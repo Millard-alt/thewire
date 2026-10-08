@@ -2281,7 +2281,7 @@ report(
     /'\/podcasts': 'podcasts'/.test(appSrc) &&
     /'\/interviews': 'interviews'/.test(appSrc) &&
     /\[ASSIGNMENTS_PATH\]: 'publication'/.test(appSrc) &&
-    (sitemap.match(/<loc>https:\/\/thewire\.us\.ci\/(about|credits|podcasts|interviews|assignments)<\/loc>/g) ||
+    (sitemap.match(/<loc>https:\/\/thepulse\.us\.ci\/(about|credits|podcasts|interviews|assignments)<\/loc>/g) ||
       []).length === 5,
   'the routes, the PATH_ROUTES map in app.js and the sitemap are one fact in three files'
 );
@@ -2293,9 +2293,38 @@ report(
   'PATH_ROUTES alone changes what the ROUTER does with a path that already resolved; the rewrite is what makes the path resolve'
 );
 report(
-  'the sitemap contains no fragment',
-  !/#/.test(sitemap.replace(/<!--[\s\S]*?-->/g, '')) && /<urlset[^>]*>/.test(sitemap) && (sitemap.match(/<url>/g) || []).length === 6,
-  'Google drops the fragment before indexing, so `/#about` would be a sixth copy of `/`'
+  'the sitemap contains no fragment and no comment',
+  // The comment-stripping the previous version of this assertion did is gone,
+  // because the sitemap no longer HAS any comment to strip. The first version
+  // shipped with a comment explaining why no fragment appears in it -- and that
+  // comment contained `--`, which XML forbids inside a comment body, so Search
+  // Console rejected the whole file. The comment was the defect.
+  !/<!--/.test(sitemap) &&
+    !/--/.test(sitemap) &&
+    !/#/.test(sitemap) &&
+    /<urlset[^>]*>/.test(sitemap) &&
+    (sitemap.match(/<url>/g) || []).length === 6,
+  'XML forbids `--` inside a comment, so any prose in this file has to live in a migration or a README instead. Google also drops the fragment before indexing, so `/#about` would be a sixth copy of `/`'
+);
+report(
+  'the sitemap host and the canonical tag are the SAME domain',
+  (() => {
+    const sitemapHost = /<loc>https:\/\/([^/]+)\/<\/loc>/.exec(sitemap)?.[1];
+    const canonicalHref = /<link rel="canonical" href="([^"]+)"/.exec(indexHtml)?.[1];
+    if (!sitemapHost || !canonicalHref) {
+      console.log('        sitemap host:', sitemapHost, '| canonical:', canonicalHref);
+      return false;
+    }
+    if (sitemapHost !== new URL(canonicalHref).host) {
+      console.log(`        sitemap=${sitemapHost} canonical=${new URL(canonicalHref).host}`);
+      return false;
+    }
+    // Every loc, not just the first: a mixed-host sitemap is the worse failure,
+    // because it looks correct until you read all six.
+    const hosts = [...sitemap.matchAll(/<loc>https:\/\/([^/]+)\//g)].map((m) => m[1]);
+    return hosts.length === 6 && hosts.every((h) => h === sitemapHost);
+  })(),
+  'a canonical naming one domain while the sitemap names another tells Google the two are competing pages for the same content, and it will trust neither. This went stale the moment the domain changed and nothing in the build complained.'
 );
 report(
   'the crawler-facing SEO tags are in the static HTML, not in a script',
@@ -2305,7 +2334,7 @@ report(
     /<meta name="robots" content="index, follow" \/>/.test(indexHtml) &&
     /<title>The Pulse \| Official Press &amp; News<\/title>/.test(indexHtml) &&
     /<meta\s+name="description"[\s\S]{0,200}Stories that matter\. Voices that count\./.test(indexHtml) &&
-    /<link rel="canonical" href="https:\/\/thewire\.us\.ci\/" \/>/.test(indexHtml),
+    /<link rel="canonical" href="https:\/\/thepulse\.us\.ci\/" \/>/.test(indexHtml),
   'Search Console refuses a token that is not in the served HTML, and a crawler that does not run JavaScript would not find one injected by a script'
 );
 report(
