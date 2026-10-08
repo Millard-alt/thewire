@@ -20,22 +20,39 @@ import { getSupabase } from './supabase.js';
 const BUCKET = 'wire-media';
 
 /**
- * Only image types, and a 5 MB ceiling.
+ * Image types this module will upload.
  *
- * These MUST match the wire-media bucket's own limits, set in
- * supabase/migrations/034_close_wire_media_storage_policies.sql:
- * allowed_mime_types = png/jpeg/webp, file_size_limit = 5 MB. If the client
+ * These match the wire-media bucket's allowed_mime_types, set in
+ * supabase/migrations/034_close_wire_media_storage_policies.sql. If the client
  * accepts something the bucket rejects, the editor gets a raw Storage error
- * instead of the sentence below. GIF and AVIF were dropped for that reason --
- * the server allowlist is the authority now, not this object.
+ * instead of the sentence below.
+ *
+ * GIF and AVIF are here because neither can carry script. The types that can --
+ * SVG and anything HTML-ish -- are deliberately absent, because the bucket is
+ * public and an object there is served from this site's own origin.
  */
-const MAX_BYTES = 5 * 1024 * 1024;
-
 const ALLOWED = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
-  'image/webp': 'webp'
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/avif': 'avif'
 };
+
+/**
+ * 5 GB, the ceiling for a plain (non-resumable) Storage upload.
+ *
+ * This is a guard against an impossible transfer, NOT a cap on photo size. It
+ * is deliberately not a 5 or 25 MB figure: this bucket carries newsroom
+ * photography, and the real ceiling is whatever the Supabase project's global
+ * Storage limit is -- 50 MB on the Free plan, configurable far higher on Pro.
+ * The bucket sets no per-bucket limit, so the project limit governs and this
+ * number only catches a file that could never have been sent.
+ *
+ * See supabase/migrations/034_close_wire_media_storage_policies.sql, which sets
+ * `file_size_limit = null` on the bucket for exactly this reason.
+ */
+const MAX_BYTES = 5 * 1024 * 1024 * 1024;
 
 /**
  * Validate a File the editor chose.
@@ -45,11 +62,11 @@ const ALLOWED = {
 export function validateImageFile(file) {
   if (!file) return 'Choose an image from your device first.';
   if (!ALLOWED[file.type]) {
-    return 'Use a JPEG, PNG or WebP image.';
+    return 'Use a JPEG, PNG, WebP, GIF or AVIF image.';
   }
   if (file.size > MAX_BYTES) {
-    const mb = Math.round(file.size / (1024 * 1024));
-    return `That image is ${mb} MB. The limit is 5 MB.`;
+    const mb = Math.round(file.size / (1024 * 1024 * 1024));
+    return `That image is ${mb} GB. The limit is 5 GB.`;
   }
   return '';
 }

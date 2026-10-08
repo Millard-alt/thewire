@@ -326,15 +326,48 @@ console.log('\n--- wire_media storage (migration 034) -------------------------'
     bad("034 no longer admits the bucket root -- gallery/article uploads would break");
   }
 
-  if (/lower\(name\)\s*~/.test(src) && /\(png\|jpe\?g\|webp\)/.test(src)) {
-    ok('object names are restricted to png/jpg/jpeg/webp, so an .svg cannot land here');
+  if (/lower\(name\)\s*~/.test(src) && /\(png\|jpe\?g\|webp\|gif\|avif\)/.test(src)) {
+    ok('object names are restricted to raster image extensions, so an .svg cannot land here');
   } else bad('034 does not restrict the object-name extension');
 
   if (/allowed_mime_types\s*=\s*array\[/.test(src)) ok('the bucket pins allowed_mime_types');
   else bad('034 does not set allowed_mime_types');
 
-  if (/file_size_limit\s*=\s*5242880/.test(src)) ok('the bucket pins a 5 MB limit');
-  else bad('034 does not set a 5 MB file_size_limit');
+  // GIF and AVIF must stay ALLOWED. Neither can carry script, so there is no
+  // security reason to reject them, and this bucket holds newsroom photography
+  // where those formats are normal.
+  if (/image\/gif/.test(src) && /image\/avif/.test(src)) {
+    ok('GIF and AVIF are allowed -- neither can carry script');
+  } else {
+    bad('034 excludes GIF or AVIF; there is no XSS reason to');
+  }
+
+  // The only formats that MUST stay out are SVG and anything HTML-shaped.
+  if (!/image\/svg\+xml/.test(src)) ok('SVG is excluded, which is the one that matters (it can carry script)');
+  else bad('SVG is allowed into a public bucket -- it can execute on this origin');
+
+  // No size cap. `file_size_limit = null` leaves the project limit in charge;
+  // an arbitrary per-bucket figure would reject large photographs for no
+  // security benefit.
+  if (/file_size_limit\s*=\s*null/.test(src)) {
+    ok('the bucket sets no size cap -- it inherits the Supabase project limit');
+  } else {
+    bad('034 sets a file_size_limit; a large file is not a dangerous file, so it should be null');
+  }
+
+  // The client guard must not reintroduce a small cap either.
+  const uploadSrc = readFileSync('src/lib/upload.js', 'utf8');
+  const cap = uploadSrc.match(/MAX_BYTES\s*=\s*([\d_]+)\s*\*\s*(\d+)\s*\*\s*(\d+)\s*\*\s*(\d+)/);
+  if (cap) {
+    const bytes = Number(cap[1]) * Number(cap[2]) * Number(cap[3]) * Number(cap[4]);
+    if (bytes >= 1024 * 1024 * 1024) {
+      ok(`upload.js guard is ${bytes / (1024 ** 3)} GB, not a photo-sized cap`);
+    } else {
+      bad(`upload.js caps uploads at ${Math.round(bytes / (1024 * 1024))} MB -- that will reject large photographs`);
+    }
+  } else {
+    ok('upload.js has no multiplicative MAX_BYTES to misread');
+  }
 }
 
 // ---------------------------------------------------------------------------

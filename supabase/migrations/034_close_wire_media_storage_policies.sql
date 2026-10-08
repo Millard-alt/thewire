@@ -82,10 +82,18 @@ $$;
 --  applied to a live database by hand, and a missing column should produce a
 --  clear message rather than a syntax error.
 --
---  NOTE: this narrows the server to the three types below. src/lib/upload.js
---  currently also accepts GIF and AVIF up to 8 MB and was updated in the same
---  change to match, so the client fails fast with a readable message instead of
---  surfacing a raw Storage error.
+--  NO SIZE LIMIT IS SET HERE -- `file_size_limit = null` deliberately leaves the
+--  bucket inheriting the project's global Storage limit, which is 50 MB on the
+--  Free plan and configurable far higher on Pro. An earlier draft pinned this
+--  bucket to 5 MB, which would have rejected newsroom photography for no
+--  security reason: a bigger file is not a more dangerous file. Set a real cap
+--  once, deliberately, if you ever want one.
+--
+--  The MIME allowlist is the part that matters, and GIF and AVIF are INCLUDED:
+--  neither format can carry script, so neither is an XSS vector. What cannot be
+--  allowed is SVG and anything HTML-shaped, because the bucket is public and an
+--  object in it is served from this site's own origin. That is enforced twice,
+--  here and by the object-name test in the policies below.
 -- -----------------------------------------------------------------------------
 do $$
 begin
@@ -96,12 +104,14 @@ begin
        and column_name  = 'allowed_mime_types'
   ) then
     update storage.buckets
-       set allowed_mime_types = array['image/png', 'image/jpeg', 'image/webp'],
-           file_size_limit    = 5242880,
+       set allowed_mime_types = array['image/png', 'image/jpeg', 'image/webp',
+                                     'image/gif',  'image/avif'],
+           file_size_limit    = null,
            public             = true
      where id = 'wire-media';
 
-    raise notice 'wire-media: allowed_mime_types = png/jpeg/webp, file_size_limit = 5 MB.';
+    raise notice 'wire-media: allowed_mime_types = png/jpeg/webp/gif/avif, '
+                 'file_size_limit = null (inherits the project limit).';
   else
     raise exception
       'storage.buckets.allowed_mime_types is missing. This Supabase project is too '
@@ -126,7 +136,8 @@ $$;
 --  uploader keeps working while a path such as `anything/else.png` does not.
 --
 --  The extension test is what prevents stored XSS. An .svg or .html object in a
---  public bucket executes on this origin.
+--  public bucket executes on this origin. GIF and AVIF are allowed: neither can
+--  carry script.
 -- -----------------------------------------------------------------------------
 drop policy if exists wire_media_insert on storage.objects;
 create policy wire_media_insert on storage.objects
@@ -135,7 +146,7 @@ create policy wire_media_insert on storage.objects
     bucket_id = 'wire-media'
     and public.is_staff()
     and coalesce((storage.foldername(name))[1], '') in ('', 'portraits')
-    and lower(name) ~ '\.(png|jpe?g|webp)$'
+    and lower(name) ~ '\.(png|jpe?g|webp|gif|avif)$'
   );
 
 -- -----------------------------------------------------------------------------

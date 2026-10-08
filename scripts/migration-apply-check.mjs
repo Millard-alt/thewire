@@ -408,15 +408,40 @@ await allowed('a Writer can still upload at the bucket ROOT (gallery images)', '
 await allowed('a Writer can still replace their own portrait (upsert path)', 'authenticated', 'tok-writer',
   `update storage.objects set name='portraits/w2.jpg' where bucket_id='wire-media' and name='portraits/w.jpg'`, 'update');
 
+const MIME_EXPECTED = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif'];
+
 {
   const b = (await db.query(`select allowed_mime_types, file_size_limit, public from storage.buckets where id='wire-media'`)).rows[0];
-  const okMime = JSON.stringify(b.allowed_mime_types) === JSON.stringify(['image/png', 'image/jpeg', 'image/webp']);
-  if (okMime) ok('allowed_mime_types = ' + JSON.stringify(b.allowed_mime_types));
-  else bad('allowed_mime_types is ' + JSON.stringify(b.allowed_mime_types));
-  if (Number(b.file_size_limit) === 5242880) ok('file_size_limit = 5 MB');
-  else bad('file_size_limit is ' + b.file_size_limit);
+  const got = Array.isArray(b.allowed_mime_types) ? [...b.allowed_mime_types].sort() : b.allowed_mime_types;
+  if (JSON.stringify(got) === JSON.stringify([...MIME_EXPECTED].sort())) {
+    ok('allowed_mime_types = ' + JSON.stringify(b.allowed_mime_types));
+  } else {
+    bad('allowed_mime_types is ' + JSON.stringify(b.allowed_mime_types));
+  }
+
+  // No cap: null means the bucket inherits the project's global limit.
+  if (b.file_size_limit === null) ok('file_size_limit is null -- the project limit governs, so large photos are fine');
+  else bad('file_size_limit is ' + b.file_size_limit + ', which would reject large photographs');
+
   if (b.public === true) ok('bucket is still public-read (article images keep loading)');
   else bad('bucket lost public read -- every article image would 403');
+}
+
+// The formats that carry no script must be accepted, or ordinary newsroom
+// photography stops uploading for no security benefit.
+for (const name of ['shot.gif', 'shot.avif', 'portraits/p.webp']) {
+  const r = await asRole('anon', 'tok-writer',
+    () => db.query(`insert into storage.objects (bucket_id,name) values ('wire-media',$1)`, [name]));
+  if (r.ok) ok('a Writer can upload ' + name);
+  else bad('a Writer cannot upload ' + name + ' -- ' + r.error);
+}
+
+// ... and the ones that can carry script must still be refused.
+for (const name of ['x.svg', 'x.html', 'x.svgz']) {
+  const r = await asRole('anon', 'tok-writer',
+    () => db.query(`insert into storage.objects (bucket_id,name) values ('wire-media',$1)`, [name]));
+  if (!r.ok) ok('a Writer cannot upload ' + name + ' (can carry script)');
+  else bad('a Writer CAN upload ' + name + ' into a public bucket');
 }
 
 // --- the HIGH bug -----------------------------------------------------------
