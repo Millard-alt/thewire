@@ -304,7 +304,27 @@ comment on policy articles_update_own on public.articles is
 -- Manager could not edit their own draft, which "you may edit what you filed" has
 -- to mean for every role above the floor. `articles_update_own` already permits
 -- that; this guard is about the rows they do not own.
-create or replace function public.wire_approver_scope_guard(p_table text)
+-- THE PARAMETER LIST IS EMPTY, AND THAT IS NOT AN OMISSION.
+-- A `returns trigger` function may not declare arguments at all:
+--
+--     ERROR: 42P13: trigger functions cannot have declared arguments
+--     HINT: The arguments of the trigger can be accessed through
+--           TG_NARGS and TG_ARGV instead.
+--
+-- The first version of this took `p_table text` and passed 'articles',
+-- 'interviews' and 'podcasts' at trigger creation, to document which table each
+-- trigger belonged to. The body never read it, so it was documentation supplied
+-- through a channel that does not exist. The table is identified by `new` and
+-- `old`, which a trigger receives regardless, so nothing is lost.
+--
+-- The `drop ... (text)` below is not paranoia about THIS version failing: it
+-- cannot have been created, because the compile fails. It is for a database where
+-- an earlier attempt landed some statements outside the transaction -- and
+-- without it, a stale `(text)` variant and the new `()` variant would COEXIST as
+-- an overload, which is the same trap migration 024 and 030 each walked into.
+drop function if exists public.wire_approver_scope_guard(text);
+
+create or replace function public.wire_approver_scope_guard()
 returns trigger
 language plpgsql
 security definer
@@ -338,23 +358,23 @@ comment on function public.wire_approver_scope_guard(text) is
   'anon and Postgres checks the table privilege first. Compares every column except '
   'status and updated_at, so a column added later cannot slip past it.';
 
-revoke all on function public.wire_approver_scope_guard(text) from public;
-grant execute on function public.wire_approver_scope_guard(text) to anon, authenticated;
+revoke all on function public.wire_approver_scope_guard() from public;
+grant execute on function public.wire_approver_scope_guard() to anon, authenticated;
 
 drop trigger if exists articles_approver_scope_trg on public.articles;
 create trigger articles_approver_scope_trg
   before update on public.articles
-  for each row execute function public.wire_approver_scope_guard('articles');
+  for each row execute function public.wire_approver_scope_guard();
 
 drop trigger if exists interviews_approver_scope_trg on public.interviews;
 create trigger interviews_approver_scope_trg
   before update on public.interviews
-  for each row execute function public.wire_approver_scope_guard('interviews');
+  for each row execute function public.wire_approver_scope_guard();
 
 drop trigger if exists podcasts_approver_scope_trg on public.podcasts;
 create trigger podcasts_approver_scope_trg
   before update on public.podcasts
-  for each row execute function public.wire_approver_scope_guard('podcasts');
+  for each row execute function public.wire_approver_scope_guard();
 
 -- -----------------------------------------------------------------------------
 -- 5. THE INTERVIEW PUBLISH GUARD STILL SAID "only the Owner"

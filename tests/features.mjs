@@ -67,6 +67,26 @@ const repairSql = read('supabase/migrations/025_podcasts_storage_repair.sql');
 const rosterSql = read('supabase/migrations/032_roster_leads_and_subcategories.sql');
 const lockdownSql = read('supabase/migrations/033_writer_lockdown.sql');
 
+/**
+ * Every SQL file in the repo, top level and migrations/.
+ *
+ * Collected once so an assertion can sweep all of them. The trigger-argument
+ * check below needs this: the failure it guards against happens at COMPILE time
+ * inside the Supabase SQL Editor, so nothing short of reading the SQL in advance
+ * could have seen it, and one migration at a time would have missed the other
+ * eight.
+ */
+const sqlFiles = (() => {
+  const dirs = ['supabase', 'supabase/migrations'];
+  const seen = new Set();
+  for (const dir of dirs) {
+    for (const name of readdirSync(path.join(ROOT, dir))) {
+      if (name.endsWith('.sql')) seen.add(`${dir}/${name}`);
+    }
+  }
+  return [...seen];
+})();
+
 let pass = 0;
 let fail = 0;
 const failures = [];
@@ -1921,6 +1941,43 @@ function sqlLinesOutsideFunctionBodies(path) {
   );
 }
 
+report(
+  'NO TRIGGER FUNCTION IN THE REPO DECLARES ARGUMENTS',
+  (() => {
+    // `returns trigger` may not take parameters at all:
+    //     ERROR: 42P13: trigger functions cannot have declared arguments
+    // which is how 033 first shipped. The parameter was never read -- the table
+    // is identified by `new` and `old`, which a trigger receives regardless -- so
+    // it was documentation passed through a channel that does not exist.
+    //
+    // This scans EVERY migration rather than only 033, because the error is
+    // invisible until the script is pasted into a live database, and nothing in
+    // the test suite could see it before that. All nine trigger functions in the
+    // repo now take none.
+    const offenders = [];
+    let count = 0;
+    for (const rel of sqlFiles) {
+      const src = read(rel);
+      for (const m of src.matchAll(
+        /create (?:or replace )?function (?:public\.)?(\w+)\(([^)]*)\)\s*\nreturns trigger/g
+      )) {
+        count += 1;
+        if (m[2].trim() !== '') offenders.push(`${rel}:${m[1]}(${m[2].trim()})`);
+      }
+    }
+    if (offenders.length) console.log('        offenders:', offenders.join(', '));
+    return count > 0 && offenders.length === 0;
+  })(),
+  'a trigger function with a parameter list fails at COMPILE time, inside the transaction, so nothing is left half-applied and the whole migration rolls back'
+);
+report(
+  'and the guard trigger is attached with the matching zero-argument call',
+  [...lockdownSql.matchAll(/execute function public\.wire_approver_scope_guard\(([^)]*)\)/g)].length ===
+    3 &&
+    [...lockdownSql.matchAll(/execute function public\.wire_approver_scope_guard\(\);/g)].length === 3 &&
+    /drop function if exists public\.wire_approver_scope_guard\(text\);/.test(lockdownSql),
+  'the drop is for a database where an earlier attempt landed statements outside the transaction: without it a stale (text) variant and the new () one would coexist as an overload, the trap 024 and 030 each walked into'
+);
 report(
   'MIGRATION 033 IS SELF-CONTAINED, because it did not used to be',
   /create or replace function public\.can_approve\(\)[\s\S]{0,400}role = 'Board Manager'/.test(
