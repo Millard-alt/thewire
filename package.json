@@ -11,7 +11,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 4173",
-    "test": "node scripts/changelog-check.mjs && node scripts/sitemap-check.mjs && node scripts/sitemap-selfcheck.mjs && node scripts/sql-static-check.mjs && node scripts/sql-check-selfcheck.mjs && node scripts/api-auth-check.mjs && node scripts/policy-scope-check.mjs && node scripts/migration-apply-check.mjs && node scripts/seo-check.mjs && node scripts/role-consistency.mjs && node scripts/rpc-contract-check.mjs && node tests/curation.mjs && node tests/bylines.mjs && node tests/features.mjs && node tests/roles.mjs && node tests/interviews.mjs && node scripts/gallery-check.mjs && node scripts/curation-check.mjs && node scripts/credits-check.mjs && node scripts/podcast-submit-check.mjs && node scripts/click-check.mjs && node scripts/scope-check.mjs && node scripts/roster-check.mjs && node scripts/layout-check.mjs",
+    "test": "node scripts/changelog-check.mjs && node scripts/sitemap-check.mjs && node scripts/sitemap-selfcheck.mjs && node scripts/sql-static-check.mjs && node scripts/sql-check-selfcheck.mjs && node scripts/api-auth-check.mjs && node scripts/policy-scope-check.mjs && node scripts/migration-apply-check.mjs && node scripts/podcasts-storage-check.mjs && node scripts/seo-check.mjs && node scripts/role-consistency.mjs && node scripts/rpc-contract-check.mjs && node tests/curation.mjs && node tests/bylines.mjs && node tests/features.mjs && node tests/roles.mjs && node tests/interviews.mjs && node scripts/gallery-check.mjs && node scripts/curation-check.mjs && node scripts/credits-check.mjs && node scripts/podcast-submit-check.mjs && node scripts/click-check.mjs && node scripts/scope-check.mjs && node scripts/roster-check.mjs && node scripts/layout-check.mjs",
     "test:changelog": "node scripts/changelog-check.mjs",
     "test:sitemap": "node scripts/sitemap-check.mjs",
     "test:sitemap-selfcheck": "node scripts/sitemap-selfcheck.mjs",
@@ -42,7 +42,8 @@
     "test:seo": "node scripts/seo-check.mjs",
     "build:og": "node scripts/og-image.mjs",
     "build:icons": "node scripts/logo-assets.mjs",
-    "test:migrations": "node scripts/migration-apply-check.mjs"
+    "test:migrations": "node scripts/migration-apply-check.mjs",
+    "test:podcasts": "node scripts/podcasts-storage-check.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
