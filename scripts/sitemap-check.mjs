@@ -10,10 +10,42 @@
  *
  *   node scripts/sitemap-check.mjs
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
+
+const ROOT = path.resolve(process.cwd());
 
 const FILE = 'public/sitemap.xml';
 const raw = readFileSync(FILE, 'utf8');
+
+/**
+ * Every file the public domain is allowed to appear in.
+ *
+ * Deliberately NOT a whole-tree scan of every `.md`. The repository contains
+ * `users.thewire.press` -- the hidden shadow-email domain, documented in DEPLOY.md
+ * as never changing once accounts exist -- and rewriting that to chase a substring
+ * would lock every staffer out of their login to change nothing an indexer sees.
+ * A service-worker cache name, a temp-directory prefix and this checker's own
+ * mutation fixture are in the same category: they contain the word without being
+ * a URL.
+ */
+const DOMAIN_SCAN = [
+  'index.html',
+  'vercel.json',
+  'package.json',
+  'CNAME',
+  'public/robots.txt',
+  'public/manifest.webmanifest',
+  'public/sitemap.xml',
+  'public/sw.js'
+];
+for (const dir of ['src', 'scripts']) {
+  for (const entry of readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+    if (entry.isFile() && /\.(js|mjs|css)$/.test(entry.name)) {
+      DOMAIN_SCAN.push(path.join(dir, entry.name));
+    }
+  }
+}
 
 let problems = 0;
 const fail = (msg) => {
@@ -118,7 +150,7 @@ for (const loc of locs) {
   );
 }
 
-/* 7. The host agrees with the canonical tag ------------------------------------ */
+/* 7. The host agrees with the canonical tag AND the CNAME ------------------- */
 const indexHtml = readFileSync('index.html', 'utf8');
 const canonical = /<link rel="canonical" href="https:\/\/([^/"]+)/.exec(indexHtml)?.[1];
 const host = new URL(locs[0]).host;
@@ -126,6 +158,58 @@ check(
   'the canonical tag and the sitemap agree on the host',
   canonical === host,
   `canonical=${canonical} sitemap=${host}`
+);
+
+/*
+ * CNAME, because it is where the domain actually LIVES.
+ *
+ * This is the file that drifted. Every SEO artifact had been moved to
+ * thepulse.us.ci while CNAME still read thewire.us.ci, which is the worst shape
+ * the configuration can take: the sitemaps told Google one host and the
+ * deployment told it another. A check that only compared the SEO files to each
+ * other would have passed throughout, because they all agreed -- with each other,
+ * and not with the domain.
+ */
+let cname = null;
+try {
+  cname = readFileSync('CNAME', 'utf8').trim();
+} catch {
+  fail('CNAME is missing, so nothing declares the canonical host');
+}
+if (cname !== null) {
+  check('CNAME declares the same host as the sitemap', cname === host, `CNAME=${cname} sitemap=${host}`);
+}
+
+/* 8. Nothing in the SEO surface still names the old domain ------------------ */
+const OLD_HOST = 'thewire.us.ci';
+
+/*
+ * Two files MUST name the old host, and exempting them is the point rather than a
+ * loophole: a check that detects a string cannot avoid containing it. This one
+ * holds the constant, and `sitemap-selfcheck.mjs` mutates a URL to the old domain
+ * to prove the check bites. Without the exemption the check reports itself on
+ * every run, and a check that is permanently red about its own source is one
+ * somebody turns off.
+ */
+const EXEMPT = new Set(['scripts/sitemap-check.mjs', 'scripts/sitemap-selfcheck.mjs']);
+
+// Compared with forward slashes on both sides: `path.join` emits a backslash on
+// Windows and a slash elsewhere, so a set written with the wrong separator
+// matches on one platform and silently stops matching on the other.
+const normalised = (rel) => rel.replace(/\\/g, '/');
+
+const offenders = DOMAIN_SCAN.filter((rel) => {
+  if (EXEMPT.has(normalised(rel))) return false;
+  try {
+    return readFileSync(path.join(ROOT, rel), 'utf8').includes(OLD_HOST);
+  } catch {
+    return false;
+  }
+});
+check(
+  `no file in the SEO surface still names ${OLD_HOST}`,
+  offenders.length === 0,
+  offenders.join(', ')
 );
 
 /*
