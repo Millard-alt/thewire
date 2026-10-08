@@ -13,7 +13,7 @@
    Run:  npm run test:seo
    ========================================================================== */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 const problems = [];
 const ok = (m) => console.log('PASS  ' + m);
@@ -80,6 +80,37 @@ console.log('\n--- 2. visible text: h1 + MJLA spelled out ---------------------'
   }
   if (/\(MJLA\)/.test(text)) ok('the expanded form is tied to the acronym, not just dropped in');
   else bad('the MJLA expansion is not shown next to the acronym');
+}
+
+// The masthead heading exists twice on purpose: the static markup a crawler
+// reads, and the copy renderMasthead() builds for a reader. public.js:67 used to
+// assign textContent, which silently dropped the organisation line for anyone
+// with JavaScript on -- so the heading a reader saw was "THE PULSE" while the
+// heading Google indexed said "The Pulse Melvin Jones Press Club". These two
+// strings must stay identical or that divergence comes straight back.
+{
+  const publicSrc = readFileSync('src/views/public.js', 'utf8');
+  const fromJs = (publicSrc.match(/const ORG_LINE\s*=\s*'([^']+)'/) || [])[1];
+  const h1 = (html.match(/<h1[\s\S]*?<\/h1>/) || [''])[0];
+  const span = (h1.match(/<span[^>]*>([^<]+)<\/span>/) || [])[1];
+
+  if (!fromJs) {
+    bad('ORG_LINE is not declared in src/views/public.js -- renderMasthead() rebuilds the heading, so the organisation line must be defined there');
+  } else if (!span) {
+    bad('the static heading has no organisation line to match');
+  } else if (fromJs.trim() === span.trim()) {
+    ok(`static heading and renderMasthead() agree on "${fromJs.trim()}"`);
+  } else {
+    bad(`the heading disagrees: index.html says "${span.trim()}", public.js says "${fromJs.trim()}". A reader and a crawler would see different names.`);
+  }
+
+  // Guard the specific regression: assigning textContent and calling it a day.
+  const stomps = /title\.textContent\s*=\s*branding\.title/.test(publicSrc);
+  if (stomps) {
+    bad('public.js still assigns title.textContent = branding.title, which deletes the organisation line at runtime');
+  } else {
+    ok('renderMasthead() no longer stomps the heading with textContent');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +244,75 @@ console.log('\n--- 7. no invented volume/number in anything served -------------
     bad('the invented "Vol. CXIV - No. 32,841" placeholder is still present');
   } else {
     ok('the invented volume/issue placeholder is gone from index.html and the demo seed');
+  }
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- 8. the crest is everywhere a logo is expected ----------------');
+
+{
+  // Tab icon. Without a link rel=icon a browser falls back to /favicon.ico,
+  // which this project does not have, so the tab shows a generic globe.
+  const icons = [...html.matchAll(/<link[^>]*rel="icon"[^>]*href="([^"]+)"/gi)].map((m) => m[1]);
+  if (icons.length) ok(`favicon declared: ${icons.join(', ')}`);
+  else bad('no <link rel="icon"> -- the browser tab shows a generic page icon');
+
+  for (const href of icons) {
+    const file = href.replace(/^\//, 'public/');
+    if (existsSync(file)) ok(`${href} exists on disk`);
+    else bad(`${href} is referenced but missing from the build`);
+  }
+
+  if (/<link[^>]*rel="apple-touch-icon"/i.test(html)) ok('apple-touch-icon is declared');
+  else bad('no apple-touch-icon');
+}
+
+// The visible crest in the masthead.
+{
+  const logoImg = html.match(/<img[^>]*src="\/logo\.png"[^>]*>/i);
+  if (!logoImg) bad('the crest is not shown in the page');
+  else {
+    ok('the crest is shown in the page');
+
+    // It must be a sibling of the heading, never a child. public.js:67 does
+    // `title.textContent = branding.title`, which deletes every child node --
+    // an image inside the heading renders for a crawler and then vanishes.
+    const insideH1 = /<h1[\s\S]*?\/logo\.png[\s\S]*?<\/h1>/i.test(html);
+    if (insideH1) {
+      bad('the crest is INSIDE the h1 -- renderMasthead() replaces that element\'s textContent and will delete the image at runtime');
+    } else {
+      ok('the crest sits outside the h1, so renderMasthead() cannot delete it');
+    }
+
+    const alt = (logoImg[0].match(/alt="([^"]*)"/i) || [])[1] || '';
+    if (alt.length > 20) ok('the crest has descriptive alt text for screen readers');
+    else bad(`the crest alt text is "${alt}" -- a decorative-looking image with no real description`);
+  }
+}
+
+// The icons must be the crest, not the old brand mark.
+{
+  const man = JSON.parse(readFileSync('public/manifest.webmanifest', 'utf8'));
+  if (/Melvin Jones/i.test(man.name)) ok(`manifest name is "${man.name}"`);
+  else bad(`manifest name is "${man.name}" -- it should name the organisation`);
+
+  if (/Melvin Jones/i.test(man.description)) ok('manifest description names the organisation');
+  else bad('manifest description does not name the organisation');
+
+  for (const icon of man.icons || []) {
+    const file = icon.src.replace(/^\//, 'public/');
+    if (!existsSync(file)) bad(`manifest references ${icon.src}, which is missing`);
+  }
+  ok(`manifest lists ${(man.icons || []).length} icon files, all present`);
+
+  // Every declared icon must be the size it claims.
+  for (const icon of man.icons || []) {
+    const buf = readFileSync(icon.src.replace(/^\//, 'public/'));
+    const w = buf.readUInt32BE(16);
+    const h = buf.readUInt32BE(20);
+    const declared = String(icon.sizes).split('x').map(Number);
+    if (w === declared[0] && h === declared[1]) ok(`${icon.src} really is ${w}x${h}`);
+    else bad(`${icon.src} is ${w}x${h} but the manifest claims ${icon.sizes}`);
   }
 }
 

@@ -59,12 +59,35 @@ const BLANK_IMAGE =
 /* Header + ticker                                                            */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The organisation line shown under "The Pulse" in the masthead heading.
+ *
+ * This has to exist in two places -- here and in index.html -- because the
+ * static markup is what a crawler reads and this function is what a reader
+ * sees. `scripts/seo-check.mjs` asserts the two strings are identical so they
+ * cannot drift apart.
+ */
+const ORG_LINE = 'Melvin Jones Press Club';
+
 /** Paint the masthead from the stored branding + today's real date. */
 export function renderMasthead() {
   const { branding } = store.getState();
 
   const title = byId('masthead-title');
-  if (title) title.textContent = branding.title;
+  if (title) {
+    // textContent replaces every child, so the organisation line is rebuilt
+    // rather than left to the static markup. Setting the text alone would leave
+    // a reader staring at "THE PULSE" while a crawler saw the full name -- the
+    // heading and the masthead would disagree depending on who was looking.
+    title.replaceChildren(
+      document.createTextNode(branding.title),
+      Object.assign(document.createElement('span'), {
+        className:
+          'mt-2 block text-[0.6rem] leading-tight font-bold tracking-[0.24em] md:text-[0.7rem]',
+        textContent: ORG_LINE
+      })
+    );
+  }
 
   const subtitle = byId('masthead-subtitle');
   if (subtitle) subtitle.textContent = branding.subtitle;

@@ -175,6 +175,22 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="The Pulse" />
     <meta name="mobile-web-app-capable" content="yes" />
+    <!--
+      The crest in the browser tab and on a phone's home screen. These used to
+      point at a red "W" -- the mark from this site's previous name, left behind
+      by the rebrand -- so a site called The Pulse shipped a logo for something
+      it no longer called itself. Every surface is now generated from
+      public/logo.png by scripts/logo-assets.mjs (`npm run build:icons`).
+
+      Note for editors: tests/features.mjs asserts the previous brand name does
+      not appear anywhere in this file, comments included, so describe the old
+      mark rather than naming it.
+
+      favicon-32 is opaque on purpose: a transparent favicon renders as a white
+      blob against dark browser chrome.
+    -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
 
     <!--
@@ -236,13 +252,22 @@
       <!-- Masthead -->
       <div class="surface-paper rule-soft border-b">
         <div class="mx-auto max-w-7xl px-4 py-6 md:py-8">
-          <div class="flex items-center justify-center gap-4">
+          <div class="flex items-center justify-center gap-4 md:gap-6">
             <!--
-              The page's primary heading, so the organisation name is real
-              visible text rather than an attribute or an image. The second line
-              lives inside the same heading element and is styled down rather
-              than split out, so it stays part of the accessible name.
+              The crest, as a SIBLING of the heading and never inside it.
+              renderMasthead() in src/views/public.js:67 assigns
+              `title.textContent = branding.title`, which deletes every child
+              node of the heading -- an image placed inside would survive in the
+              static HTML for a crawler and then vanish the moment the app boots.
             -->
+            <img
+              src="/logo.png"
+              alt="Melvin Jones Lions Academy Press Club crest: a gold lion on a navy shield, encircled by the words Melvin Jones Lions Academy Press Club"
+              width="368"
+              height="368"
+              class="h-14 w-14 shrink-0 object-contain md:h-20 md:w-20"
+              decoding="async"
+            />
             <h1
               id="masthead-title"
               class="newspaper-texture relative text-center font-headline text-4xl leading-none font-black tracking-[0.06em] uppercase md:text-6xl"

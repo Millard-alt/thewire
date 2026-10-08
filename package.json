@@ -40,7 +40,8 @@
     "test:install": "playwright install chromium",
     "test:policy-scope": "node scripts/policy-scope-check.mjs",
     "test:seo": "node scripts/seo-check.mjs",
-    "build:og": "node scripts/og-image.mjs"
+    "build:og": "node scripts/og-image.mjs",
+    "build:icons": "node scripts/logo-assets.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
