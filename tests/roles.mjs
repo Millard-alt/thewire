@@ -37,15 +37,29 @@ const ACCOUNTS = {
 
 /** Tabs each role is entitled to, weakest first. */
 const EXPECTED = {
-  // `interviews` is a Writer tab: a writer files a submission with status
-  // 'pending' and the Owner approves it. Gating it at Board Manager would mean a
-  // Writer had nowhere to file one, so the approval workflow would have no
-  // submission to approve.
-  Writer: ['overview', 'content', 'interviews', 'assignments', 'media'],
+  /*
+    A WRITER'S PANEL, AND BOTH CHANGES IN IT ARE INTENTIONAL.
+  */
+  Writer: [
+    'overview',
+    'content',
+    'interviews',
+    // Podcasts, submit-only. See OWNER_ONLY below for why it left that list --
+    // `podcasts_staff_submit` has always let a staffer file a pending episode, so
+    // a Writer previously had a database capability with no door.
+    'podcasts',
+    // NOT `assignments`: the board decides who owes what, so it is a management
+    // surface rather than a filing surface. A Writer can still see open calls in
+    // their Overview tile, which is the read-only part.
+    'media'
+  ],
   'Board Manager': [
     'overview',
     'content',
     'interviews',
+    // Podcasts, with the review queue. This is the approver tier from migration
+    // 030 -- `public.can_approve()` is the Owner seat OR an Active Board Manager.
+    'podcasts',
     'assignments',
     'media',
     'breaking',
@@ -89,11 +103,28 @@ const EXPECTED = {
  * reminder, so it has to be updated when a tab is added, which is why it is a
  * literal list rather than derived from the app.
  *
- * `podcasts` is here for a different reason, and the distinction matters. A writer
- * SUBMITS an episode -- the door for that is on the Interviews tab, which every
- * staffer can open -- but only the Owner may publish or refuse one. Gating the
- * decision at Board Manager would hand out an unreviewed-public-audio button,
- * which is the whole risk the approval queue exists to prevent.
+ * `podcasts` IS NOT IN THIS LIST ANY MORE, and that is a deliberate reversal of
+ * the previous note rather than an oversight. The tab used to be Owner-only and
+ * a Writer had no way to file an episode at all; the door for that was the
+ * Interviews tab. `podcasts_staff_submit` has always permitted any staffer to
+ * insert and pins status = 'pending', so the database was never the obstacle --
+ * only the tab was.
+ *
+ * A Writer now gets the Podcasts tab in a submit-only form: the upload fields and
+ * no review queue. `renderPodcastsTab` branches on `canApprove()`, so the queue
+ * itself is not in the document for someone who has no business reading it.
+ *
+ * WHAT MOVED TO BOARD MANAGER: the approve DECISION. `public.can_approve()` in
+ * migration 030 is the Owner seat OR an Active Board Manager, and the tab matches
+ * it. The rationale recorded here before -- that gating approval at Board Manager
+ * would hand out an unreviewed-public-audio button -- was correct when the choice
+ * was Owner-only, and it is now the Owner's decision to make otherwise. What is
+ * preserved is the shape of the risk: a BOARD MANAGER may clear the queue, and
+ * nothing about deletion, the roster or the front-page order moved.
+ *
+ * A WRITER still cannot approve, and cannot publish one directly. That is pinned
+ * twice: `canApprove()` in the browser, and `status = 'pending'` in the INSERT
+ * policy so a crafted request cannot self-approve either.
  */
 const OWNER_ONLY = [
   'accounts',
@@ -101,9 +132,18 @@ const OWNER_ONLY = [
   'branding',
   'security',
   'about',
-  'credits',
-  'podcasts'
+  'credits'
 ];
+
+/**
+ * Tabs a WRITER must not be able to open, and why.
+ *
+ * `assignments` moved from Writer to Board Manager: the board decides who owes
+ * what, so it is a management surface rather than a filing surface. Asserted here
+ * because a regression would hand every Writer the power to create and close other
+ * people's work.
+ */
+const BOARD_MANAGER_ONLY = ['assignments', 'breaking', 'broadcasts', 'curation', 'staff'];
 
 /**
  * Wording that must NOT reappear. "Owner Control Centre" was wrong: it is a
@@ -196,6 +236,14 @@ try {
     const leaked = tabs.filter((t) => !expected.includes(t));
     const ownerOnlyLeak = leaked.filter((t) => OWNER_ONLY.includes(t));
 
+    /*
+      A BOARD-MANAGER-ONLY TAB must ALSO be absent for a Writer.
+      Checked separately from OWNER_ONLY because the consequence differs: leaking
+      `assignments` to a Writer hands them the power to create and close other
+      people's work, which is not the same failure as leaking `credits`.
+    */
+    const boardManagerLeak = leaked.filter((t) => BOARD_MANAGER_ONLY.includes(t));
+
     const renderIssues = [];
     for (const tab of tabs) {
       await page.click(`[data-admin-tab="${tab}"]`);
@@ -247,6 +295,78 @@ try {
       ownershipIssues.push(
         `Owner can delete ${deleteState.deletable} of ${deleteState.total} articles`
       );
+    }
+
+    /*
+      (b1) THE APPROVE / UNPUBLISH LOCKDOWN, MEASURED IN THE DOM.
+      ------------------------------------------------------------------
+      The tab-visibility pass above cannot catch this one: every role can see the
+      Content tab, so removing `canApprove()` from the article grid changed
+      nothing it looked at. Replacing the guard with a literal `true` left the
+      whole suite green with Approve visible to every Writer.
+
+      That is the failure this check exists for, so it counts the actual controls
+      rather than the helpers. A WRITER must see zero ENABLED approve/unpublish
+      controls in either grid; the Owner must see them. The disabled ones are not
+      counted, because their presence is deliberate -- a disabled button with a
+      title explains why, where an absent one reads as a missing feature.
+    */
+/*
+      THE CONTENT TAB MUST BE OPEN BEFORE THIS IS MEASURED.
+
+      The tab loop above finishes on whichever tab sorts last, so the DOM being
+      read here was usually not the content grid -- and the Owner was reported as
+      having "no approve controls" purely because the grid was not on screen.
+      That is a false failure, and it is the same shape of mistake as counting
+      the number of visible reader views instead of which one: a null result read
+      as a finding. The delete check below avoids it entirely by importing the
+      store instead of reading the DOM; this one has to look at real controls, so
+      it navigates first.
+    */
+    const contentTab = await page.$('[data-admin-tab="content"]');
+    if (contentTab && (await contentTab.isVisible())) {
+      await contentTab.click();
+      await page.waitForTimeout(500);
+    }
+
+    const approveState = await page.evaluate(() => {
+      const els = [...document.querySelectorAll('#admin-tab-body [data-action]')].filter((el) =>
+        /article-(publish|reject)|interview-(publish|unpublish)/.test(el.dataset.action || '')
+      );
+      return {
+        total: els.length,
+        enabled: els.filter((el) => !el.disabled).length,
+        // The label, so a failure says WHICH control leaked rather than a count.
+        leaked: els
+          .filter((el) => !el.disabled)
+          .map((el) => el.dataset.action)
+          .slice(0, 6)
+      };
+    });
+
+    if (role === 'Writer' && approveState.enabled > 0) {
+      ownershipIssues.push(
+        `Writer has ${approveState.enabled} enabled approve/unpublish control(s): ` +
+          approveState.leaked.join(', ')
+      );
+    }
+if (role === 'Owner' && approveState.total === 0) {
+      ownershipIssues.push('Owner has no approve/unpublish controls on the content grid');
+    }
+
+    // A Writer must not see the podcast review queue at all, in any form.
+    if (role === 'Writer') {
+      const queueVisible = await page.evaluate(() => {
+        const body = document.querySelector('#admin-tab-body');
+        if (!body) return false;
+        return (
+          body.querySelector('[data-action="podcast-approve"]') !== null ||
+          /awaiting approval|review queue/i.test(body.innerText)
+        );
+      });
+      if (queueVisible) {
+        ownershipIssues.push('Writer can see the podcast review queue');
+      }
     }
 
     // (b2) The round trip a Writer actually cares about: file a story, then
@@ -314,6 +434,7 @@ try {
       missing,
       leaked,
       ownerOnlyLeak,
+      boardManagerLeak,
       renderIssues,
       ghostCheck,
       deleteState,
@@ -329,13 +450,20 @@ try {
 
 /* --- report ----------------------------------------------------------------- */
 for (const r of results) {
-  console.log(`\n=== ${r.role} ===`);
+  console.log('\n=== ${r.role} ===');
   console.log('  expected  :', r.expected.join(', '));
   console.log('  actually  :', r.tabs.join(', '));
   console.log('  missing   :', r.missing.length ? r.missing.join(', ') : 'none');
   console.log('  LEAKED    :', r.leaked.length ? r.leaked.join(', ') : 'none');
   if (r.ownerOnlyLeak.length) {
     console.log('  *** OWNER-ONLY TABS EXPOSED:', r.ownerOnlyLeak.join(', '));
+  }
+  if (r.boardManagerLeak.length) {
+    console.log(
+      '  *** BOARD-MANAGER-ONLY TABS EXPOSED:',
+      r.boardManagerLeak.join(', '),
+      '-- a Writer should not be able to manage these'
+    );
   }
   console.log('  render    :', r.renderIssues.length ? r.renderIssues.join(' | ') : 'all tabs ok');
   console.log(

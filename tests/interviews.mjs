@@ -958,12 +958,21 @@ const renderedPickerIds = new Set(
  *                  so the writer finds out about a 40 MB WAV before pressing
  *                  Submit rather than after. Neither has a URL partner: audio is
  *                  not pasted.
+ *   podcast-sub-file -- the WRITER's submission picker, paired with
+ *                  podcast-sub-audio-url but NOT through bindFilePickers: that
+ *                  helper uploads the file and writes the resulting URL into the
+ *                  text box, which is correct for a poster image and wrong for an
+ *                  MP3 (the audio uploads at submit time, not pick time). What
+ *                  this pair needs is mutual exclusion -- picking one clears the
+ *                  other -- so choosing both is impossible rather than silently
+ *                  resolved.
  */
 const pickedUpElsewhere = new Set([
   'article-extra-file',
   'staff-portrait-file',
   'podcast-file',
-  'podcast-up-file'
+  'podcast-up-file',
+  'podcast-sub-file'
 ]);
 const unboundPickers = [...renderedPickerIds].filter(
   (id) => !boundPickerIds.has(id) && !pickedUpElsewhere.has(id)

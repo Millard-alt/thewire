@@ -64,6 +64,7 @@ const domSrc = read('src/lib/dom.js');
 const stylesSrc = read('src/styles.css');
 const migration = read('supabase/migrations/024_about_podcasts_and_layout.sql');
 const repairSql = read('supabase/migrations/025_podcasts_storage_repair.sql');
+const rosterSql = read('supabase/migrations/032_roster_leads_and_subcategories.sql');
 
 let pass = 0;
 let fail = 0;
@@ -386,6 +387,224 @@ report(
   'a category the caller did not mention is left alone',
   /\.\.\.\(categoryValue === undefined \? \{\} : \{ p_category: categoryValue \}\)/.test(creditsSrc),
   'the server assigns category unconditionally, so omitting the key means "clear it"'
+);
+
+console.log('\nSECTION 4b — sub-categories and designated leads\n');
+
+/*
+ * Migration 032 gives every roster row a `sub_category` (the team under the main
+ * heading) and an `is_lead`. The assertions below are the contracts that cannot be
+ * left to a regex about the CSS: which column the data lands in, who wins when
+ * nobody is ticked, and the fact that the panel and the page share ONE
+ * implementation of both questions.
+ */
+report(
+  'the sub-category and the lead are real columns, constrained and commented',
+  /add column if not exists sub_category text/.test(rosterSql) &&
+    /add column if not exists is_lead boolean/.test(rosterSql) &&
+    /comment on column public\.credits_people\.sub_category is/.test(rosterSql) &&
+    /comment on column public\.credits_people\.is_lead is/.test(rosterSql) &&
+    /alter column is_lead set not null/.test(rosterSql),
+  'is_lead NOT NULL with a false default means `where is_lead` partitions the table with no third bucket to forget about'
+);
+report(
+  'the main category is the EXISTING category column, not a second one',
+  /comment on column public\.credits_people\.category is/.test(rosterSql) &&
+    /There is deliberately no separate main_category column/.test(rosterSql) &&
+    !/add column if not exists main_category/.test(rosterSql),
+  '`category` is already CHECK-constrained to exactly the two main headings; a second column would store one fact twice and every read would have to decide which copy wins'
+);
+report(
+  'a sub-category is capped at 60 characters and cannot be blank',
+  /credits_people_sub_category_check/.test(rosterSql) &&
+    /length\(btrim\(sub_category\)\) between 1 and 60/.test(rosterSql),
+  "NULL is the single spelling of \"no sub-team\"; a stored '' would render a blank heading"
+);
+report(
+  'AT MOST ONE LEAD PER SUB-CATEGORY is a database fact, not a renderer convention',
+  /credits_people_one_lead_idx/.test(rosterSql) &&
+    /create unique index if not exists credits_people_one_lead_idx[\s\S]*?coalesce\(category, ''\)[\s\S]*?coalesce\(sub_category, ''\)[\s\S]*?where is_lead/.test(
+      rosterSql
+    ),
+  'Postgres treats NULLs as DISTINCT in a unique index, so the coalesce is what stops a NULL sub_category holding any number of leads'
+);
+report(
+  'ticking a lead DEMOTES the incumbent before writing, so the checkbox moves rather than raising',
+  /if v_lead then[\s\S]*?update public\.credits_people[\s\S]*?set is_lead = false[\s\S]*?and \(p_id is null or id <> p_id\)/.test(
+    rosterSql
+  ),
+  'a plain unique index is not deferrable, so writing the new lead first would fail at COMMIT and hand the Owner a constraint violation instead of a moved lead'
+);
+report(
+  'the RPC drops BOTH older signatures rather than overloading either',
+  /drop function if exists public\.wire_credits_people_upsert\(uuid, text, text, text, text, text, integer, text, integer, text, text\);/.test(
+    rosterSql
+  ) &&
+    /drop function if exists public\.wire_credits_people_upsert\(uuid, text, text, text, text, text, integer, text, integer, text, text, boolean\);/.test(
+      rosterSql
+    ) &&
+    /p_sub_category text    default null,\s*\n\s*p_is_lead      boolean default null/.test(rosterSql),
+  'two candidates for one PostgREST name is PGRST202 on every add, save and remove. This is the trap 024 and 028 each walked into.'
+);
+report(
+  'absent and clear are DIFFERENT signals, and the SQL says which is which',
+  /when p_sub_category is null then sub_category else v_sub end/.test(rosterSql) &&
+    /is_lead      = coalesce\(p_is_lead, is_lead\)/.test(rosterSql),
+  "an omitted RPC argument arrives as NULL, so '' must mean CLEAR and NULL must mean LEAVE ALONE. A boolean has no third state, so null is unambiguous there."
+);
+report(
+  'the upsert is granted to anon, which is the role PostgREST actually resolves here',
+  /grant  execute on function public\.wire_credits_people_upsert\(uuid, text, text, text, text, text, integer, text, integer, text, text, boolean\) to anon;/.test(
+    rosterSql
+  ),
+  'this project has no Supabase JWT, so every browser request resolves as anon. Migration 016 granted only the stale seven-argument signature to authenticated, which is why this line exists.'
+);
+report(
+  'the client sends the two new arguments, and OMITS the sub-category when it was not mentioned',
+  /p_sub_category: subCategory,\s*\n\s*p_is_lead: isLead/.test(creditsSrc) &&
+    /\.\.\.\(subCategoryValue === undefined \? \{\} : \{ p_sub_category: subCategoryValue \}\)/.test(
+      creditsSrc
+    ) &&
+    /\.\.\.\(isLeadValue === undefined \? \{\} : \{ p_is_lead: isLeadValue \}\)/.test(creditsSrc),
+  'sending sub_category unconditionally would clear the team on every save made by a form that never rendered the field'
+);
+report(
+  'the panel reads BOTH spellings of the new fields, like every other one',
+  /field\('subCategory', 'sub_category'\)/.test(creditsSrc) && /field\('isLead', 'is_lead'\)/.test(creditsSrc),
+  'reading only one spelling shipped before: the editor reported "Saved." and discarded every change. Only `blurb` worked, because its two spellings happen to be identical.'
+);
+report(
+  'the roster read asks for both new columns',
+  /sub_category, is_lead/.test(creditsSrc),
+  'PERSON_COLUMNS is the one place every read is spelled out; a column missing from it is a column the page cannot render however hard the renderer tries'
+);
+report(
+  'the LEAD FALLBACK lives in the renderer, and is never written back to the data',
+  /export function resolveLead\(people\)/.test(creditsSrc) &&
+    /const ticked = list\.findIndex\(\(person\) => leadFlag\(person\.is_lead\)\);/.test(creditsSrc) &&
+    /const \[lead, \.\.\.rest\] = list;/.test(creditsSrc) &&
+    /return \{ lead: list\[ticked\], rest, designated: true \};/.test(creditsSrc),
+  'a backfill would write a claim the Owner never made: `is_lead = true` has to keep meaning "the Owner ticked the box", or the panel starts fighting the page'
+);
+report(
+  'the fallback is disclosed to the OWNER, not to the reader',
+  /designated: false/.test(creditsSrc) && /designated: true/.test(creditsSrc) &&
+    /designated \? '' : ' \(first by order\)'/.test(adminSrc) &&
+    !/No lead set/.test(creditsSrc),
+  'the Owner cannot otherwise tell "I chose this person" from "the page picked the first row because I chose nobody" — but that is a CMS notice, and printing it on the publication\'s About page tells a reader about an editorial decision they cannot act on'
+);
+report(
+  'the lead is taken out of the array WITHOUT mutating the caller\'s roster',
+  /const rest = list\.filter\(\(_, index\) => index !== ticked\);/.test(creditsSrc),
+  'callers pass the array they are about to render; splicing it would leave the caller holding a roster minus its lead'
+);
+report(
+  'sub-categories group case-insensitively but render the Owner\'s spelling',
+  /export function groupBySubCategory\(people\)/.test(creditsSrc) &&
+    /const key = sub\.toLowerCase\(\);/.test(creditsSrc) &&
+    /buckets\.set\(key, \{ subCategory: sub, people: \[\] \}\)/.test(creditsSrc),
+  'two headings differing only in case are indistinguishable to a reader and look like a bug'
+);
+report(
+  'a person with NO sub-category is a direct member of the main heading, not an "Unfiled" bucket',
+  /if \(!sub\) \{\s*loose\.push\(person\);\s*continue;\s*\}/.test(creditsSrc) &&
+    /aboutSubTeam\(loose, '', base\)/.test(creditsSrc),
+  'inventing a heading for them would publish a filing decision nobody made, on the front page of the paper'
+);
+report(
+  'sub-categories are free text, not a fixed vocabulary',
+  /export const SUB_CATEGORY_PRESETS = \[/.test(creditsSrc) &&
+    /SUGGESTIONS, NOT A CONSTRAINT/.test(creditsSrc) &&
+    !/category in \('Writers', 'Editors', 'Designers'/.test(rosterSql),
+  'the brief asks for five named desks AND for the Owner to be able to create their own; a CHECK constraint would refuse the twenty-first desk the paper hires for'
+);
+report(
+  'the panel and the page share ONE implementation of both questions',
+  /groupBySubCategory,\s*\n\s*resolveLead,/.test(adminSrc) &&
+    /const \{ loose, groups \} = groupBySubCategory\(people\);/.test(adminSrc) &&
+    /const \{ lead, designated \} = resolveLead\(members\);/.test(adminSrc) &&
+    /const \{ loose, groups \} = groupBySubCategory\(people\);/.test(creditsSrc),
+  'a second copy in the panel would drift, and the drift would be invisible: the Owner arranges one shape and the page publishes another'
+);
+report(
+  'the panel offers Main category, Sub-category and the Lead checkbox on both tabs',
+  /<label class="field-label" for="credits-sub-\$\{id\}">Sub-category \/ department<\/label>/.test(adminSrc) &&
+    /<label class="roster-lead" for="credits-lead-\$\{id\}">/.test(adminSrc) &&
+    /Set as Lead of this Sub-Category/.test(adminSrc) &&
+    /id="credits-add-sub"/.test(adminSrc) && /id="credits-add-lead"/.test(adminSrc) &&
+    /for="credits-category-\$\{id\}">Main category<\/label>/.test(adminSrc),
+  'the Credits page renders neither control, so showing them there would be a control that silently does nothing'
+);
+report(
+  'a save sends the sub-category even when the Owner cleared it',
+  /sub_category: form\.querySelector\('\[data-credits-sub-category\]'\)\?\.value\.trim\(\) \?\? ''/.test(
+    adminSrc
+  ) &&
+    /is_lead: form\.querySelector\('\[data-credits-is-lead\]'\)\?\.checked === true/.test(adminSrc),
+  '"leave this person in Writers" and "take this person out of Writers" need different payloads; only an explicit empty string can say the second one'
+);
+report(
+  'demo mode keeps the one-lead-per-sub-team invariant the database enforces',
+  /function demoteDemoLead\(rows, self\)/.test(creditsSrc) &&
+    /normaliseSubCategory\(row\.sub_category\)\.toLowerCase\(\)/.test(creditsSrc) &&
+    /if \(isLead\) demoteDemoLead\(rows, entry\);/.test(creditsSrc) &&
+    /if \(isLeadValue === true\) demoteDemoLead\(rows, next\);/.test(creditsSrc),
+  'without it demo mode accepts a roster the real database rejects, and the Owner is shown a checkbox that works in demo and fails in production'
+);
+report(
+  'an old demo roster is repaired rather than silently regrouped',
+  /if \(typeof row\.is_lead !== 'boolean'\)/.test(creditsSrc) &&
+    /if \(row\.sub_category === undefined\)/.test(creditsSrc),
+  'the same seed migration 028 needed for page_scope: a build from before 032 stored neither, and must not invent a team for those rows'
+);
+report(
+  'BOTH main headings render even when nobody is filed under them',
+  /about-roster--empty/.test(creditsSrc) && /Nobody is listed here yet\./.test(creditsSrc),
+  'they are the page\'s structure, not furniture the Owner has to have filled in; dropping one makes the page change shape depending on how full the roster is'
+);
+report(
+  'the desktop grid re-merges per SUB-TEAM, and the CSS is scoped to do exactly that',
+  /\.about-subhead \{[\s\S]*?border-bottom: 2px solid color-mix\(in srgb, #facc15 45%, transparent\)/.test(
+    stylesSrc
+  ) &&
+    /\.about-card--flagged \{[\s\S]*?border-left: 3px solid #facc15;/.test(stylesSrc) &&
+    /\.credits-band-editor__sub \{/.test(stylesSrc),
+  'a sub-heading one step quieter than the main heading: same gold accent, thinner rule. A second colour would read as a second MEANING when it is only a smaller one'
+);
+report(
+  'the LEAD pill is hidden on a phone and shown on a desktop',
+  /\.about-card__lead-pill \{\s*display: none;/.test(stylesSrc) &&
+    /@media \(width >= 48rem\) \{\s*\.about-card__lead-pill \{\s*display: inline-block;/.test(
+      stylesSrc
+    ),
+  'on a phone the lead card is already full width, sits above the carousel and carries the gold rail; a fourth signal for the same fact is noise'
+);
+report(
+  'the flagged card\'s rules come AFTER the desktop merge block, on purpose',
+  stylesSrc.indexOf('.about-card--flagged .about-card__body') >
+    stylesSrc.indexOf('.about-card--carousel {\n    display: contents;'),
+  'both selectors are two classes, so with equal weight the later one wins — the earlier `display: block` on the body would otherwise defeat the wrapping row'
+);
+report(
+  'the Owner panel band editor is styled at all',
+  /\.credits-band-editor \{[\s\S]*?--band: #c8102e/.test(stylesSrc) &&
+    /\.credits-band-editor__head \{[\s\S]*?display: flex/.test(stylesSrc) &&
+    /\.roster-lead \{/.test(stylesSrc),
+  '`.credits-band-editor` was emitted by both roster tabs and defined nowhere, so every band in the Newsroom Panel rendered as an unstyled block'
+);
+report(
+  'the About Us tab resolves its OWN id through a NAMED PAIR, not tabScope()',
+  /function scopeToTabId\(scope\) \{\s*return normaliseScope\(scope\) === 'about_us' \? 'about' : 'credits';/.test(
+    adminSrc
+  ) &&
+    /const tabId = scopeToTabId\(scope\);/.test(adminSrc),
+  'renderRosterTab() used to call tabScope(scope) with a SCOPE. tabScope() takes a TAB id, so the About tab resolved to "credits", the stale-repaint guard always bailed, and the panel sat on "Loading the About Us page…" forever. It only appeared to work because opening the Credits tab first populated the cache and took the synchronous path, which skips the guard.'
+);
+report(
+  'tabScope() has exactly three CODE call sites, and the other two pass a real tab id',
+  (adminSrc.match(/(?<!`)\btabScope\(/g) || []).length === 3 &&
+    (adminSrc.match(/tabScope\(byId\('admin-tab-body'\)\?\.dataset\.tab\)/g) || []).length === 2,
+  'the definition plus two readers that already hand it dataset.tab. A fourth call with a scope in the argument is the bug above, coming back. Counted with a negative lookbehind for a backtick so that the prose explaining the bug, which names the broken call, does not count as one.'
 );
 
 console.log('\nSECTION 5 — Latest Coverage ordering\n');
@@ -1125,6 +1344,162 @@ report(
   'the generated "Part N" caption is left alone',
   /Part \$\{index\} of this interview/.test(publicSrc),
   'it is always meaningful and never a stored placeholder, so it is not a caption bar to suppress'
+);
+
+console.log('\nSECTION 11d — the approver tier, and what a Writer may reach\n');
+
+/*
+ * SECTION 1 READS AS IF THERE WERE FOUR ROLES AND A FOURTH STATUS.
+ *
+ * It does not, and implementing it literally would have been actively harmful:
+ * `staff_accounts.role` is CHECK-constrained to ('Owner','Writer','Board
+ * Manager'), 'editor' is a LEGACY_SPELLING that normalises to Writer, and the
+ * podcast status CHECK is ('pending','approved','rejected'). Creating an 'Editor'
+ * role or a 'pending_approval' status would have meant a migration to relax a
+ * constraint plus rewriting a policy whose job is to stop self-approval.
+ *
+ * So the lockdown is applied to Writer, 'pending' is kept, and the ONE genuinely
+ * additive change -- Board Manager may approve -- is isolated in migration 030 and
+ * asserted here.
+ */
+
+report(
+  'the approver tier is one helper, and it requires an ACTIVE account',
+  /create or replace function public\.can_approve\(\)/.test(read('supabase/migrations/030_approver_tier.sql')) &&
+    /a\.status = 'active'/.test(read('supabase/migrations/030_approver_tier.sql')) &&
+    /a\.role = 'Board Manager'/.test(read('supabase/migrations/030_approver_tier.sql')),
+  'omitting status = \'active\' is the likeliest mistake in the whole migration: a SUSPENDED Board Manager would keep approving work, which is exactly what the Owner-only design existed to prevent'
+);
+report(
+  'the approver grant is on the STATUS COLUMN alone, not the whole row',
+  /grant update \(status\) on public\.articles/.test(read('supabase/migrations/030_approver_tier.sql')) &&
+    /grant update \(status\) on public\.interviews/.test(read('supabase/migrations/030_approver_tier.sql')) &&
+    /grant update \(status\) on public\.podcasts/.test(read('supabase/migrations/030_approver_tier.sql')),
+  'permissive policies are OR-ed, so a broad approver policy would hand a Board Manager the whole row including the ability to rewrite a byline -- which the guard trigger exists to prevent and no policy can prevent alone'
+);
+report(
+  'migration 030 says out loud that it needs a table-wide revoke if one exists',
+  /table_update_grants_to_anon/ .test(read('supabase/migrations/030_approver_tier.sql')) &&
+    /revoke update on/.test(read('supabase/migrations/030_approver_tier.sql')),
+  'a table-level UPDATE grant is checked BEFORE the column grant, so an earlier migration granting one would silently make the column restriction achieve nothing'
+);
+report(
+  'deletion was NOT widened, and neither was the roster',
+  // The backticks around the identifier are part of the sentence: the phrase in
+  // the migration is "`podcasts_delete` is deliberately NOT widened", and a regex
+  // without them matches nothing and reports a failure for a file that says
+  // exactly the right thing.
+  /`podcasts_delete` is deliberately NOT widened/.test(
+    read('supabase/migrations/030_approver_tier.sql')
+  ) &&
+    /public\.is_owner\(\)/.test(read('supabase/migrations/030_approver_tier.sql')),
+  'purging a refused episode is destructive and about something already submitted; the brief asked for approval, not deletion'
+);
+report(
+  'a Writer still cannot self-approve: the INSERT policy is untouched',
+  /and status = 'pending'/.test(read('supabase/migrations/024_about_podcasts_and_layout.sql')) &&
+    !/status = 'pending_approval'/.test(read('supabase/migrations/030_approver_tier.sql')),
+  'pinning status = \'pending\' on insert is what stops a crafted request publishing itself, whatever the browser believes'
+);
+report(
+  'canApprove is Owner-or-Board-Manager and nothing wider',
+  /export function canApprove\(\)[\s\S]*?if \(isOwner\(\)\) return true;[\s\S]*?toLowerCase\(\) === 'board manager'/.test(
+    storeSrc
+  ),
+  'the client mirrors can_approve() so the button is honest; it is NOT what decides, the RLS policy is'
+);
+report(
+  'approving and editing are SEPARATE questions',
+  /export function canApprove/.test(storeSrc) &&
+    /export function canEditArticle/.test(storeSrc) &&
+    /export function canEditInterview/.test(storeSrc) &&
+    /export function canDeleteArticle/.test(storeSrc),
+  'a Board Manager may clear the review queue without inheriting the ability to rewrite somebody else\'s story -- granting the second because the first was granted is the drift this split exists to prevent'
+);
+report(
+  'Approve and Unpublish are hidden from a Writer, with a reason',
+  // 900 chars rather than 400: admin.js is CRLF, so each newline is two
+  // characters and the ternary plus its disabled branch is longer than it looks.
+  /store\.canApprove\(\)[\s\S]{0,900}?Only the Owner or a Board Manager can approve or unpublish/.test(
+    adminSrc
+  ),
+  'a disabled control with a title is better than an absent one: the reader learns why, rather than concluding the feature does not exist'
+);
+report(
+  'Edit is hidden on other authors\' work, and Delete stays ownership-gated',
+  /store\.canEditArticle\(article\)/.test(adminSrc) &&
+    /store\.canEditInterview\(interview\)/.test(adminSrc) &&
+    /store\.canDeleteArticle\(article\)/.test(adminSrc),
+  'the RLS policies already refused the save; hiding the affordance only stops the writer reaching a permission error'
+);
+report(
+  'Assignments is Board Manager, not Writer',
+  /\{ id: 'assignments',[^}]*minRole: 'Board Manager' \}/.test(adminSrc),
+  'it was minRole Writer, so a Writer could create, reassign and close other people\'s work; the board decides who owes what, so it is a management surface'
+);
+report(
+  'the Active Subscribers tile and the audit trail are Owner-only',
+  /ownerOnlyMetrics = isOwnerView\s*\n\s*\?\s*metrics\s*\n\s*:\s*metrics\.filter/.test(adminSrc) &&
+    /m\.label !== 'Active subscribers'/.test(adminSrc) &&
+    /isOwnerView\s*\n\s*\? `<section>\s*\n\s*<h3[^>]*>\s*\n?\s*Audit trail/.test(adminSrc),
+  'filtered out of the list rather than conditionally rendered: an empty tile renders an empty cell, and an empty "Audit trail" heading reads as "nothing happened", which is a false statement'
+);
+report(
+  'the Podcasts tab is open to Writers and submit-only',
+  /\{ id: 'podcasts',[^}]*minRole: 'Writer' \}/.test(adminSrc) &&
+    /if \(!canReview\) \{\s*\n\s*\/\/[\s\S]{0,300}return podcastSubmitPanel\(\);/.test(adminSrc),
+  'the database has always permitted staff submissions -- podcasts_staff_submit allows any staffer and pins status = pending -- so only the tab was in the way'
+);
+report(
+  'the review queue is a REPLACEMENT for a Writer, not a panel above it',
+  /return podcastSubmitPanel\(\);/.test(adminSrc) &&
+    !/podcastQueuePanel[\s\S]{0,200}podcastSubmitPanel/.test(adminSrc),
+  'a queue above the form would let a Writer see who else filed what and gauge a backlog that is not theirs to know'
+);
+report(
+  'the writer submission is a SEPARATE function from the owner publish path',
+  /async function submitPodcastFromWriterForm/.test(adminSrc) &&
+    /const result = await submitPodcast\(/.test(adminSrc) &&
+    /awaiting Owner\/Board Manager approval/.test(adminSrc),
+  'the one path a Writer can reach must not be widenable by adding a parameter to a shared handler; submitPodcast always writes pending and the INSERT policy pins it independently'
+);
+report(
+  'a Writer may file by audio URL as well as by file',
+  /audioUrl = null/.test(podcastsSrc) &&
+    /const cleanAudioUrl = safeUrl\(audioUrl\)/.test(podcastsSrc) &&
+    /if \(!file && !cleanAudioUrl\)/.test(podcastsSrc),
+  'a writer filing from a phone cannot always reach the audio through a file picker, and "download it again and re-upload" is a support ticket'
+);
+report(
+  'a link submission skips the whole Storage path',
+  /UPLOAD ONLY WHEN THERE IS A FILE/.test(podcastsSrc) &&
+    /let url = cleanAudioUrl/.test(podcastsSrc) &&
+    /if \(file\) \{/.test(podcastsSrc),
+  'and it lets a Writer file on a deployment whose Storage is misconfigured; storage_path stays NULL so a later purge does not try to delete an object that was never uploaded'
+);
+report(
+  'the podcast strip is filled ASYNCHRONOUSLY, not read synchronously',
+  /function renderPodcastStrip\(\) \{\s*\n\s*return '<div id="latest-podcasts-mount"/.test(publicSrc) &&
+    /async function fillPodcastStrip\(\)/.test(publicSrc) &&
+    /await listPodcasts\(\)/.test(publicSrc) &&
+    /fillPodcastStrip\(\);/.test(publicSrc),
+  'listPodcasts() returns a Promise; calling .filter on it throws, and because it sat inside a template literal that error took the WHOLE front page with it. The mount is painted empty and filled when the read resolves.'
+);
+report(
+  'the strip shows APPROVED episodes only, and hides itself when there are none',
+  /toLowerCase\(\) === 'approved'/.test(publicSrc) && /mount\.remove\(\)/.test(publicSrc),
+  'RLS already refuses non-approved rows to an anon reader, but the DEMO store has no RLS behind it and would put a pending episode on the front page'
+);
+report(
+  'podcasts.cover_url exists and is nullable',
+  /add column if not exists cover_url text/.test(read('supabase/migrations/031_podcast_cover_image.sql')) &&
+    /podcasts_cover_url_len/.test(read('supabase/migrations/031_podcast_cover_image.sql')),
+  'the submission form needs somewhere to put artwork; audio_url exists for the episode and there was nowhere for its cover'
+);
+report(
+  'cover_url is read back and inserted',
+  /cover_url,/.test(podcastsSrc) && /cover_url: safeUrl\(coverUrl\) \|\| null/.test(podcastsSrc),
+  'a column that is written but never selected is invisible on every card and every editor'
 );
 
 console.log('\nSECTION 11c — placeholder branding is current\n');

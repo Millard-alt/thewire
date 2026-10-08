@@ -62,9 +62,17 @@ import {
   rolePalette,
   paletteVars,
   groupByRole,
+  // groupBySubCategory/resolveLead are the SAME functions the public About page
+  // groups and picks its lead with, imported rather than reimplemented: a second
+  // copy in this panel would drift, and the drift would be invisible — the Owner
+  // would arrange one shape and the page would publish another.
+  groupBySubCategory,
+  resolveLead,
   moveRoleBand,
   ABOUT_CATEGORIES,
-  normaliseAboutCategory
+  normaliseAboutCategory,
+  normaliseSubCategory,
+  SUB_CATEGORY_PRESETS
 } from '../lib/credits.js';
 import {
   escapeHtml,
@@ -210,6 +218,27 @@ function renderOverview() {
 
   const recentAudit = state.auditLogs.slice(0, 6);
 
+  /*
+    TWO OVERVIEW TILES ARE OWNER-ONLY, AND THE LIST IS FILTERED RATHER THAN
+    CONDITIONALLY RENDERED.
+    `metrics` is a flat list consumed by one `.map()` lower down, so the honest
+    fix is to leave the tile out of the list -- filtering afterwards would render
+    an empty cell, and a separate `${isOwner() ? ... : ''}` block around the audit
+    list is how the two halves drift apart again.
+
+    Active subscribers is a headcount of who receives push, and the audit trail
+    records who did what. Neither is a Writer's business, and the brief asks for
+    both to go.
+
+    "Awaiting review" is deliberately KEPT for a Writer: it is their own queue,
+    counting work they filed, and hiding it would leave them with no indication
+    that something is waiting. It shows a count only -- never whose.
+  */
+  const isOwnerView = isOwner();
+  const ownerOnlyMetrics = isOwnerView
+    ? metrics
+    : metrics.filter((m) => m.label !== 'Active subscribers');
+
   return `
     <div class="space-y-6">
       ${panelHeader('Newsroom overview', `Backend: ${backend.label}`,
@@ -218,7 +247,7 @@ function renderOverview() {
          </button>`)}
 
       <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        ${metrics
+        ${ownerOnlyMetrics
           .map(
             (metric) => `
           <div class="panel-raised p-4">
@@ -275,7 +304,16 @@ function renderOverview() {
           </div>
         </section>
 
-        <section>
+        ${
+          /*
+            THE AUDIT TRAIL IS OWNER-ONLY.
+            It records who did what, across every tab, including the roster and the
+            roster's photos. A Writer gets neither the section nor a placeholder:
+            an empty "Audit trail" heading reads as "nothing happened", which is a
+            false statement rather than an absence of information.
+          */
+          isOwnerView
+            ? `<section>
           <h3 class="font-headline text-lg font-black tracking-wide uppercase">
             Audit trail
           </h3>
@@ -293,13 +331,15 @@ function renderOverview() {
               </div>`
                     )
                     .join('')
-                : `<p class="p-4 text-xs ink-muted">No administrative activity recorded yet.</p>`
-            }
-          </div>
-        </section>
-      </div>
-  `;
-}
+: `<p class="p-4 text-xs ink-muted">No administrative activity recorded yet.</p>`
+              }
+            </div>
+          </section>`
+              : ''
+        }
+    </div>
+    `;
+  }
 
 /* -------------------------------------------------------------------------- */
 /* Tab 2 — Content Desk                                                        */
@@ -595,16 +635,42 @@ function renderContent() {
                 ${escapeHtml(article.author)} • ${escapeHtml(article.category)}
               </p>
               <div class="mt-auto flex flex-wrap gap-2 pt-3">
-                <button class="btn btn-ghost" data-action="article-edit"
-                  data-id="${escapeHtml(article.id)}">
-                  <i class="fa-solid fa-pen" aria-hidden="true"></i> Edit
-                </button>
                 ${
-                  String(article.status || '').toLowerCase() === 'pending review'
-                    ? `<button class="btn btn-ghost" data-action="article-publish"
-                        data-id="${escapeHtml(article.id)}">Approve</button>`
-                    : `<button class="btn btn-ghost" data-action="article-reject"
-                        data-id="${escapeHtml(article.id)}">Unpublish</button>`
+                  store.canEditArticle(article)
+                    ? `<button class="btn btn-ghost" data-action="article-edit"
+                        data-id="${escapeHtml(article.id)}">
+                        <i class="fa-solid fa-pen" aria-hidden="true"></i> Edit
+                      </button>`
+                    : // A Writer sees no Edit on somebody else's byline. The RLS
+                      // policy in supabase/007 already refuses the save; hiding the
+                      // affordance just stops them reaching a permission error.
+                      `<button class="btn btn-ghost" disabled
+                        title="You can only edit your own articles.">
+                        <i class="fa-solid fa-pen" aria-hidden="true"></i> Edit
+                      </button>`
+                }
+                ${
+                  /*
+                    APPROVE / UNPUBLISH IS THE APPROVER TIER, NOT AN EDIT.
+                    canApprove() is Owner-or-Active-Board-Manager, matching
+                    public.can_approve() in migration 030. A Writer gets neither
+                    button on anything -- not even on their own article, because
+                    the brief makes the approve decision an Owner/BM one, and an
+                    author approving their own work is the thing the pending status
+                    exists to prevent.
+                  */
+                  store.canApprove()
+                    ? String(article.status || '').toLowerCase() === 'pending review'
+                      ? `<button class="btn btn-ghost" data-action="article-publish"
+                          data-id="${escapeHtml(article.id)}">Approve</button>`
+                      : `<button class="btn btn-ghost" data-action="article-reject"
+                          data-id="${escapeHtml(article.id)}">Unpublish</button>`
+                    : `<button class="btn btn-ghost" disabled
+                        title="Only the Owner or a Board Manager can approve or unpublish.">
+                        ${String(article.status || '').toLowerCase() === 'pending review'
+                          ? 'Approve'
+                          : 'Unpublish'}
+                      </button>`
                 }
                 ${
                   // A writer may delete only their own articles; the Owner may
@@ -733,16 +799,30 @@ function interviewAdminCard(interview) {
           ${interview.interviewer ? ` - by ${escapeHtml(interview.interviewer)}` : ''}
         </p>
         <div class="mt-auto flex flex-wrap gap-2 pt-3">
-          <button class="btn btn-ghost" data-action="interview-edit"
-            data-id="${escapeHtml(interview.id)}">
-            <i class="fa-solid fa-pen" aria-hidden="true"></i> Edit
-          </button>
           ${
-            isPublished
-              ? `<button class="btn btn-ghost" data-action="interview-unpublish"
-                  data-id="${escapeHtml(interview.id)}">Unpublish</button>`
-              : `<button class="btn btn-ghost" data-action="interview-publish"
-                  data-id="${escapeHtml(interview.id)}">Approve</button>`
+            store.canEditInterview(interview)
+              ? `<button class="btn btn-ghost" data-action="interview-edit"
+                  data-id="${escapeHtml(interview.id)}">
+                  <i class="fa-solid fa-pen" aria-hidden="true"></i> Edit
+                </button>`
+              : `<button class="btn btn-ghost" disabled
+                  title="You can only edit interviews you filed.">
+                  <i class="fa-solid fa-pen" aria-hidden="true"></i> Edit
+                </button>`
+          }
+          ${
+            // The approver tier, as on the article grid: Owner or Active Board
+            // Manager only, per public.can_approve() in migration 030.
+            store.canApprove()
+              ? isPublished
+                ? `<button class="btn btn-ghost" data-action="interview-unpublish"
+                    data-id="${escapeHtml(interview.id)}">Unpublish</button>`
+                : `<button class="btn btn-ghost" data-action="interview-publish"
+                    data-id="${escapeHtml(interview.id)}">Approve</button>`
+              : `<button class="btn btn-ghost" disabled
+                  title="Only the Owner or a Board Manager can approve or unpublish.">
+                  ${isPublished ? 'Unpublish' : 'Approve'}
+                </button>`
           }
           ${
             // Mirrors the article grid: the RLS policy plus
@@ -2994,11 +3074,36 @@ async function refreshCreditsPeople() {
  * switch would write `about_order` onto a Credits row. Deriving it means there is
  * nothing to keep in step.
  *
+ * THE ARGUMENT IS A TAB ID, NOT A SCOPE. It used to be called the other way round
+ * from inside `renderRosterTab()`, which passes a SCOPE — so for the About Us tab
+ * `tabScope('about_us')` fell through to 'credits', the stale-repaint guard below
+ * compared `body.dataset.tab` ('about') against 'credits', always bailed, and the
+ * panel sat on "Loading the About Us page…" forever. It only ever worked because
+ * opening the Credits tab first populated the module cache and took the
+ * SYNCHRONOUS path, which skips the guard entirely — so the bug hid behind the
+ * order the Owner happened to click two tabs in. See `scopeToTabId` below for the
+ * fix, and note that this function is now only ever called with a real tab id.
+ *
  * @param {string} tabId  e.g. 'about', 'credits'
  * @returns {'about_us'|'credits'}
  */
 function tabScope(tabId) {
   return tabId === 'about' ? 'about_us' : 'credits';
+}
+
+/**
+ * The inverse of `tabScope()`: which tab a SCOPE belongs to.
+ *
+ * Two functions rather than one function called with the wrong argument, because
+ * the two directions are not inverses of each other by accident — they are a pair,
+ * and naming the pair is what stops the next reader from passing a scope to
+ * `tabScope()`.
+ *
+ * @param {'about_us'|'credits'} scope
+ * @returns {'about'|'credits'}
+ */
+function scopeToTabId(scope) {
+  return normaliseScope(scope) === 'about_us' ? 'about' : 'credits';
 }
 
 /** Colour a new person starts from, so the picker is never empty. */
@@ -3044,10 +3149,13 @@ function renderRosterTab(scope) {
     );
   }
 
-  // Read the tab id back out of `tabScope` rather than spelling the mapping twice,
-  // so the tab that renders and the variable the async repaint checks against
-  // cannot drift.
-  const tabId = tabScope(scope) === 'about_us' ? 'about' : 'credits';
+  // The tab id is derived from the scope through the NAMED PAIR rather than by
+  // spelling the mapping a second time, so the guard the async repaint checks
+  // below cannot disagree with the tab that was actually rendered. The previous
+  // `tabScope(scope)` was the same function called with the wrong KIND of
+  // argument, which resolved to 'credits' for the About Us tab and left it
+  // loading forever whenever it was the first roster tab opened.
+  const tabId = scopeToTabId(scope);
 
   if (creditsPeople) return rosterPanel(creditsPeople, scope);
 
@@ -3071,6 +3179,40 @@ function scopeLabel(scope) {
 /** Only this page's rows. The filter the panel applies on top of its unscoped read. */
 function rowsInScope(people, scope) {
   return people.filter((person) => normaliseScope(person.page_scope) === scope);
+}
+
+/**
+ * What the sub-category `<datalist>` offers.
+ *
+ * THE PANEL'S OWN TEAMS FIRST, then the five presets, then whatever this person
+ * is already filed under. In that order, because a `<datalist>` is a filtered
+ * dropdown: the Owner typing "Wri" must meet "Writers" that their own roster
+ * already uses before it meets a generic suggestion, or they will create a
+ * second "Writers" heading that differs only in a trailing space.
+ *
+ * Set-deduplicated case-insensitively, since the page groups that way — offering
+ * "Writers" and "writers" in the same list is how two indistinguishable headings
+ * get created in the first place.
+ *
+ * @param {Array<object>} people  everybody already on this page
+ * @param {string} current  this person's own sub-category, so it is always offered
+ * @returns {string[]}
+ */
+function subCategorySuggestions(people, current = '') {
+  const seen = new Set();
+  const out = [];
+  const push = (value) => {
+    const label = normaliseSubCategory(value);
+    const key = label.toLowerCase();
+    if (!label || seen.has(key)) return;
+    seen.add(key);
+    out.push(label);
+  };
+
+  for (const person of people || []) push(person.sub_category);
+  SUB_CATEGORY_PRESETS.forEach(push);
+  push(current);
+  return out;
 }
 
 /**
@@ -3106,9 +3248,13 @@ function rosterPanel(people, scope) {
         ${
           onAbout
             ? `This is the <strong>About Us</strong> page and nothing else. Every entry here is filed
-             under <strong>Board Members</strong> or <strong>Behind the Bylines</strong>, and none
-             of them appear on the Credits page. To put somebody on both pages, add them once on
-             each tab — that is how the two pages stay genuinely independent.`
+             under a <strong>main category</strong> (Board Members or Behind the Bylines), optionally under
+             a <strong>sub-category</strong> that becomes its own sub-heading — Writers, Designers,
+             Photographers, or any team name you invent. Tick <strong>Set as Lead</strong> on one person
+             per sub-category and they head it; leave a sub-category with nobody ticked and the page shows
+             the first person by display order. None of these entries appear on the Credits page.
+             To put somebody on both pages, add them once on each tab — that is how the two pages stay
+             genuinely independent.`
             : `This is the <strong>Credits</strong> page and nothing else. It is a list of
              <strong>people</strong>, not of accounts: adding someone creates no login and grants
              no access. Board members and writers are listed on the About Us tab instead and never
@@ -3136,11 +3282,12 @@ function rosterPanel(people, scope) {
                    <i class="fa-solid fa-triangle-exclamation ink-muted" aria-hidden="true"></i>
                    The roster table is not there yet
                  </p>
-                 <p class="ink-muted mt-2">
-                   Run <code>supabase/migrations/009_credits_page.sql</code> and then
-                   <code>supabase/migrations/028_page_scopes.sql</code> in the Supabase SQL
-                   Editor, then reopen this tab.
-                 </p>
+<p class="ink-muted mt-2">
+                     Run <code>supabase/migrations/009_credits_page.sql</code>, then
+                     <code>supabase/migrations/028_page_scopes.sql</code>, then
+                     <code>supabase/migrations/032_roster_leads_and_subcategories.sql</code> in
+                     the Supabase SQL Editor, then reopen this tab.
+                   </p>
                </div>`
             : emptyState(
                 onAbout
@@ -3154,12 +3301,22 @@ function rosterPanel(people, scope) {
 }
 
 /**
- * One About Us section: a heading and the people filed under it.
+ * One About Us section: the main heading, and its sub-teams underneath.
  *
- * An empty section is NOT rendered. Showing "Nobody listed under Behind the
- * Bylines" on a page the Owner has simply not filled in yet reads as a broken
- * page; the public About page still renders both headings with a placeholder, so
- * the reader-facing promise is kept without the panel showing empty furniture.
+ * TWO LEVELS, BECAUSE THE PAGE HAS TWO LEVELS. The grouping is imported from the
+ * data layer rather than reimplemented here, for the reason `creditsRoleBand()`
+ * gives about importing `groupByRole()`: a second copy would drift, and the
+ * failure mode would be invisible. The Owner would arrange the panel one way and
+ * the page would render another, with nothing in between reporting a problem.
+ *
+ * Each sub-team shows its resolved lead and says so. The hint under a team with
+ * no tick is not nagging — it is the Owner being told the difference between "I
+ * chose this person" and "the page picked the first row because I chose nobody",
+ * which is the one piece of this feature the Owner cannot otherwise see.
+ *
+ * An empty sub-team is NOT rendered, and neither is an empty main heading.
+ * "Nobody listed under Behind the Bylines" in a panel the Owner has simply not
+ * filled in reads as a broken panel.
  *
  * @param {Array<object>} people
  * @param {string} category
@@ -3168,19 +3325,61 @@ function rosterPanel(people, scope) {
 function aboutCategorySection(people, category) {
   if (!people.length) return '';
 
+  const { loose, groups } = groupBySubCategory(people);
+  const colour =
+    normaliseColour(people.find((person) => person.role_color)?.role_color) || DEFAULT_ROLE_COLOR;
+
+  const subSection = (title, members, headingId) => {
+    const { lead, designated } = resolveLead(members);
+    return `
+      <div class="credits-band-editor__sub">
+        <span id="${escapeHtml(headingId)}">${escapeHtml(title)}</span>
+        <span class="opacity-70">· ${members.length} ${
+          members.length === 1 ? 'person' : 'people'
+        } · lead: ${escapeHtml(lead?.name || '—')}${
+          designated ? '' : ' (first by order)'
+        }</span>
+      </div>
+      <ul class="space-y-4">
+        ${members.map((person) => rosterPersonCard(person, 'about_us')).join('')}
+      </ul>
+    `;
+  };
+
   return `
-    <section class="credits-band-editor" data-about-section="${escapeHtml(category)}">
+    <section class="credits-band-editor" style="--band:${colour}"
+      data-about-section="${escapeHtml(category)}">
       <div class="credits-band-editor__head">
         <span class="credits-band-editor__name">${escapeHtml(category)}</span>
         <span class="credits-band-editor__count">
           ${people.length} ${people.length === 1 ? 'person' : 'people'}
         </span>
       </div>
-      <ul class="space-y-4">
-        ${people.map((person) => rosterPersonCard(person, 'about_us')).join('')}
-      </ul>
+
+      ${
+        loose.length
+          ? subSection('No sub-category', loose, `about-panel-${slugFor(category)}-loose`)
+          : ''
+      }
+      ${groups
+        .map((group) =>
+          subSection(
+            group.subCategory,
+            group.people,
+            `about-panel-${slugFor(category)}-${slugFor(group.subCategory)}`
+          )
+        )
+        .join('')}
     </section>
   `;
+}
+
+/** An id-safe fragment from a heading. Mirrors `slug()` in lib/credits.js. */
+function slugFor(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 /**
@@ -3239,10 +3438,21 @@ function creditsRoleBand(band, index, total) {
  *
  * The FIELDS DEPEND ON THE PAGE, and that is the point of the split:
  *
- *   About Us  — Name, Category (which roster), Role title, Accent colour,
- *               One-line note, Display order (about_order), Photo.
- *   Credits   — Name, Credit role, Accent colour, Description, Display order
- *               (sort_order), Photo.
+ *   About Us  — Name, Main category, Sub-category, Role title, Set-as-Lead,
+ *               Accent colour, One-line note, Display order (about_order), Photo.
+ *   Credits   — Name, Sub-category, Credit role, Accent colour, Description,
+ *               Display order (sort_order), Photo.
+ *
+ * "Main category" is a LABEL, not a column. The value written is
+ * `credits_people.category`, which already stores exactly the two main headings
+ * and is already CHECK-constrained to them; adding a second `main_category`
+ * column would store one fact twice and give every read a question about which
+ * copy wins.
+ *
+ * SUB-CATEGORY AND LEAD APPEAR ON BOTH TABS, on purpose. The Credits page groups
+ * by role and renders neither, so they are inert there — but the columns exist
+ * for both scopes and the Owner should not have to remember that a control they
+ * can see on one tab is silently unavailable on the other.
  *
  * There is deliberately NO "appears under" select on either one any more. That
  * field is how a person used to be moved off one page by editing a card on the
@@ -3263,6 +3473,8 @@ function rosterPersonCard(person, scope) {
   const name = escapeHtml(person.name || 'Unnamed');
   const onAbout = scope === 'about_us';
   const category = normaliseAboutCategory(person.category);
+  const subCategory = normaliseSubCategory(person.sub_category);
+  const isLead = person.is_lead === true || person.is_lead === 1 || person.is_lead === 'true';
   const order = onAbout ? Number(person.about_order) : Number(person.sort_order);
   const palette = rolePalette(person.role_color);
 
@@ -3299,7 +3511,7 @@ function rosterPersonCard(person, scope) {
           ${
             onAbout
               ? `<div>
-                   <label class="field-label" for="credits-category-${id}">Roster</label>
+                   <label class="field-label" for="credits-category-${id}">Main category</label>
                    <select id="credits-category-${id}" class="field" data-credits-category required>
                      ${ABOUT_CATEGORIES.map(
                        (option) =>
@@ -3317,6 +3529,37 @@ function rosterPersonCard(person, scope) {
                    </p>
                  </div>`
           }
+        </div>
+
+        <div>
+          <label class="field-label" for="credits-sub-${id}">Sub-category / department</label>
+          <input id="credits-sub-${id}" class="field" type="text" maxlength="60"
+            list="credits-sub-suggestions-${id}" data-credits-sub-category
+            value="${escapeHtml(subCategory)}"
+            placeholder="${onAbout ? 'Writers' : 'Photographers'}" />
+          <datalist id="credits-sub-suggestions-${id}">
+            ${subCategorySuggestions(subCategory).map(
+              (option) => `<option value="${escapeHtml(option)}"></option>`
+            ).join('')}
+          </datalist>
+          <p class="mt-1 text-[0.6875rem] ink-muted">
+            Any team name you like — it becomes a heading on the page. Leave it
+            empty and ${escapeHtml(
+              onAbout ? 'this person sits under the main heading' : 'this person is filed by their credit'
+            )} alone.
+          </p>
+        </div>
+
+        <div>
+          <label class="roster-lead" for="credits-lead-${id}">
+            <input id="credits-lead-${id}" type="checkbox" data-credits-is-lead
+              ${isLead ? 'checked' : ''} />
+            <span>Set as Lead of this Sub-Category</span>
+          </label>
+          <p class="mt-1 text-[0.6875rem] ink-muted">
+            One lead per sub-category. Ticking somebody else moves the lead; if
+            nobody is ticked, the page shows the first person by display order.
+          </p>
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2">
@@ -3413,6 +3656,7 @@ function rosterAddForm(people, scope) {
     'Patron'
   ];
   const suggestions = [...new Set([...used, ...(onAbout ? [] : presets)])];
+  const subs = subCategorySuggestions(people);
 
   return `
     <form id="credits-add-form" class="panel-raised space-y-4 p-4"
@@ -3453,7 +3697,7 @@ function rosterAddForm(people, scope) {
       ${
         onAbout
           ? `<div>
-               <label class="field-label" for="credits-add-category">Roster</label>
+               <label class="field-label" for="credits-add-category">Main category</label>
                <select id="credits-add-category" class="field" required>
                  ${ABOUT_CATEGORIES.map(
                    (option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`
@@ -3466,6 +3710,32 @@ function rosterAddForm(people, scope) {
              </div>`
           : ''
       }
+
+      <div>
+        <label class="field-label" for="credits-add-sub">Sub-category / department</label>
+        <input id="credits-add-sub" class="field" type="text" maxlength="60"
+          list="credits-add-sub-suggestions" placeholder="Writers" />
+        <datalist id="credits-add-sub-suggestions">
+          ${subs.map((option) => `<option value="${escapeHtml(option)}"></option>`).join('')}
+        </datalist>
+        <p class="mt-1 text-[0.6875rem] ink-muted">
+          Optional. Any team name becomes a sub-heading on the page; leave it empty
+          and this person sits directly under the ${escapeHtml(
+            onAbout ? 'main category' : 'Credits page'
+          )}.
+        </p>
+      </div>
+
+      <div>
+        <label class="roster-lead" for="credits-add-lead">
+          <input id="credits-add-lead" type="checkbox" data-credits-add-is-lead />
+          <span>Set as Lead of this Sub-Category</span>
+        </label>
+        <p class="mt-1 text-[0.6875rem] ink-muted">
+          Only one lead per sub-category. If you leave it unticked, the page shows
+          the first person in that team by display order.
+        </p>
+      </div>
 
       <div class="grid gap-3 sm:grid-cols-2">
         <div>
@@ -3692,6 +3962,101 @@ function inlineMarkdown(text) {
 let podcastQueue = null;
 
 /**
+ * THE WRITER VIEW OF THE PODCASTS TAB: submit, and see your own queue.
+ *
+ * Deliberately NOT the review queue. A Writer who can see pending episodes sees
+ * who else filed what and can gauge the queue, which is not theirs to know; and
+ * the Approve/Reject buttons would sit one click from a decision the database
+ * refuses them anyway.
+ *
+ * The form is inline rather than in the Owner's dialog because this is the whole
+ * tab: a panel whose only content is behind a "Upload" button is two clicks to do
+ * the one thing the tab exists for.
+ *
+ * The success banner names who has to act and what happens next, because
+ * "submitted successfully" alone leaves a writer wondering whether it is live.
+ */
+function podcastSubmitPanel() {
+  return `
+    <div class="space-y-5">
+      ${panelHeader(
+        'Submit a podcast',
+        'Your episode is filed for review. It appears on the site once the Owner or a Board Manager approves it.',
+        ''
+      )}
+
+      <p class="panel-sunken p-4 text-xs ink-muted">
+        <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+        Everything you file here starts as <strong>pending</strong>. You cannot
+        approve your own episode, and neither can anyone else without the Owner or
+        Board Manager seat � that is deliberate, and it is what stops an unreviewed
+        recording going live by accident.
+      </p>
+
+      <form id="podcast-submit-form" class="panel-raised space-y-4 p-4" novalidate>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label class="field-label" for="podcast-sub-title">Title</label>
+            <input id="podcast-sub-title" class="field" type="text" maxlength="120" required />
+          </div>
+          <div>
+            <label class="field-label" for="podcast-sub-host">Speaker / host name</label>
+            <input id="podcast-sub-host" class="field" type="text" maxlength="80"
+              placeholder="Defaults to your name" />
+          </div>
+        </div>
+
+        <div>
+          <label class="field-label" for="podcast-sub-description">Description</label>
+          <textarea id="podcast-sub-description" class="field" rows="3"
+            maxlength="${PODCAST_DESCRIPTION_LIMIT}"></textarea>
+          <p class="mt-1 text-[0.6875rem] ink-muted">
+            <span data-podcast-sub-count>0</span>/${PODCAST_DESCRIPTION_LIMIT} characters.
+          </p>
+        </div>
+
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label class="field-label" for="podcast-sub-file">Audio file</label>
+            <input id="podcast-sub-file" class="field" type="file" accept=".mp3,audio/mpeg" />
+            <p class="mt-1 text-[0.6875rem] ink-muted">
+              MP3, up to 25 MB. The length is worked out from the file.
+            </p>
+          </div>
+          <div>
+            <label class="field-label" for="podcast-sub-audio-url">�or an audio link</label>
+            <input id="podcast-sub-audio-url" class="field" type="url"
+              placeholder="https://example.com/episode.mp3" />
+            <p class="mt-1 text-[0.6875rem] ink-muted">
+              Use one or the other. A link is useful when the audio is not on this device.
+            </p>
+          </div>
+        </div>
+
+        <div>
+          <label class="field-label" for="podcast-sub-cover">Cover image URL</label>
+          <input id="podcast-sub-cover" class="field" type="url"
+            placeholder="https://example.com/cover.jpg" />
+          <p class="mt-1 text-[0.6875rem] ink-muted">
+            Optional. Left empty the card renders without artwork.
+          </p>
+        </div>
+
+        <button type="submit" class="btn btn-accent w-full sm:w-auto">
+          <i class="fa-solid fa-paper-plane" aria-hidden="true"></i> Submit for review
+        </button>
+      </form>
+
+      <p class="panel-sunken p-4 text-xs ink-muted">
+        <i class="fa-solid fa-hourglass-half" aria-hidden="true"></i>
+        You will see the episode on the public podcast page only after it is
+        approved. Nothing here is published the moment you press submit.
+      </p>
+    </div>
+  `;
+}
+
+/**
  * The Owner's podcast manager: upload, review, edit, delete.
  *
  * This tab is the ONLY place podcasts are managed. It used to be reachable only
@@ -3701,14 +4066,41 @@ let podcastQueue = null;
  * the queue it skips.
  */
 function renderPodcastsTab() {
-  const body = byId('admin-tab-body');
-  if (!body) return '';
+const body = byId('admin-tab-body');
+    if (!body) return '';
 
-  if (!isOwner()) {
-    return emptyState('Only the Owner can publish or refuse an episode.', 'fa-lock');
-  }
+    /*
+      WRITERS GET A SUBMIT-ONLY VIEW, NOT AN EMPTY ONE.
 
-  if (podcastQueue) return podcastQueuePanel(podcastQueue);
+      This tab used to be `ownerOnly` and returned a lock message for anyone
+      else, so a Writer could not file an episode at all -- which is why the door
+      for that was on the Interviews tab. The brief asks Writers to submit, and
+      the database has permitted it all along: `podcasts_staff_submit` allows any
+      staffer to insert, and pins status = 'pending' so a crafted request cannot
+      self-approve. Nothing server-side was blocking this; only the tab was.
+
+      What a Writer is NOT given, and this is the whole point:
+
+        - the review queue (Owner and Board Manager see it)
+        - Approve / Reject on anything, including their own
+        - the role-band reordering, which is a front-page layout control
+        - delete on anybody's episode
+
+      So the tab is `minRole: 'Writer'` in TABS and this function branches on
+      role. Hiding the queue is not enforcement -- podcasts_owner_all and
+      podcasts_delete still require their own checks -- it just stops a Writer
+      being offered a decision they cannot make.
+    */
+    const canReview = store.canApprove();
+
+    if (!canReview) {
+      // A Writer's tab is submit-only. `podcastSubmitPanel` is a full replacement,
+      // not a panel above the queue, because the queue itself must not be in the
+      // document for someone who has no business reading it.
+      return podcastSubmitPanel();
+    }
+
+    if (podcastQueue) return podcastQueuePanel(podcastQueue);
 
   // Two reads, run together: the approval queue and everything already
   // published. An Owner needs to see both at once -- approving something while
@@ -4031,6 +4423,57 @@ async function openPodcastUpload() {
   openDialog('podcast-upload', { initialFocus: '#podcast-up-title' });
 }
 
+/**
+ * A WRITER files an episode for review.
+ *
+ * Separate from `savePodcastUploadFromForm()`, which is the Owner's dialog and
+ * publishes straight to 'approved'. Keeping them apart is deliberate: this is the
+ * path a Writer can reach, and it must not be possible to widen it by passing a
+ * parameter into a shared handler.
+ *
+ * `submitPodcast()` in src/lib/podcasts.js always writes status = 'pending', and
+ * the INSERT policy pins that independently, so "publish straight through" is not
+ * reachable from here even by editing this function.
+ *
+ * @param {HTMLFormElement} form
+ */
+async function submitPodcastFromWriterForm(form) {
+  const title = byId('podcast-sub-title')?.value.trim() || '';
+  if (!title) {
+    showToast('Give the episode a title.', { type: 'error' });
+    byId('podcast-sub-title')?.focus();
+    return;
+  }
+
+  const file = byId('podcast-sub-file')?.files?.[0] || null;
+  const audioUrl = byId('podcast-sub-audio-url')?.value.trim() || '';
+
+  if (!file && !audioUrl) {
+    showToast('Choose an MP3 or paste a link to the audio.', { type: 'error' });
+    return;
+  }
+
+  const result = await submitPodcast({
+    title,
+    description: byId('podcast-sub-description')?.value.trim() || '',
+    file,
+    audioUrl,
+    coverUrl: byId('podcast-sub-cover')?.value.trim() || ''
+  });
+
+  if (!result.ok) {
+    showToast(result.message, { type: 'error' });
+    return;
+  }
+
+  form.reset();
+  showToast(
+    'Podcast submitted successfully and is awaiting Owner/Board Manager approval.',
+    { type: 'success', duration: 8000 }
+  );
+  paintActiveTab();
+}
+
 async function savePodcastUploadFromForm() {
   const title = byId('podcast-up-title')?.value.trim() || '';
   const description = byId('podcast-up-description')?.value.trim() || '';
@@ -4280,9 +4723,37 @@ const TABS = [
   // The submission queue is open to any staffer, but the DECISION is not: a tab a
   // writer can open but not act in is a dead end, so the gate is the Owner seat
   // and not a role ranking.
-  { id: 'podcasts', label: 'Podcasts', icon: 'fa-headphones', render: renderPodcastsTab, ownerOnly: true },
+  /*
+    OPEN TO WRITERS, SUBMIT-ONLY.
+
+    This was `ownerOnly`, so a Writer saw a lock message and could not file an
+    episode at all. The database has permitted staff submissions all along --
+    `podcasts_staff_submit` allows any staffer to insert and pins status='pending'
+    so the row cannot self-approve -- so only the tab was in the way.
+
+    `renderPodcastsTab` branches on `canApprove()`: a Writer gets the submission
+    form and no review queue. A Board Manager now gets the queue too, which is the
+    approver tier from migration 030.
+
+    The "approve" decision is Owner or Board Manager and nothing else: no tab
+    change grants a Writer the queue, and podcasts_delete still needs the Owner
+    seat.
+  */
+  { id: 'podcasts', label: 'Podcasts', icon: 'fa-headphones', render: renderPodcastsTab, minRole: 'Writer' },
   { id: 'accounts', label: 'Accounts', icon: 'fa-user-check', render: renderAccountsTab, ownerOnly: true },
-  { id: 'assignments', label: 'Assignments', icon: 'fa-clipboard-list', render: renderAssignmentsTab, minRole: 'Writer' },
+  /*
+    Assignments is BOARD MANAGER, not Writer.
+
+    It was minRole 'Writer', so a Writer could open the assignment board and
+    create, reassign and close other people's work. The brief is explicit that a
+    Writer cannot manage assignments, and the board is a management surface, not
+    a filing surface: it decides who owes what.
+
+    This is a ROLE change on the tab, not a new gate. TABS already filters by
+    minRole, and tests/roles.mjs walks every tab for every role, so the change is
+    visible in the next suite run rather than needing a new test.
+  */
+  { id: 'assignments', label: 'Assignments', icon: 'fa-clipboard-list', render: renderAssignmentsTab, minRole: 'Board Manager' },
   { id: 'breaking', label: 'Breaking', icon: 'fa-bolt', render: renderBreakingTab, minRole: 'Board Manager' },
   { id: 'broadcasts', label: 'Broadcasts', icon: 'fa-paper-plane', render: renderBroadcastsTab, minRole: 'Board Manager' },
   { id: 'curation', label: 'Curation', icon: 'fa-star', render: renderCurationTab, minRole: 'Board Manager' },
@@ -4384,7 +4855,32 @@ function bindFilePickers() {
     fileInput.dataset.bound = 'true';
     bindImagePicker(fileInput, urlInput);
   });
-// The supporting-photo picker is bound separately because it is a multi-file
+/*
+    THE WRITER PODCAST PAIR IS AUDIO, NOT IMAGE, so it does not go through
+    bindImagePicker: that helper UPLOADS the chosen file to storage and writes the
+    resulting URL into the text box, which is right for a poster image and wrong
+    for an MP3 -- the episode's audio is uploaded at submit time, not at pick time,
+    and an image upload pipeline would reject the file.
+
+    What the pair actually needs is mutual exclusion. Picking a file and keeping
+    a pasted URL is a contradiction the form has to resolve one way or the other,
+    and silently preferring one is how a writer ends up submitting the wrong
+    episode. Choosing either clears the other, so the submitted audio is always
+    the one they last pointed at.
+  */
+  const podcastFile = byId('podcast-sub-file');
+  const podcastUrl = byId('podcast-sub-audio-url');
+  if (podcastFile && podcastUrl && podcastFile.dataset.bound !== 'true') {
+    podcastFile.dataset.bound = 'true';
+    podcastFile.addEventListener('change', () => {
+      if (podcastFile.files?.length) podcastUrl.value = '';
+    });
+    podcastUrl.addEventListener('input', () => {
+      if (podcastUrl.value.trim()) podcastFile.value = '';
+    });
+  }
+
+  // The supporting-photo picker is bound separately because it is a multi-file
   // input feeding the thumbnail strip, not a file+URL pair: bindImagePicker
   // writes one uploaded URL into a text input, which is the wrong shape here.
   const extraInput = byId('article-extra-file');
@@ -4666,6 +5162,13 @@ function attachAdminListeners() {
     } else if (form.id === 'podcast-upload-form') {
       event.preventDefault();
       guard(() => savePodcastUploadFromForm());
+    } else if (form.id === 'podcast-submit-form') {
+      // The WRITER's own submission, a different function from
+      // savePodcastUploadFromForm() and not a flag on it: the Owner's dialog
+      // publishes straight to 'approved', and the one path a Writer can reach
+      // must not be widenable by adding a parameter to a shared handler.
+      event.preventDefault();
+      guard(() => submitPodcastFromWriterForm(form));
     } else if (form.dataset.podcastEditForm) {
       event.preventDefault();
       guard(() => savePodcastEditFromForm(form));
@@ -5430,6 +5933,13 @@ function handleChange(event) {
     if (counter) counter.textContent = String(target.value.length);
   }
 
+  // The Writer submission form's own counter. It lives on the tab body rather
+  // than in a dialog, so it is looked up in the form itself.
+  if (target.id === 'podcast-sub-description') {
+    const counter = target.form?.querySelector('[data-podcast-sub-count]');
+    if (counter) counter.textContent = String(target.value.length);
+  }
+
   /* --- Account roles ------------------------------------------------------- */
   // Only a *saved* row (an approved account) writes immediately. On a pending
   // request the role is just the value to be used by the Approve button, so
@@ -5603,7 +6113,7 @@ async function saveCreditsFromForm(form) {
   }
 
   if (onAbout && !form.querySelector('[data-credits-category]')?.value) {
-    showToast('An About Us entry needs a roster: Board Members or Behind the Bylines.', {
+    showToast('An About Us entry needs a main category: Board Members or Behind the Bylines.', {
       type: 'error'
     });
     return;
@@ -5622,6 +6132,16 @@ async function saveCreditsFromForm(form) {
     // under" select is gone from the Credits card.
     page_scope: scope,
     category: onAbout ? form.querySelector('[data-credits-category]')?.value ?? '' : '',
+    // ALWAYS SENT, INCLUDING WHEN IT IS EMPTY. That is the difference between
+    // "leave this person in Writers" and "take this person out of Writers", and
+    // only an explicit empty string can say the second one: `updatePerson()`
+    // omits the RPC argument entirely when the caller never mentioned a
+    // sub-category, and an omitted argument is a no-op by design.
+    sub_category: form.querySelector('[data-credits-sub-category]')?.value.trim() ?? '',
+    // A checkbox, so the unticked state is `false` and not `undefined`. Sending
+    // it every time is what makes unticking work at all -- a form that only sent
+    // `true` could never take the lead back off somebody.
+    is_lead: form.querySelector('[data-credits-is-lead]')?.checked === true,
     [orderKey]: readOrderField(form, scope)
   });
 
@@ -5659,7 +6179,7 @@ async function addCreditsPersonFromForm(form) {
 
   const category = byId('credits-add-category')?.value.trim() || '';
   if (onAbout && !category) {
-    showToast('Choose a roster: Board Members or Behind the Bylines.', { type: 'error' });
+    showToast('Choose a main category: Board Members or Behind the Bylines.', { type: 'error' });
     return;
   }
 
@@ -5708,6 +6228,11 @@ async function addCreditsPersonFromForm(form) {
     // let a Credits entry quietly become a board member.
     pageScope: scope,
     category: onAbout ? category : '',
+    // Sent on BOTH pages, and the key is always present even when the field was
+    // left blank -- on an INSERT there is no stored value for the server to keep,
+    // so '' is the only way to say "no sub-team" and it costs nothing.
+    subCategory: byId('credits-add-sub')?.value.trim() ?? '',
+    isLead: byId('credits-add-lead')?.checked === true,
     // One field, whichever page's order column this form renders.
     ...(onAbout ? { aboutOrder: order } : { order })
   });

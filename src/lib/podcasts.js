@@ -372,7 +372,7 @@ export async function listPodcasts({ status = '', mine = false } = {}) {
   let query = client
     .from('podcasts')
     .select(
-      'id, title, description, audio_url, storage_path, duration_seconds, status, author_name, created_at, updated_at'
+      'id, title, description, audio_url, storage_path, cover_url, duration_seconds, status, author_name, created_at, updated_at'
     )
     .order('created_at', { ascending: false });
 
@@ -406,17 +406,37 @@ export function listPendingPodcasts() {
  *          durationSeconds?: number}} input
  * @returns {Promise<{ok: boolean, message?: string, podcast?: object}>}
  */
-export async function submitPodcast({ title, description = '', file, durationSeconds = null } = {}) {
-  const cleanTitle = String(title || '').trim();
-  if (!cleanTitle) return { ok: false, message: 'Give the episode a title.' };
+export async function submitPodcast({ title, description = '', file, durationSeconds = null, coverUrl = null, audioUrl = null } = {}) {
+    const cleanTitle = String(title || '').trim();
+    if (!cleanTitle) return { ok: false, message: 'Give the episode a title.' };
 
-  const cleanDescription = String(description || '').trim();
-  if (cleanDescription.length > MAX_DESCRIPTION) {
-    return {
-      ok: false,
-      message: `The description is ${cleanDescription.length} characters. The limit is ${MAX_DESCRIPTION}.`
-    };
-  }
+    const cleanDescription = String(description || '').trim();
+    if (cleanDescription.length > MAX_DESCRIPTION) {
+      return {
+        ok: false,
+        message: `The description is ${cleanDescription.length} characters. The limit is ${MAX_DESCRIPTION}.`
+      };
+    }
+
+    /*
+      AUDIO BY URL, for a submission made without a local file.
+
+      The form offers a file OR a pasted URL, because a writer filing from a
+      phone camera roll has the audio somewhere the file picker cannot reach, and
+      a "you must re-download and re-upload it" failure is a support ticket.
+
+      safeUrl() is applied rather than trusted: the value ends up in an `src`
+      attribute on the public podcast card, and an unvalidated string there is a
+      javascript: link waiting to happen. It rejects anything that is not http(s)
+      or a data image, which is the same gate every other stored URL goes through.
+    */
+    const cleanAudioUrl = safeUrl(audioUrl);
+    if (audioUrl && !cleanAudioUrl) {
+      return { ok: false, message: 'That audio link is not a usable http(s) URL.' };
+    }
+    if (!file && !cleanAudioUrl) {
+      return { ok: false, message: 'Choose an MP3 or paste a link to the audio.' };
+    }
 
   const problem = validateAudioFile(file);
   if (problem) return { ok: false, message: problem };
@@ -428,8 +448,12 @@ export async function submitPodcast({ title, description = '', file, durationSec
   const who = displayName();
 
   if (config.demoMode) {
-    const path = objectName(file);
-    const url = URL.createObjectURL(file);
+    // Declared here, not shared with the live path below: the demo branch
+    // returns before reaching it, so hoisting them would only invite a TDZ.
+    const path = file ? objectName(file) : null;
+    // A pasted URL is used as-is. A real file becomes a blob URL, which is what
+    // the demo player can actually play.
+    const url = file ? URL.createObjectURL(file) : cleanAudioUrl;
     const row = {
       id: `demo-pod-${Date.now().toString(36)}`,
       title: cleanTitle,
@@ -438,7 +462,11 @@ export async function submitPodcast({ title, description = '', file, durationSec
       duration_seconds: seconds,
       status: 'pending',
       audio_url: url,
+      // NULL rather than an object URL string for a link submission, so the demo
+      // store matches what the database would hold and a later purge does not
+      // try to delete an object that was never uploaded.
       storage_path: path,
+      cover_url: safeUrl(coverUrl) || null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
@@ -449,43 +477,62 @@ export async function submitPodcast({ title, description = '', file, durationSec
   const client = getSupabase();
   if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
 
-  // Pre-flight the bucket. Uploading 25 MB to discover the bucket is missing
-  // wastes the writer's data allowance and their time, and the failure they see
-  // is a bare "Failed to load resource" in a console they may never open.
-  const ready = await checkPodcastStorage();
-  if (!ready.ok) return { ok: false, message: ready.message };
+  /*
+    UPLOAD ONLY WHEN THERE IS A FILE.
 
-  const path = objectName(file);
+    A pasted URL short-circuits the whole Storage path: there is nothing to
+    upload, nothing that can fail, and nothing that needs a writable bucket --
+    which is what lets a Writer file an episode by link on a deployment whose
+    Storage is misconfigured. `storage_path` stays NULL so a later purge knows
+    there is no object to remove rather than trying to delete one.
+  */
+  let path = null;
+  let url = cleanAudioUrl;
 
-  const { error: uploadError } = await client.storage
-    .from(BUCKET)
-    // `contentType` is set explicitly rather than left to the browser's guess:
-    // the object is served back to an <audio> tag, and some browsers report an
-    // mp3 as `application/octet-stream`, which makes the response download
-    // rather than play. There is no multipart form here -- a supabase-js upload
-    // is a single binary PUT -- so nothing about this is a CORS preflight beyond
-    // the Authorization header the client always sends.
-    .upload(path, file, { cacheControl: '31536000', upsert: false, contentType: MP3_MIME });
+  if (file) {
+    // Pre-flight the bucket. Uploading 25 MB to discover the bucket is missing
+    // wastes the writer's data allowance and their time, and the failure they see
+    // is a bare "Failed to load resource" in a console they may never open.
+    const ready = await checkPodcastStorage();
+    if (!ready.ok) return { ok: false, message: ready.message };
 
-  if (uploadError) {
-    // No data-URL fallback here, unlike upload.js: an MP3 will not fit in
-    // localStorage and silently "succeeding" would lose a recorded episode. Say
-    // so plainly and leave the writer's file untouched on their device.
-    return {
-      ok: false,
-      message: `${describeStorageError(uploadError, 'the episode')} Your file is still on this device.`
-    };
+    path = objectName(file);
+
+    const { error: uploadError } = await client.storage
+      .from(BUCKET)
+      // `contentType` is set explicitly rather than left to the browser's guess:
+      // the object is served back to an <audio> tag, and some browsers report an
+      // mp3 as `application/octet-stream`, which makes the response download
+      // rather than play. There is no multipart form here -- a supabase-js upload
+      // is a single binary PUT -- so nothing about this is a CORS preflight beyond
+      // the Authorization header the client always sends.
+      .upload(path, file, { cacheControl: '31536000', upsert: false, contentType: MP3_MIME });
+
+    if (uploadError) {
+      // No data-URL fallback here, unlike upload.js: an MP3 will not fit in
+      // localStorage and silently "succeeding" would lose a recorded episode. Say
+      // so plainly and leave the writer's file untouched on their device.
+      return {
+        ok: false,
+        message: `${describeStorageError(uploadError, 'the episode')} Your file is still on this device.`
+      };
+    }
+
+    const { data: urlData } = client.storage.from(BUCKET).getPublicUrl(path);
+    url = urlData?.publicUrl || '';
   }
-
-  const { data: urlData } = client.storage.from(BUCKET).getPublicUrl(path);
 
   const { data, error } = await client
     .from('podcasts')
     .insert({
       title: cleanTitle,
       description: cleanDescription || null,
-      audio_url: urlData?.publicUrl || null,
+      // `url`, NOT `urlData`: urlData is scoped inside the `if (file)` block and
+      // does not exist at all for a link submission. `url` is the resolved value
+      // either way -- the CDN URL for an upload, the pasted URL otherwise.
+      audio_url: url || null,
       storage_path: path,
+      cover_url: safeUrl(coverUrl) || null,
       duration_seconds: seconds,
       status: 'pending',
       // Required by podcasts_staff_submit. See accountId(): without it the
@@ -500,7 +547,11 @@ export async function submitPodcast({ title, description = '', file, durationSec
   if (error) {
     // The row failed, so the object is orphaned. Remove it rather than leaving
     // an unplayable file accruing in a bucket nobody will ever list.
-    await client.storage.from(BUCKET).remove([path]).catch(() => {});
+    //
+    // Guarded on `path`: for a link submission there is no object, and calling
+    // remove() with null used to be a pointless request that could mask the real
+    // error behind a second one.
+    if (path) await client.storage.from(BUCKET).remove([path]).catch(() => {});
     return {
       ok: false,
       message: accountId()

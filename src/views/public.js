@@ -211,13 +211,94 @@ captionText(article.caption)
 
 /** A section heading with the newspaper double rule beneath it. */
 function sectionHeading(id, kicker, title) {
-  return `
-    <div class="mb-5 rule border-b-2 border-double pb-3">
-      ${kicker ? `<p class="accent-text text-[0.625rem] font-bold tracking-[0.24em] uppercase">${escapeHtml(kicker)}</p>` : ''}
-      <h2 id="${escapeHtml(id)}" class="font-headline text-2xl font-black tracking-wide uppercase md:text-3xl">
-        ${escapeHtml(title)}
-      </h2>
-    </div>
+    return `
+      <div class="mb-5 rule border-b-2 border-double pb-3">
+        ${kicker ? `<p class="accent-text text-[0.625rem] font-bold tracking-[0.24em] uppercase">${escapeHtml(kicker)}</p>` : ''}
+        <h2 id="${escapeHtml(id)}" class="font-headline text-2xl font-black tracking-wide uppercase md:text-3xl">
+          ${escapeHtml(title)}
+        </h2>
+      </div>
+    `;
+  }
+
+/**
+ * APPROVED PODCASTS, ABOVE THE ARTICLES.
+ *
+ * The brief asks for approved podcasts to lead the main content feed. They go on
+ * the FRONT PAGE rather than on /podcasts, because /podcasts is its own reader
+ * view with no articles on it — so "above articles" can only mean here.
+ *
+ * WHY THIS RENDERS A PLACEHOLDER AND FILLS ITSELF IN
+ * ----------------------------------------------------
+ * `listPodcasts()` is ASYNC. `renderPublication()` is synchronous and sits on the
+ * first-paint path, so awaiting the episode list there would make the whole front
+ * page wait on a network round trip for a section that is optional.
+ *
+ * The first version of this called `listPodcasts().filter(...)` synchronously,
+ * which throws `TypeError: .filter is not a function` on a Promise — and because
+ * it was inside a template literal, that error took the ENTIRE front page with it,
+ * masthead and all. So: the container is painted empty, and the real markup is
+ * inserted when the read resolves.
+ *
+ * An empty strip renders NOTHING, not an empty section. A heading over nothing
+ * reads as a broken page rather than as "there are no episodes yet".
+ *
+ * APPROVED ONLY. The RLS policy already refuses non-approved rows to an anon
+ * reader, so this is belt and braces rather than the gate — but the filter is
+ * still here because the DEMO store has no RLS behind it at all and would
+ * otherwise put a pending episode on the front page.
+ *
+ * @returns {string} an empty mount, filled asynchronously
+ */
+function renderPodcastStrip() {
+  return '<div id="latest-podcasts-mount" data-podcast-strip></div>';
+}
+
+/** Replace the strip mount with the real section, or remove it if there is none. */
+async function fillPodcastStrip() {
+  const mount = byId('latest-podcasts-mount');
+  if (!mount) return;
+
+  let episodes = [];
+  try {
+    episodes = (await listPodcasts()).filter(
+      (p) => String(p?.status || '').toLowerCase() === 'approved'
+    );
+  } catch (error) {
+    // A podcast feed that cannot be read must not take the front page with it.
+    console.warn('[public] podcast strip unavailable', error);
+    mount.remove();
+    return;
+  }
+
+  // The reader may have navigated away, or the store may have been re-rendered
+  // underneath us while the read was in flight. Either way this mount is stale.
+  if (!mount.isConnected) return;
+
+  if (!episodes.length) {
+    mount.remove();
+    return;
+  }
+
+  const shown = episodes.slice(0, 3);
+
+  mount.outerHTML = `
+    <section id="latest-podcasts" aria-labelledby="latest-podcasts-heading" class="mb-12">
+      ${sectionHeading('latest-podcasts-heading', 'Listen', 'Latest podcasts')}
+      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        ${shown.map(podcastCard).join('')}
+      </div>
+      ${
+        episodes.length > shown.length
+          ? `<p class="mt-3">
+               <a class="btn btn-ghost" href="#podcasts" data-nav="podcasts">
+                 <i class="fa-solid fa-headphones" aria-hidden="true"></i>
+                 All ${episodes.length} episodes
+               </a>
+             </p>`
+          : ''
+      }
+    </section>
   `;
 }
 
@@ -277,12 +358,14 @@ export function renderPublication() {
   const grid = published.filter((article) => article.id !== todaysPick?.id);
   const [lead, ...rest] = grid;
 
-  view.innerHTML = `
-    <!-- ================= TODAY'S PICK ================= -->
-    <section id="today" aria-labelledby="today-heading" class="mb-12">
-      ${sectionHeading('today-heading', 'The lead', "Today's Pick")}
-      ${renderTodaysPick(todaysPick)}
-    </section>
+view.innerHTML = `
+      ${renderPodcastStrip()}
+
+      <!-- ================= TODAY'S PICK ================= -->
+      <section id="today" aria-labelledby="today-heading" class="mb-12">
+        ${sectionHeading('today-heading', 'The lead', "Today's Pick")}
+        ${renderTodaysPick(todaysPick)}
+      </section>
 
     <!-- ================= LATEST COVERAGE ================= -->
     <section id="latest" aria-labelledby="latest-heading" class="mb-12">
@@ -328,6 +411,17 @@ export function renderPublication() {
   document.querySelectorAll('a.nav-link[href="#weekly"]').forEach((link) => {
     link.hidden = showThisWeek === false;
   });
+
+  /*
+    Kick off the podcast strip AFTER the markup is in place, and do not await it.
+
+    The mount only exists once the innerHTML above has been assigned, so this has
+    to come after that line -- and it must not be awaited, because
+    `renderPublication()` is synchronous and on the first-paint path. Fire and
+    forget: the strip fills itself in when the read resolves, and a failure there
+    removes the mount rather than touching the page.
+  */
+  fillPodcastStrip();
 
   // The markup was just replaced wholesale, so the "read the full dispatch"
   // buttons are new nodes - bind them with a single delegated listener on the

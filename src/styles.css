@@ -1931,6 +1931,146 @@ class because the ratio is the whole point.
   }
 }
 
+/* --------------------------------------------------------------------------
+   OWNER PANEL — the band editor
+   --------------------------------------------------------------------------
+   `.credits-band-editor` was emitted by both roster tabs and defined NOWHERE in
+   this file, so every band in the Newsroom Panel rendered as a bare block with an
+   unstyled heading and the two move buttons sitting in a row of text. The public
+   page's band has had styling since the Credits page shipped; the editor had not.
+
+   The head is a flex row on the same skeleton as `.credits-band__head` so the two
+   read as the same object — the Owner is looking at the page being built, and the
+   editor is a different job with different controls, not a different design.
+   -------------------------------------------------------------------------- */
+
+.credits-band-editor {
+  /* Same default as `.credits-band`: the newsroom red. The Credits tab writes a
+     real `--band` inline per band from the role's own colour; the About Us tab
+     has no band colour to inherit, so it gets the default rather than a rail
+     painted `transparent`. */
+  --band: #c8102e;
+  margin-bottom: 1.5rem;
+}
+
+.credits-band-editor:last-child {
+  margin-bottom: 0;
+}
+
+.credits-band-editor__head {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 2px solid color-mix(in srgb, var(--band) 40%, transparent);
+}
+
+.credits-band-editor__name {
+  font-family: var(--font-headline, inherit);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--band) 72%, var(--text, #111));
+}
+
+/* `margin-left: auto` is what buys "far right of the row" inside a flex
+   container, and it is the only thing that pushes the count away from the name
+   when there is no rail to sit beside it. */
+.credits-band-editor__count {
+  margin-left: auto;
+  flex: 0 0 auto;
+  min-width: 1.5rem;
+  padding: 0.0625rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--band) 40%, transparent);
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-align: center;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--band) 70%, var(--text, #111));
+}
+
+/* The move buttons sit after the count, which already owns `margin-left: auto`, so
+   this group only needs to keep itself together as one unit. */
+.credits-band-editor__moves {
+  display: inline-flex;
+  gap: 0.25rem;
+  flex: 0 0 auto;
+}
+
+/* A sub-team heading inside the About Us editor. One step quieter than the main
+   heading above it, matching the public page's two-level hierarchy exactly: the
+   Owner should be looking at the same shape they are about to publish. */
+.credits-band-editor__sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.375rem;
+  margin-top: 1rem;
+  margin-bottom: 0.625rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px dashed color-mix(in srgb, var(--band) 35%, transparent);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--band) 60%, var(--text, #111));
+}
+
+/* "· 4 people · lead: Amara K. (first by order)" — the honest half of the line.
+   It is not a heading, so it does not inherit the tracked uppercase; it is
+   metadata about the team, and reading it in caps would be shouting. */
+.credits-band-editor__sub .opacity-70 {
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+/*
+  THE LEAD CHECKBOX.
+
+  A plain checkbox rather than the `.switch` used elsewhere in the panel, for one
+  reason that is a semantic one rather than a visual preference: this control is
+  part of a set of values for ONE person — a sub-category, a role, a colour — and
+  a slider next to text fields reads as a different kind of thing. It also has to
+  work with a keyboard and a screen reader the same way the other fields do, and
+  `<input type="checkbox">` already does.
+
+  The accent colour is set from the brand token rather than left to the UA so the
+  ticked box matches the rest of the panel's controls in both themes; the default
+  UA checkbox is the one element on this form that ignored the palette.
+*/
+.roster-lead {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text, #18130f);
+}
+
+.roster-lead input[type='checkbox'] {
+  width: 1.05rem;
+  height: 1.05rem;
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--color-newsred);
+  cursor: pointer;
+}
+
+.dark .roster-lead input[type='checkbox'] {
+  accent-color: var(--color-newsgold);
+}
+
+.roster-lead:focus-within span {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* =============================================================================
    TEAM MEMBER CARDS + ROLE PILLS
    -----------------------------------------------------------------------------
@@ -2151,6 +2291,98 @@ class because the ratio is the whole point.
   border-left: 4px solid #facc15;
   padding-left: 0.75rem;
   margin-bottom: 1.25rem;
+  /*
+    Level 1 of the hierarchy. `text-transform` here rather than in the template
+    so the DOM still reads "Board Members": an uppercase string in the markup is
+    announced in capitals by some screen readers and read as SHOUTING in a DOM
+    inspection, and neither is worth a purely visual win.
+  */
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* --- level 2: the sub-team headings ----------------------------------------- */
+
+/*
+  WRITERS. DESIGNERS. PHOTOGRAPHERS.
+
+  Level 2 sits UNDER the 4px gold rail of level 1, and the visual difference has
+  to be legible at a glance: a thinner rule in the same gold, inset past the main
+  heading's rail, plus uppercase small type. Same accent, one step quieter — a
+  second colour here would read as a third meaning ("this is a different kind of
+  team") when it is only a smaller one.
+
+  It also carries the team SIZE, so the Owner's roster can be scanned for "the
+  desk with two people in it" without counting cards.
+*/
+.about-subhead {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 2px solid color-mix(in srgb, #facc15 45%, transparent);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, #facc15 62%, var(--text, #f4f4f5));
+}
+
+.about-group__hint {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  font-style: italic;
+  color: var(--text-muted, #a1a1aa);
+}
+
+/* The wrapper for one sub-team. A plain grouping box, nothing more: the only
+   thing inside it that needs to be a grid or a swipe row is
+   `.about-roster__people`, and a sub-heading above a stack of teams is what
+   makes the second level readable rather than one long list. */
+.about-group {
+  display: block;
+}
+
+/* --- the LEAD pill ------------------------------------------------------------ */
+
+/*
+  How the lead is identified on a desktop, where position no longer does the job:
+  the lead card is one cell among three in a uniform grid, so "it happens to be
+  first" is not something a reader can see.
+
+  Gold, because gold is already the About page's structural accent — the rail on
+  the main heading and the rule under each sub-team. A new colour for "lead" would
+  be a third accent on a page whose palette is two, and it would have to be
+  contrast-checked against both themes from scratch.
+
+  HIDDEN BELOW 48rem, where the lead card is already full width, sits directly
+  above the carousel and carries the gold left border. The label would be a
+  fourth signal for something the layout has already said twice.
+*/
+.about-card__lead-pill {
+  display: none;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, #facc15 55%, transparent);
+  border-radius: 9999px;
+  background: color-mix(in srgb, #facc15 14%, transparent);
+  color: color-mix(in srgb, #facc15 78%, var(--text, #f4f4f5));
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 0.625rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  line-height: 1.4;
+  text-transform: uppercase;
+  /* A label around a card, not a control — so it must not look or behave like
+     one, exactly as `role-pill` argues for itself. */
+  cursor: default;
+}
+
+@media (width >= 48rem) {
+  .about-card__lead-pill {
+    display: inline-block;
+  }
 }
 
 /* --- the people container ---------------------------------------------------- */
@@ -2409,6 +2641,59 @@ class because the ratio is the whole point.
     .about-roster__people {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+  }
+
+  /*
+    THE LEAD, ONCE THE LEAD IS A GRID CELL.
+
+    Above, the merge block sets `border-left: 1px solid var(--surface-card-edge)`
+    on `.about-card--lead` so it matches the other two cards in the row — which is
+    right for shape and wrong for meaning, because it strips the ONE visual the
+    phone layout uses to say "this person is in charge". On a desktop the lead is
+    one of three identical cells, so position no longer carries the information
+    and it has to be put back: the gold rail returns, and the LEAD pill above
+    names it.
+
+    These rules come AFTER the merge block deliberately. Both selectors are two
+    classes, so with the same weight the later one wins — and the earlier
+    `display: block` on the body would otherwise defeat the wrapping row below.
+  */
+  .about-card--flagged {
+    border-left: 3px solid #facc15;
+  }
+
+  /*
+    The flagged card's body becomes a wrapping row so the LEAD pill and the role
+    pill sit side by side, which is what makes the pair read as one line of
+    metadata rather than two stacked badges on a short card.
+
+    Scoped to `.about-card--flagged`, NOT to `.about-card__body`, so only the one
+    card that has something extra in it changes layout. Every other card keeps
+    the plain block body it has always had.
+  */
+  .about-card--flagged .about-card__body {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  /* Full-width rows, so the note still sits under the two pills rather than
+     being pulled up beside them. */
+  .about-card--flagged .about-card__name,
+  .about-card--flagged .about-card__note {
+    flex: 1 0 100%;
+  }
+
+  /* `.role-pill` carries its own `margin-top` for the block layout it was designed
+     for; inside a centred flex row that margin just pushes the pill out of
+     alignment with its neighbour. */
+  .about-card--flagged .about-card__role {
+    margin-top: 0;
+  }
+
+  .about-card--flagged .about-card__note {
+    margin-top: 0.35rem;
   }
 }
 

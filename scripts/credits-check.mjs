@@ -370,6 +370,122 @@ try {
       `pill="${afterAboutAdd.longBadge}"`
     );
 
+    /* --- 6b. SUB-CATEGORIES AND THE LEAD, ROUND-TRIPPED THROUGH THE PANEL ---
+     *
+     * The page side of this feature is measured in scripts/roster-check.mjs,
+     * which seeds the demo store directly. This is the other half: the Owner
+     * types a team and ticks a box, and BOTH have to survive a reload and show up
+     * as a sub-heading with a lead on the public page.
+     *
+     * Asserted on the reload rather than immediately after the save, because
+     * "the store holds it" and "the input still has the text you typed" are
+     * different claims, and only a reload separates them.
+     */
+    await page.fill("#credits-add-name", "Wanjiku Mbugua");
+    await page.fill("#credits-add-role", "Sports Correspondent");
+    await page.selectOption("#credits-add-category", "Behind the Bylines");
+    await page.fill("#credits-add-sub", "Sports Desk");
+    await page.check("#credits-add-lead");
+    await page.click("#credits-add-form button[type=submit]");
+    await page.waitForTimeout(1600);
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(1600);
+    await page.evaluate(() => {
+      document.querySelector('[data-action="open-admin"], #open-admin')?.click();
+    });
+    await page.waitForTimeout(900);
+    await page.click('[data-admin-tab="about"]');
+    await page.waitForTimeout(1200);
+
+    const filed = await page.evaluate(() => {
+      const forms = [...document.querySelectorAll("[data-credits-form]")];
+      const row = forms.find((f) => f.querySelector("[data-credits-name]")?.value === "Wanjiku Mbugua");
+      if (!row) return null;
+      return {
+        sub: row.querySelector("[data-credits-sub-category]")?.value,
+        lead: row.querySelector("[data-credits-is-lead]")?.checked === true,
+        // The panel's own sub-heading, which has to say who the lead is and
+        // whether the Owner chose them.
+        subheads: [...document.querySelectorAll(".credits-band-editor__sub")].map((el) =>
+          el.textContent.replace(/\s+/g, " ").trim()
+        )
+      };
+    });
+    check(
+      "a sub-category survives a reload",
+      filed?.sub === "Sports Desk",
+      `sub="${filed?.sub}"`
+    );
+    check(
+      "the lead tick survives a reload",
+      filed?.lead === true,
+      `checked=${filed?.lead}`
+    );
+    check(
+      "the panel groups under the sub-category and names the lead",
+      (filed?.subheads || []).some((t) => /Sports Desk/.test(t) && /Wanjiku Mbugua/.test(t)),
+      JSON.stringify(filed?.subheads)
+    );
+
+    // Ticking somebody ELSE in the same sub-category must MOVE the lead, not
+    // stack a second one. `demoteDemoLead()` is the demo stand-in for the partial
+    // unique index migration 032 puts in the database.
+    const moved = await page.evaluate(async () => {
+      const forms = [...document.querySelectorAll("[data-credits-form]")];
+      const target = forms.find(
+        (f) => f.querySelector("[data-credits-name]")?.value === "Amara K."
+      );
+      if (!target) return { ok: false, why: "no Amara K. card" };
+      const box = target.querySelector("[data-credits-sub-category]");
+      box.value = "Sports Desk";
+      const lead = target.querySelector("[data-credits-is-lead]");
+      lead.checked = true;
+      target.querySelector("button[type=submit]").click();
+      await new Promise((r) => setTimeout(r, 1500));
+      return { ok: true };
+    });
+    check("a second lead could be filed into the same sub-category", moved.ok, moved.why || "");
+
+    const afterMove = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll("[data-credits-form]")]
+        .map((f) => ({
+          name: f.querySelector("[data-credits-name]")?.value,
+          sub: f.querySelector("[data-credits-sub-category]")?.value,
+          lead: f.querySelector("[data-credits-is-lead]")?.checked === true
+        }))
+        .filter((r) => r.sub === "Sports Desk");
+      return rows;
+    });
+    check(
+      "the sub-category ends up with EXACTLY ONE lead, and it is the new one",
+      afterMove.filter((r) => r.lead).length === 1 &&
+        afterMove.find((r) => r.lead)?.name === "Amara K.",
+      JSON.stringify(afterMove)
+    );
+
+    // And an emptied sub-category must CLEAR rather than be ignored, which is the
+    // distinction the three-state RPC contract exists for.
+    const cleared = await page.evaluate(async () => {
+      const forms = [...document.querySelectorAll("[data-credits-form]")];
+      const target = forms.find(
+        (f) => f.querySelector("[data-credits-name]")?.value === "Amara K."
+      );
+      if (!target) return { ok: false };
+      target.querySelector("[data-credits-sub-category]").value = "";
+      target.querySelector("button[type=submit]").click();
+      await new Promise((r) => setTimeout(r, 1500));
+      const again = [...document.querySelectorAll("[data-credits-form]")].find(
+        (f) => f.querySelector("[data-credits-name]")?.value === "Amara K."
+      );
+      return { ok: true, sub: again?.querySelector("[data-credits-sub-category]")?.value };
+    });
+    check(
+      "emptying the sub-category CLEARS it, rather than being treated as 'unchanged'",
+      cleared.ok && cleared.sub === "",
+      `sub="${cleared.sub}"`
+    );
+
     await page.click('[data-admin-tab="credits"]');
     await page.waitForTimeout(1200);
     const creditsAfter = await page.evaluate(() => ({
@@ -399,6 +515,12 @@ try {
         .map((n) => n.textContent.trim())
         .filter(Boolean);
       out.aboutCards = document.querySelectorAll(".about-card").length;
+      // The sub-team heading and who it put at the top of it, read off the PUBLIC
+      // page rather than the panel — this is the assertion that the two agree.
+      out.subTeams = [...document.querySelectorAll(".about-group")].map((g) => ({
+        heading: g.querySelector(".about-subhead")?.textContent.trim() || null,
+        lead: g.querySelector(".about-card--lead .about-card__name")?.textContent.trim() || null
+      }));
       click('[data-nav="credits"]');
       await new Promise((r) => setTimeout(r, 1500));
       out.credits = [...document.querySelectorAll(".credits-card__name")]
@@ -421,6 +543,35 @@ try {
       "the two pages share no card",
       !publicPages.credits.some((n) => publicPages.about.includes(n)),
       `about=[${publicPages.about.join(",")}] credits=[${publicPages.credits.join(",")}]`
+    );
+
+    /* --- 7b. THE PUBLIC PAGE RENDERS WHAT THE PANEL WAS TOLD --- */
+    const sports = publicPages.subTeams.find((t) => t.heading === "Sports Desk");
+    check(
+      "the sub-category the Owner typed is a sub-heading on the public page",
+      Boolean(sports),
+      JSON.stringify(publicPages.subTeams.map((t) => t.heading))
+    );
+    /*
+      Wanjiku Mbugua, NOT Amara K. — and the reason is the point of the assertion.
+      Section 6b moved the lead onto Amara K. and then emptied Amara's sub-category,
+      so by now Wanjiku is the ONLY member of Sports Desk with nobody ticked. The
+      page must therefore fall back to them, which is the brief's fallback rule
+      running on real data the Owner produced through the real form.
+
+      Asserting "Amara K." here would have passed on a page that ignored the clear
+      entirely, because Amara is who an implementation that never demoted anybody
+      would have kept as lead.
+    */
+    check(
+      "a sub-team whose only member has no tick is led by that member",
+      sports?.lead === "Wanjiku Mbugua",
+      `lead=${sports?.lead}`
+    );
+    check(
+      "the person taken out of the sub-team now sits directly under the main heading",
+      publicPages.subTeams.some((t) => t.heading === null && t.lead === "Amara K."),
+      JSON.stringify(publicPages.subTeams)
     );
   }
   await page.close();

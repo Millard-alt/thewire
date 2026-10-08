@@ -34,6 +34,21 @@
    invent a role that exists nowhere else and give it its own colour. Two people
    sharing a role colour is normal, which is what "Copy role colour" is for.
 
+   THE ABOUT PAGE IS A TWO-LEVEL HIERARCHY
+   --------------------------------------
+   `category` is the MAIN heading ("Board Members", "Behind the Bylines") and
+   `sub_category` (migration 032) is the team underneath it ("Writers",
+   "Photographers"). A row with no sub-category is a direct member of its main
+   heading, with no sub-header — which is a real and common state, not a gap to
+   be papered over with a heading called "Unfiled".
+
+   `is_lead` (same migration) marks the one person who leads a sub-team. At most
+   one per sub-team, enforced by a partial unique index rather than left to the
+   template. A sub-team with nobody ticked still renders with a lead: `resolveLead()`
+   falls back to the first member by display order. That fallback lives in the
+   RENDERER, not in a backfill, because `is_lead = true` has to keep meaning "the
+   Owner said so".
+
    ONLY THE OWNER CAN WRITE. There is no insert/update/delete policy on the
    table — RLS denies by default — so every save goes through a SECURITY DEFINER
    function that calls `is_owner()` first. An anon key cannot change either page.
@@ -117,7 +132,7 @@ function isMissingSchema(error) {
 function describe(error, what) {
   const text = String(error?.message || '');
   if (error?.code === '42883' || /wire_credits_people_/.test(text)) {
-    return 'The newsroom server is missing the roster. Run supabase/migrations/009_credits_page.sql, then supabase/migrations/028_page_scopes.sql, in the Supabase SQL editor.';
+    return 'The newsroom server is missing the roster. Run supabase/migrations/009_credits_page.sql, then supabase/migrations/028_page_scopes.sql, then supabase/migrations/032_roster_leads_and_subcategories.sql, in the Supabase SQL editor.';
   }
   if (/only the Owner can change the Credits page/.test(text)) {
     return 'Only the Owner can change this page.';
@@ -126,7 +141,7 @@ function describe(error, what) {
     return 'That page was not recognised. Reload the page and try again.';
   }
   if (/needs a category/.test(text)) {
-    return 'An About Us entry needs a category: Board Members or Behind the Bylines.';
+    return 'An About Us entry needs a main category: Board Members or Behind the Bylines.';
   }
   if (/role colour/.test(text)) {
     return 'The role colour must be a hex colour such as #1d4ed8.';
@@ -143,7 +158,7 @@ function describe(error, what) {
 
 /** Every column either page or the Owner panel needs, in one place. */
 const PERSON_COLUMNS =
-  'id, name, role_label, role_color, blurb, portrait_url, sort_order, category, about_order, page_scope';
+  'id, name, role_label, role_color, blurb, portrait_url, sort_order, category, sub_category, is_lead, about_order, page_scope';
 
 /**
  * Read rows for ONE page.
@@ -249,7 +264,7 @@ export async function listAllPeople() {
 }
 
 /**
- * The About Us page, grouped into its two rosters.
+ * The About Us page, grouped into its two rosters and then into sub-teams.
  *
  * Reads `page_scope = 'about_us'` only. Rows with no category cannot appear
  * here at all — the database CHECK forbids an `about_us` row without one — so
@@ -258,21 +273,142 @@ export async function listAllPeople() {
  * Never rejects. A reader landing on /about with the database unreachable gets an
  * empty roster and a heading that says so, not a blank page.
  *
- * @returns {Promise<Array<{category: string, people: Array<object>}>>}
- *   one entry per category, in ABOUT_CATEGORIES order, always all of them
+ * @returns {Promise<Array<{category: string, people: Array<object>,
+ *   loose: Array<object>, groups: Array<{subCategory: string, people: Array<object>}>}>>}
+ *   one entry per category, in ABOUT_CATEGORIES order, always all of them.
+ *   `people` is the whole category; `loose` and `groups` partition it.
  */
 export async function loadAboutRoster() {
   const people = await listAboutPeople();
-  return ABOUT_CATEGORIES.map((category) => ({
-    category,
-    people: people
+  return ABOUT_CATEGORIES.map((category) => {
+    const inCategory = people
       .filter((person) => normaliseAboutCategory(person.category) === category)
       .sort(
         (a, b) =>
           (a.about_order ?? 100) - (b.about_order ?? 100) ||
           String(a.name || '').localeCompare(String(b.name || ''))
-      )
-  }));
+      );
+    const { loose, groups } = groupBySubCategory(inCategory);
+    return { category, people: inCategory, loose, groups };
+  });
+}
+
+/**
+ * Split one main category into its sub-teams.
+ *
+ * A person with no sub-category is not an error and does not get a bucket of its
+ * own: they are a direct member of the main heading, listed in `loose`. Giving
+ * them a heading called "Unfiled" would publish a filing decision the Owner never
+ * made, on the front page of the paper.
+ *
+ * TEAM ORDER IS FIRST-APPEARANCE, which is the Owner's `about_order` doing the
+ * deciding — the same rule `groupByRole()` uses for Credits role bands, and for
+ * the same reason: there is no sub-team order column, and inventing one would be
+ * a fourth thing to keep in step with three others.
+ *
+ * TEAM NAME MATCHING IS CASE- AND SPACE-INSENSITIVE. "Writers", "writers" and
+ * "  Writers " are ONE heading, because two headings that differ only in case are
+ * indistinguishable to a reader and look like a bug. The heading itself is
+ * rendered from the first spelling encountered, so the Owner sees what they typed.
+ *
+ * @param {Array<object>} people  already in display order
+ * @returns {{loose: Array<object>, groups: Array<{subCategory: string, people: Array<object>}>}}
+ */
+export function groupBySubCategory(people) {
+  const order = [];
+  const buckets = new Map();
+  const loose = [];
+
+  for (const person of people || []) {
+    const sub = normaliseSubCategory(person.sub_category);
+    if (!sub) {
+      loose.push(person);
+      continue;
+    }
+
+    // The KEY is folded for matching; the DISPLAY NAME is the first spelling the
+    // Owner used, so "Design" and "Designers" stay two teams (they are) while
+    // "design" and "Design " do not.
+    const key = sub.toLowerCase();
+    if (!buckets.has(key)) {
+      buckets.set(key, { subCategory: sub, people: [] });
+      order.push(key);
+    }
+    buckets.get(key).people.push(person);
+  }
+
+  return { loose, groups: order.map((key) => buckets.get(key)) };
+}
+
+/**
+ * WHO IS THE LEAD OF A SUB-TEAM
+ * ------------------------------
+ * Two answers, in this order, and the first one wins:
+ *
+ *   1. The person the Owner ticked "Set as Lead of this Sub-Category" for. At
+ *      most one per sub-team, and the database enforces that with a partial
+ *      unique index rather than leaving the renderer to arbitrate.
+ *   2. If nobody is ticked, the FIRST member in display order. This is the
+ *      brief's fallback, and it is why `is_lead` is allowed to be false
+ *      everywhere: a team the Owner has not organised still renders, with
+ *      somebody in charge, instead of with nobody.
+ *
+ * WHY THE FALLBACK IS HERE AND NOT IN A TRIGGER
+ * ---------------------------------------------
+ * A backfill would write a claim the Owner never made into the data. `is_lead =
+ * true` has to keep meaning "the Owner said so", or the checkbox stops being
+ * editable knowledge and the panel starts fighting the page. So the database
+ * stores the decision and the page resolves the absence of one.
+ *
+ * WHY NOT A REGULAR EXPRESSION OVER THE ROLE TITLE
+ * ------------------------------------------------
+ * The obvious cheap alternative is to promote whoever is called "Lead Writer".
+ * That silently promotes on a wording choice, ignores every team whose titles do
+ * not happen to contain the word, and changes which card is featured when
+ * somebody rewords a job title. The codebase made this argument once already when
+ * it replaced the "first by order" rule, and an explicit column is the answer it
+ * reached then too.
+ *
+ * The list is NOT mutated: callers pass the array they are about to render, and
+ * splicing it would leave the caller holding a roster minus its lead.
+ *
+ * @param {Array<object>} people  one sub-team, already in display order
+ * @returns {{lead: object|null, rest: Array<object>, designated: boolean}}
+ *   `designated` is true only when the OWNER ticked somebody, which is what the
+ *   template needs in order to label a fallback lead honestly.
+ */
+export function resolveLead(people) {
+  const list = Array.isArray(people) ? people.filter(Boolean) : [];
+  if (!list.length) return { lead: null, rest: [], designated: false };
+
+  const ticked = list.findIndex((person) => leadFlag(person.is_lead));
+  if (ticked === -1) {
+    const [lead, ...rest] = list;
+    return { lead, rest, designated: false };
+  }
+
+  // `ticked` is already the right person, and the copy keeps the caller's array
+  // whole. Order is otherwise preserved: a team with a designated lead still
+  // lists its remaining members in the Owner's order, not rotated around it.
+  const rest = list.filter((_, index) => index !== ticked);
+  return { lead: list[ticked], rest, designated: true };
+}
+
+/**
+ * Coerce whatever came back from the wire or from localStorage into a boolean.
+ *
+ * PostgREST returns a real boolean for a `boolean` column, but the demo store
+ * round-trips through JSON and a hand-edited row may hold the string "true" or a
+ * 1. `=== true` alone would quietly treat those as "no lead was designated" and
+ * fall back to the first member — the fallback would then be covering for a
+ * column that was in fact set, which is the one bug this function exists to
+ * prevent.
+ *
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function leadFlag(value) {
+  return value === true || value === 1 || value === '1' || value === 'true';
 }
 
 /** Paint the About page into `mount`. Safe to call repeatedly. */
@@ -292,9 +428,14 @@ export function renderAbout(mount) {
  *
  * `variant` is presentation only and never changes what is rendered:
  *
- *   'lead'     the first person in a category, shown full width on a phone
+ *   'lead'     the sub-team's lead, shown full width on a phone
  *   'carousel' everyone else, in a horizontal swipe row on a phone
- *   undefined  used on desktop, where all three collapse into one grid
+ *   undefined  used on desktop, where all of them collapse into one grid
+ *
+ * `isLead` is separate from `variant` on purpose: on a phone the lead is told
+ * apart by POSITION (it is above the carousel), while on a desktop it is told
+ * apart by a label. Those are different facts about the same person, and tying
+ * the pill to the mobile variant would drop it from the one layout that needs it.
  *
  * THE VARIANT IS NOT A SECOND COPY OF THE PERSON. Each person is rendered into
  * exactly ONE card, and the layout differences are pure CSS: on desktop the
@@ -324,14 +465,16 @@ export function renderAbout(mount) {
  *
  * @param {object} person
  * @param {'lead'|'carousel'} [variant]
+ * @param {{isLead?: boolean}} [options]
  */
-function aboutCard(person, variant) {
+function aboutCard(person, variant, options = {}) {
   const url = safeUrl(person.portrait_url);
   const name = String(person.name || '').trim() || 'Team member';
   const role = String(person.role_label || '').trim();
   const note = String(person.blurb || '').trim();
   const palette = rolePalette(person.role_color);
   const variantClass = variant ? ` about-card--${variant}` : '';
+  const isLead = options.isLead === true;
 
   const photo = url
     ? `<img class="about-card__photo" src="${escapeHtml(url)}" ${imageFallbackAttr()}
@@ -341,10 +484,15 @@ function aboutCard(person, variant) {
        </span>`;
 
   return `
-    <li class="about-card${variantClass}">
+    <li class="about-card${variantClass}${isLead ? ' about-card--flagged' : ''}">
       ${photo}
       <div class="about-card__body">
         <p class="about-card__name">${escapeHtml(name)}</p>
+        ${
+          isLead
+            ? '<span class="about-card__lead-pill">Lead</span>'
+            : ''
+        }
         ${
           role
             ? `<span class="role-pill about-card__role"${
@@ -359,54 +507,107 @@ function aboutCard(person, variant) {
 }
 
 /**
- * ONE CATEGORY: a lead card plus a carousel on a phone, one grid on a desktop.
+ * ONE SUB-TEAM: a lead card plus a carousel on a phone, one grid on a desktop.
  *
- * WHO IS THE LEAD
- * ---------------
- * The first person in the Owner's display order, i.e. the lowest `about_order`.
+ * `heading` is '' for the members of a main category who have no sub-team; those
+ * get the same treatment with no sub-header above them, because inventing a
+ * heading for them would publish a filing decision nobody made.
  *
- * There is no "is lead" column and the brief named roles rather than a rule
- * ("Lead Writer", "Assistant President", "Patron"), so matching on role text was
- * the obvious alternative and the wrong one: it would silently promote whoever
- * happened to write a certain word, ignore everyone else, and change which card
- * is featured whenever somebody reworded a title.
+ * THE FALLBACK IS NOT ANNOUNCED TO THE READER. `resolveLead()` reports whether
+ * the Owner chose this lead or the page picked the first row because nobody chose
+ * anybody, and the Owner panel says so — that is the one thing about the decision
+ * they cannot see anywhere else. The page itself just shows the person. "No lead
+ * set — showing the first member by display order." is a CMS notice, and putting
+ * one in the middle of a publication's About page tells a reader about an
+ * editorial decision they did not make and cannot act on.
  *
- * `about_order` is the signal the Owner actually controls, and putting somebody
- * first is already how you say "this is the one". If a *separate* lead is wanted
- * later, it wants an explicit column -- not a regular expression over free text.
+ * A team of one is the lead and nothing else: an empty carousel would leave a
+ * bare strip of padding under the card, so it is not rendered at all.
  *
- * A category of one is the lead and nothing else: an empty carousel would leave
- * a bare strip of padding under the card, so it is not rendered at all.
+ * @param {Array<object>} people
+ * @param {string} heading
+ * @param {string} idBase  id-safe fragment, unique within the page
  */
-function aboutCategory(category, people) {
-  const [lead, ...rest] = people;
+function aboutSubTeam(people, heading, idBase) {
+  const { lead, rest } = resolveLead(people);
+  if (!lead) return '';
+
+  const headingId = `${idBase}-subhead`;
 
   return `
-    <section class="about-roster" aria-labelledby="about-${slug(category)}">
-      <h3 id="about-${slug(category)}" class="about-roster__heading">
-        ${escapeHtml(category)}
-      </h3>
+    <div class="about-group"${heading ? ` aria-labelledby="${escapeHtml(headingId)}"` : ''}>
       ${
-        lead
-          ? `<div class="about-roster__people">
-               ${aboutCard(lead, 'lead')}
-               ${
-                 rest.length
-                   ? `<ul class="about-carousel" aria-label="More ${escapeHtml(
-                       category
-                     )}">${rest.map((p) => aboutCard(p, 'carousel')).join('')}</ul>`
-                   : ''
-               }
-             </div>`
+        heading
+          ? `<h4 id="${escapeHtml(headingId)}" class="about-subhead">${escapeHtml(heading)}</h4>`
           : ''
       }
+      <div class="about-roster__people">
+        ${aboutCard(lead, 'lead', { isLead: true })}
+        ${
+          rest.length
+            ? `<ul class="about-carousel" aria-label="${
+                heading
+                  ? `More ${escapeHtml(heading)}`
+                  : `More members`
+              }">${rest.map((p) => aboutCard(p, 'carousel')).join('')}</ul>`
+            : ''
+        }
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * ONE MAIN CATEGORY, holding zero or more sub-teams.
+ *
+ * Three kinds of block can appear, and the order is the same every time so the
+ * page never reshuffles between loads:
+ *
+ *   1. Members with no sub-category, directly under the main heading.
+ *   2. Each sub-team, in first-appearance order — the Owner's display order.
+ *
+ * An empty category renders its heading and nothing else, which is what the
+ * reader is promised: the two main headings are part of the page's structure,
+ * not something the Owner has to have filled in.
+ */
+function aboutCategory(category, people) {
+  const { loose, groups } = groupBySubCategory(people);
+  const base = `about-${slug(category)}`;
+
+  if (!people.length) {
+    return `
+      <section class="about-roster about-roster--empty" aria-labelledby="${base}">
+        <h3 id="${base}" class="about-roster__heading">${escapeHtml(category)}</h3>
+        <p class="about-group__hint">Nobody is listed here yet.</p>
+      </section>
+    `;
+  }
+
+  const blocks = [
+    aboutSubTeam(loose, '', base),
+    ...groups.map((group) =>
+      aboutSubTeam(group.people, group.subCategory, `${base}-${slug(group.subCategory)}`)
+    )
+  ].join('');
+
+  return `
+    <section class="about-roster" aria-labelledby="${base}">
+      <h3 id="${base}" class="about-roster__heading">
+        ${escapeHtml(category)}
+      </h3>
+      ${blocks}
     </section>
   `;
 }
 
 function aboutTemplate(sections) {
+  // BOTH main headings always render, whether or not anybody is filed under them.
+  // They are the page's structure — "BOARD MEMBERS" and "BEHIND THE BYLINES" are
+  // what the reader was promised — so dropping an empty one would make the page
+  // change shape depending on how full the roster happens to be. An empty section
+  // shows its heading and a one-line placeholder rather than vanishing.
   const body = sections
-    .map(({ category, people }) => (people.length ? aboutCategory(category, people) : ''))
+    .map(({ category, people }) => aboutCategory(category, people))
     .join('');
 
   return `
@@ -518,6 +719,61 @@ export function normaliseAboutCategory(value) {
 }
 
 /**
+ * Fold a sub-category into the form the page groups and stores by, or '' for
+ * "no sub-team".
+ *
+ * THE MAIN CATEGORY IS `category`, NOT A COLUMN CALLED `main_category`
+ * ---------------------------------------------------------------
+ * `credits_people.category` already stores exactly the two main headings and is
+ * already CHECK-constrained to them (migrations 024 and 028), so the panel's
+ * "Main category" dropdown writes that column. A second `main_category` column
+ * would be the same fact stored twice, and the two would eventually disagree —
+ * at which point every read has to decide which one wins, which is the class of
+ * bug `page_scope` was introduced to end.
+ *
+ * WHAT IS NORMALISED, AND WHY IT IS NOT A FIXED LIST
+ * --------------------------------------------------
+ * Whitespace runs collapse to one, the ends are trimmed, and the result is capped
+ * at 60 characters to match the database CHECK and `role_label`. Sub-categories
+ * are NOT validated against a vocabulary: the brief asks for "Writers",
+ * "Designers", "Photographers", "Editors", "Coordinators" and explicitly says the
+ * Owner may create and group under distinct teams, so a fixed list would refuse
+ * the twenty-first desk the paper hires for. The panel offers those five as
+ * suggestions and accepts anything else.
+ *
+ * Case is deliberately PRESERVED here. Grouping folds it for matching inside
+ * `groupBySubCategory()`, so "writers" and "Writers" are one heading, but the
+ * heading is rendered from the spelling the Owner typed.
+ *
+ * @param {unknown} value
+ * @returns {string} '' means "no sub-team", which is a real and common state
+ */
+export function normaliseSubCategory(value) {
+  const cleaned = String(value ?? '').trim().replace(/\s+/g, ' ');
+  if (!cleaned) return '';
+  return cleaned.slice(0, 60);
+}
+
+/**
+ * The five desks offered as suggestions in the Owner panel.
+ *
+ * SUGGESTIONS, NOT A CONSTRAINT. `normaliseSubCategory()` accepts any text, and
+ * this list is only what the `<datalist>` offers first — the same relationship
+ * the Credits role presets have to the free-text credit field. Exported so the
+ * datalist on the add form and the panel's own list of existing teams are two
+ * views of one array rather than two literals that drift.
+ *
+ * @type {readonly string[]}
+ */
+export const SUB_CATEGORY_PRESETS = [
+  'Writers',
+  'Editors',
+  'Designers',
+  'Photographers',
+  'Coordinators'
+];
+
+/**
  * Add someone to ONE page.
  *
  * Note there is no `auth_user_id` and no account is created. That is the point:
@@ -530,6 +786,7 @@ export function normaliseAboutCategory(value) {
  *
  * @param {{name: string, role: string, color: string, blurb?: string,
  *          portraitUrl?: string, pageScope?: string, category?: string,
+ *          subCategory?: string, isLead?: boolean,
  *          order?: number, aboutOrder?: number}} person
  */
 export async function addPerson(person) {
@@ -543,6 +800,12 @@ export async function addPerson(person) {
   // unrecognised value, which the server turns into a loud error rather than a
   // third heading that nothing renders.
   const category = scope === 'about_us' ? normaliseAboutCategory(person.category) : '';
+  // The sub-team and the lead are stored on BOTH scopes. The Credits page groups
+  // by role rather than by team and does not render either one, so this is inert
+  // there — but the columns exist for both, and sending '' for credits would
+  // clear a value the Owner set on the other tab rather than merely leaving it.
+  const subCategory = normaliseSubCategory(person.subCategory);
+  const isLead = person.isLead === true;
 
   if (config.demoMode) {
     const rows = demoRoster();
@@ -557,8 +820,14 @@ export async function addPerson(person) {
       page_scope: scope,
       // The About page's own order column, independent of sort_order.
       about_order: nextDemoOrder(rows, 'about_order'),
-      category: scope === 'about_us' ? category : null
+      category: scope === 'about_us' ? category : null,
+      sub_category: subCategory || null,
+      is_lead: isLead
     };
+    // The demo store keeps the same one-lead-per-sub-team invariant the partial
+    // unique index enforces in the database, because a demo roster that can hold
+    // two leads would teach the Owner a shape the real database refuses.
+    if (isLead) demoteDemoLead(rows, entry);
     writeDemoRoster([...rows, entry]);
     return { ok: true, person: entry };
   }
@@ -566,9 +835,9 @@ export async function addPerson(person) {
   const client = getSupabase();
   if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
 
-  // RPC NAME AND ARG NAMES MUST MATCH supabase/migrations/024_about_podcasts_and_layout.sql
-  // for p_category/p_about_order, and supabase/migrations/028_page_scopes.sql for
-  // p_page_scope.
+  // RPC NAME AND ARG NAMES MUST MATCH supabase/migrations/032_roster_leads_and_subcategories.sql
+  // for p_sub_category / p_is_lead, and 028 for p_page_scope / p_category /
+  // p_about_order.
   //
   // There is no wire_add_credits_person. The server exposes a single upsert,
   // wire_credits_people_upsert, where p_id = NULL means INSERT and p_id = the
@@ -577,11 +846,10 @@ export async function addPerson(person) {
   // remove, which is why the whole Credits tab was dead. The portrait argument
   // is p_portrait, not p_portrait_url.
   //
-  // p_category arrived with 024, which DROPPED the old seven-argument signature
+  // p_category arrived with 024, p_page_scope with 028, and p_sub_category /
+  // p_is_lead with 032. Each of those migrations DROPPED the previous signature
   // rather than overloading it -- two candidates for one PostgREST name is
-  // PGRST202 again, so the drop in that migration is load-bearing. 028 dropped
-  // 024's nine-argument signature for the same reason: adding p_page_scope by
-  // OVERLOADING would have resurrected PGRST202 and killed both pages at once.
+  // PGRST202 again, so every one of those drops is load-bearing.
   const { data, error } = await client.rpc('wire_credits_people_upsert', {
     p_id: null,
     p_name: name,
@@ -592,7 +860,9 @@ export async function addPerson(person) {
     p_sort_order: Number(person.order) > 0 ? Number(person.order) : 100,
     p_about_order: Number(person.aboutOrder) > 0 ? Number(person.aboutOrder) : 100,
     p_category: category,
-    p_page_scope: scope
+    p_page_scope: scope,
+    p_sub_category: subCategory,
+    p_is_lead: isLead
   });
 
   if (error) return { ok: false, message: describe(error, 'entry') };
@@ -624,6 +894,8 @@ export async function addPerson(person) {
  *          color?: string, role_color?: string, blurb?: string,
  *          portraitUrl?: string, portrait_url?: string,
  *          category?: string|null, pageScope?: string, page_scope?: string,
+ *          subCategory?: string, sub_category?: string,
+ *          isLead?: boolean, is_lead?: boolean,
  *          order?: number, sort_order?: number,
  *          aboutOrder?: number, about_order?: number}} patch
  */
@@ -654,6 +926,21 @@ export async function updatePerson(id, patch) {
   // credits_people_scope_category_check forbids a category there.
   const categoryValue =
     patch.category === undefined ? undefined : normaliseAboutCategory(patch.category);
+  // THE SUB-CATEGORY CARRIES THE SAME THREE-STATE CONTRACT, FOR THE SAME REASON.
+  // undefined means "the caller never mentioned it", and the key is then omitted
+  // from the payload entirely so the server's coalesce() keeps the stored team.
+  // '' means the Owner emptied the field, which is sent as an empty string and
+  // clears it -- "take this person out of Writers" is a real edit, so it cannot be
+  // expressed by absence.
+  const subRaw = field('subCategory', 'sub_category');
+  const subCategoryValue = subRaw === undefined ? undefined : normaliseSubCategory(subRaw);
+  // `is_lead` is a BOOLEAN, so unlike the two text fields above it has no third
+  // state: undefined is unambiguously "leave it alone", and false is a real edit
+  // (unticking the box). Both spellings are read, because the same silent-no-op
+  // that once cost this module a working Credits editor is exactly what a
+  // half-read patch list reproduces.
+  const leadRaw = field('isLead', 'is_lead');
+  const isLeadValue = leadRaw === undefined ? undefined : leadRaw === true || leadRaw === 1 || leadRaw === '1' || leadRaw === 'true';
   // about_order is the About page's own position. Absent means "leave it", which
   // is coalesce()'s job server-side -- see the note on the column in migration
   // 024 for why it is not the same column as sort_order.
@@ -684,9 +971,16 @@ export async function updatePerson(id, patch) {
       if (scope === 'credits') next.category = null;
     }
     if (categoryValue !== undefined) next.category = categoryValue || null;
+    if (subCategoryValue !== undefined) next.sub_category = subCategoryValue || null;
+    if (isLeadValue !== undefined) next.is_lead = isLeadValue;
     if (next.page_scope === 'about_us' && !next.category) {
       next.category = 'Behind the Bylines';
     }
+
+    // Ticking somebody else moves the lead rather than raising a constraint
+    // violation. Mirrors the "move the lead, then write it" UPDATE in migration
+    // 032, so demo mode cannot teach the Owner a shape the database refuses.
+    if (isLeadValue === true) demoteDemoLead(rows, next);
 
     rows[index] = next;
     writeDemoRoster(rows);
@@ -720,7 +1014,15 @@ export async function updatePerson(id, patch) {
     // Absent from the payload entirely when the caller did not mention the
     // category, so the server's unconditional assignment does not clear a
     // heading the panel simply did not render.
-    ...(categoryValue === undefined ? {} : { p_category: categoryValue })
+    ...(categoryValue === undefined ? {} : { p_category: categoryValue }),
+    // Same omission rule for the sub-team, for the same reason: the server only
+    // clears sub_category when it is told to, and being told nothing is not the
+    // same as being told to clear it.
+    ...(subCategoryValue === undefined ? {} : { p_sub_category: subCategoryValue }),
+    // Same again. A boolean cannot distinguish "not sent" from "false", and here
+    // it does not need to: p_is_lead = false IS the untick, and null is the
+    // leave-alone case, which the server coalesces.
+    ...(isLeadValue === undefined ? {} : { p_is_lead: isLeadValue })
   });
 
   if (error) return { ok: false, message: describe(error, 'entry') };
@@ -945,7 +1247,13 @@ export function demoRoster() {
       sort_order: 1,
       about_order: 1,
       page_scope: 'about_us',
-      category: 'Board Members'
+      category: 'Board Members',
+      // Board Members is organised as an explicit leadership team, so the seed
+      // demonstrates the DESIGNATED lead rather than the fallback. Bylines
+      // demonstrate the other one: nobody is ticked, so the first member by
+      // order leads, which is what an un-organised roster actually looks like.
+      sub_category: 'Leadership',
+      is_lead: true
     },
     {
       id: 'demo-1',
@@ -957,7 +1265,12 @@ export function demoRoster() {
       sort_order: 10,
       about_order: 10,
       page_scope: 'about_us',
-      category: 'Behind the Bylines'
+      category: 'Behind the Bylines',
+      sub_category: 'Writers',
+      // False on purpose: see demo-owner. `resolveLead()` promotes the first
+      // member of an un-ticked sub-team, and the seed must show that path too or
+      // the fallback is only ever exercised by hand.
+      is_lead: false
     },
     {
       id: 'demo-2',
@@ -969,7 +1282,26 @@ export function demoRoster() {
       sort_order: 20,
       about_order: 20,
       page_scope: 'about_us',
-      category: 'Behind the Bylines'
+      category: 'Behind the Bylines',
+      sub_category: 'Writers',
+      is_lead: false
+    },
+    {
+      // A SECOND sub-team under the same main heading, which is the whole reason
+      // the level exists: "Behind the Bylines" is not one list of reporters, it
+      // is several desks, and each needs its own lead.
+      id: 'demo-photo',
+      name: 'Noor H.',
+      role_label: 'Lead Photographer',
+      role_color: '#0f766e',
+      blurb: 'Runs the picture desk.',
+      portrait_url: null,
+      sort_order: 25,
+      about_order: 25,
+      page_scope: 'about_us',
+      category: 'Behind the Bylines',
+      sub_category: 'Photographers',
+      is_lead: true
     },
     {
       // Credits page only. No category, which credits_people_scope_category_check
@@ -985,7 +1317,9 @@ export function demoRoster() {
       sort_order: 30,
       about_order: 30,
       page_scope: 'credits',
-      category: null
+      category: null,
+      sub_category: null,
+      is_lead: false
     },
     {
       id: 'demo-4',
@@ -997,7 +1331,9 @@ export function demoRoster() {
       sort_order: 40,
       about_order: 40,
       page_scope: 'credits',
-      category: null
+      category: null,
+      sub_category: null,
+      is_lead: false
     }
   ];
 
@@ -1019,6 +1355,12 @@ export function demoRoster() {
    * rule migration 028 used for real rows, so a demo roster saved before the
    * upgrade keeps the people where the Owner last saw them.
    *
+   * `sub_category` and `is_lead` are repaired the same way, for the same reason:
+   * a build from before migration 032 stored neither, and `is_lead` being
+   * `undefined` is falsy everywhere so it happens to behave — but a row that
+   * predates the sub-teams should render as a direct member of its main heading
+   * rather than being lumped into a bucket that was invented for it.
+   *
    * Written back on the spot, so the repair happens once rather than on every
    * read.
    */
@@ -1031,6 +1373,18 @@ export function demoRoster() {
     // Same invariant as the CHECK constraint: a credits row carries no category.
     if (row.page_scope === 'credits' && row.category) {
       row.category = null;
+      repaired = true;
+    }
+    if (typeof row.is_lead !== 'boolean') {
+      row.is_lead = false;
+      repaired = true;
+    }
+    if (row.sub_category === undefined) {
+      row.sub_category = null;
+      repaired = true;
+    }
+    if (row.sub_category === '') {
+      row.sub_category = null;
       repaired = true;
     }
   }
@@ -1069,6 +1423,46 @@ function writeDemoRoster(rows) {
  */
 function nextDemoOrder(rows, column) {
   return rows.reduce((max, row) => Math.max(max, Number(row[column]) || 0), 0) + 10;
+}
+
+/**
+ * Demote whoever else leads the sub-team this row is joining.
+ *
+ * The database does this with a partial unique index plus the "move the lead,
+ * then write it" UPDATE in migration 032. Demo mode has to do it in JS, for one
+ * reason that is not laziness: without it, demo mode accepts a roster the real
+ * database rejects, and the Owner is shown a checkbox that "works" here and fails
+ * in production. A demo that cannot fail is worse than no demo.
+ *
+ * The group key is the same three parts — page_scope, category, sub_category —
+ * with the same `coalesce(..., '')` folding for the two nullable ones, because
+ * Postgres treats NULLs as distinct in a unique index and JS does not.
+ *
+ * MUTATES `rows` IN PLACE. Both call sites already hold the array they are about
+ * to write back, and copying it here would leave the caller with a stale
+ * reference that it then persisted.
+ *
+ * @param {Array<object>} rows  the demo roster, including `self` where applicable
+ * @param {object} self  the row becoming the lead, if it exists yet (an insert)
+ */
+function demoteDemoLead(rows, self) {
+  const group = (row) =>
+    [
+      normaliseScope(row.page_scope),
+      normaliseAboutCategory(row.category),
+      normaliseSubCategory(row.sub_category).toLowerCase()
+    ].join(' ');
+
+  const target = group(self);
+  for (const row of rows) {
+    // `self` is already the lead in the caller, so demoting it would undo the
+    // save it is part of. An insert's `self` is not in `rows` yet, so the id
+    // comparison simply never matches.
+    if (row.id === self.id) continue;
+    if (row.is_lead !== true && row.is_lead !== 1 && row.is_lead !== 'true') continue;
+    if (group(row) !== target) continue;
+    row.is_lead = false;
+  }
 }
 
 /* -------------------------------------------------------------------------- */

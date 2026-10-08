@@ -978,6 +978,72 @@ export function canDeleteArticle(article) {
 }
 
 /**
+ * May this session move a row between review states -- approve or unpublish?
+ *
+ * THE APPROVER TIER: the Owner seat, or an Active Board Manager.
+ *
+ * This mirrors `public.can_approve()` in supabase/migrations/030_approver_tier.sql
+ * exactly. The database is what decides -- this exists so the button is honest
+ * rather than so the decision is made in the browser. A Writer who reaches the
+ * hidden handler anyway is refused by the RLS policy, which is the point of
+ * keeping the two in step.
+ *
+ * SCOPE, PRECISELY: the approve DECISION. It does not grant editing another
+ * author's work, deleting, or reordering the front page. `canEditArticle` and
+ * `canDeleteArticle` below are separate questions with separate answers.
+ *
+ * @returns {boolean}
+ */
+export function canApprove() {
+  const session = getSession();
+  if (!session?.isAdmin) return false;
+  if (isOwner()) return true;
+  return String(session.user?.role || '').toLowerCase() === 'board manager';
+}
+
+/**
+ * May this session EDIT this article?
+ *
+ * DISTINCT FROM canApprove(), and the distinction is the whole point of the
+ * lockdown: a Board Manager may clear the review queue without inheriting the
+ * ability to rewrite somebody else's story. A Writer may only touch their own.
+ *
+ * The database already enforces this -- `articles_update_own` permits only
+ * `wire_owns_article(id) or is_owner() or author_account_id is null` -- so this
+ * is about not offering an Edit button that leads to a permission error.
+ *
+ * @param {{authorAccountId?: string|null}} article
+ * @returns {boolean}
+ */
+export function canEditArticle(article) {
+  if (!article) return false;
+  const session = getSession();
+  if (!session?.isAdmin) return false;
+  if (isOwner()) return true;
+  return Boolean(
+    article.authorAccountId && session.user?.id && article.authorAccountId === session.user.id
+  );
+}
+
+/**
+ * May this session EDIT this interview? Mirrors canEditArticle exactly.
+ *
+ * @param {{authorAccountId?: string|null}} interview
+ * @returns {boolean}
+ */
+export function canEditInterview(interview) {
+  if (!interview) return false;
+  const session = getSession();
+  if (!session?.isAdmin) return false;
+  if (isOwner()) return true;
+  return Boolean(
+    interview.authorAccountId &&
+      session.user?.id &&
+      interview.authorAccountId === session.user.id
+  );
+}
+
+/**
  * Compare a workflow status case-insensitively.
  * The database was seeded with lower-case values ('published') while the UI and
  * the seed data use title case ('Published'). Matching exactly meant the front
