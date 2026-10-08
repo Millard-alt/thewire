@@ -1921,6 +1921,49 @@ function sqlLinesOutsideFunctionBodies(path) {
   );
 }
 
+report(
+  'MIGRATION 033 IS SELF-CONTAINED, because it did not used to be',
+  /create or replace function public\.can_approve\(\)[\s\S]{0,400}role = 'Board Manager'/.test(
+    lockdownSql
+  ) &&
+    /create policy articles_approver_update[\s\S]{0,900}create policy interviews_approver_update[\s\S]{0,900}create policy podcasts_approver_update/.test(
+      lockdownSql
+    ) &&
+    // The section that carries them has to come BEFORE the first call site, or
+    // the function still does not exist when the guard is created.
+    lockdownSql.indexOf('create or replace function public.can_approve()') <
+      lockdownSql.indexOf('if public.can_approve() then'),
+  'running 033 without 030 failed with 42883: function public.can_approve() does not exist, on a database that had followed the documented run order exactly. can_approve() and the three approver policies are now restated idempotently at the top, so the order is safe either way.'
+);
+report(
+  'every helper 033 calls is either defined BY 033 or is base-schema',
+  (() => {
+    // The four that predate everything and cannot be restated: they are the
+    // session/ownership primitives from credentials.sql, plus the two ownership
+    // predicates from 007 and 022. Everything else 033 calls must be created in
+    // 033, or running it on a database without the newer migration fails with
+    // 42883 -- which is exactly what happened with can_approve().
+    const PRE_EXISTING = ['current_account_id', 'is_owner', 'is_staff',
+      'wire_owns_article', 'wire_owns_interview'];
+    const called = [...new Set([...lockdownSql.matchAll(/public\.(\w+)\(/g)].map((m) => m[1]))];
+    const defined = [...new Set(
+      [...lockdownSql.matchAll(/create or replace function public\.(\w+)/g)].map((m) => m[1])
+    )];
+    const orphans = called.filter((c) => !PRE_EXISTING.includes(c) && !defined.includes(c));
+    if (orphans.length) {
+      console.log('        orphans:', orphans.join(', '));
+      return false;
+    }
+    return called.includes('can_approve') && defined.includes('can_approve');
+  })(),
+  'a bare call to a helper from a newer migration is a trap unless this file restates it, because create or replace is idempotent and re-running the older one afterwards is harmless'
+);
+report(
+  'the whole of 033 is one transaction, so a failure leaves nothing half-applied',
+  /^begin;/m.test(lockdownSql) && /^commit;/m.test(lockdownSql),
+  'the 42883 rolled the entire file back cleanly, which is why the retry is safe rather than requiring a manual repair'
+);
+
 console.log('\nSECTION 12 — the Writer lockdown (migration 033)\n');
 
 /*

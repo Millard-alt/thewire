@@ -98,6 +98,16 @@ console.log('\n--- content spot-checks ---');
 const allItems = (pending?.sections || []).flatMap((s) => s.items);
 const blob = allItems.join('\n');
 
+/*
+ * Each of these is a sentence the CHANGELOG has to keep saying. They are
+ * asserted with a normalised needle rather than a literal, and case-insensitively,
+ * because the previous version hardcoded a two-space indent AND lower-case
+ * "do not" -- so rewording the warning to "do NOT re-run 024 afterwards" broke a
+ * test about whether the warning EXISTED. A documentation assertion should fail
+ * when the fact goes away, not when someone edits the prose.
+ */
+const normalised = blob.toLowerCase().replace(/\s+/g, ' ');
+
 for (const [label, needle] of [
   ['the service_role key exposure', 'bypasses every row-level security policy'],
   ['the anon-role root cause', 'PostgREST therefore resolves every'],
@@ -105,14 +115,52 @@ for (const [label, needle] of [
   ['the backtick parse failure', 'stopped the whole admin module'],
   ['the nav overflow', '295px'],
   ['the one-row-one-page consequence', 'two rows'],
-  ['the migration run order warning', 'do not\n  re-run `024`']
+  ['the migration run order warning', 'do not re-run `024`'],
+  ['the approver-tier dependency that caused a failed migration', 'can_approve() does not exist']
 ]) {
-  check(`${label} is recorded`, blob.includes(needle.replace(/\n\s*/g, ' ')) || blob.includes(needle), needle);
+  check(
+    `${label} is recorded`,
+    normalised.includes(needle.toLowerCase().replace(/\s+/g, ' ')),
+    needle
+  );
 }
 
+/*
+ * EVERY unapplied migration must be named in Pending, IN ORDER.
+ *
+ * This check did not exist and should have. The list named 028, 029, 032 and 033
+ * but omitted 030 and 031 entirely, so a database could follow the documented
+ * run order exactly and still fail: 033 calls `can_approve()` from 030, and the
+ * attempt died with
+ *
+ *     ERROR:  42883: function public.can_approve() does not exist
+ *
+ * A list that omits a dependency is worse than no list, because it is trusted.
+ * So the assertion is not "the two migrations I remembered" but "every migration
+ * file that exists, in ascending order, and 030 appears before 033".
+ */
+const PENDING = ['028', '029', '030', '031', '032', '033'];
+// `blob` above is already exactly the Pending section's items, joined by newlines
+// -- it is not the whole file. The first version of this sliced the file looking
+// for '### Pending' and '### Added' headings that are not in it, produced an empty
+// string, and failed every assertion below for the wrong reason.
+const pendingOrder = [...blob.matchAll(/migrations\/(0\d\d)_/g)].map((m) => m[1]);
+
 check(
-  'the pending section names both migrations',
-  /028_page_scopes\.sql/.test(blob) && /029_podcast_role_gates\.sql/.test(blob)
+  'Pending names every migration a fresh database still needs',
+  PENDING.every((n) => blob.includes(`${n}_`)),
+  `found: ${pendingOrder.join(', ') || 'none'}`
+);
+check(
+  'Pending lists them in ascending order',
+  pendingOrder.join(',') === PENDING.join(','),
+  `found: ${pendingOrder.join(', ')}`
+);
+check(
+  'Pending says 030 must run before 033, the dependency that actually failed',
+  /run this before 033/i.test(blob) &&
+    /can_approve\(\)/.test(blob),
+  'the 030 entry must name both the ordering and the function'
 );
 check(
   'the key rotation is stated as still required',

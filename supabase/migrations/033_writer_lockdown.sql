@@ -30,6 +30,86 @@
 begin;
 
 -- -----------------------------------------------------------------------------
+-- 0. THE APPROVER TIER, RESTATED — SO THIS FILE RUNS STANDING ALONE
+-- -----------------------------------------------------------------------------
+-- WHY THIS SECTION EXISTS
+-- -----------------------
+-- The first attempt at this migration failed with:
+--
+--     ERROR:  42883: function public.can_approve() does not exist
+--
+-- `can_approve()` is defined in migration 030, which had never been applied to
+-- the database -- and, worse, which the CHANGELOG's "Pending" list did not
+-- mention at all. So the documented run order said "028, then 029, then 032,
+-- then 033", 033 was run after exactly that, and it could not work. A migration
+-- whose dependency is not listed as a dependency is not a dependency anyone will
+-- honour.
+--
+-- The whole file is in one transaction, so that failure rolled back cleanly and
+-- left nothing half-applied. This section is what stops it happening twice: 033
+-- now carries the approver tier itself, identically to 030, so it can be run on
+-- its own. `create or replace function` and `drop/create policy` are both
+-- idempotent, so running 030 AFTER this file is equally harmless -- the
+-- definitions are byte-identical, so whichever runs last changes nothing.
+--
+-- This is the same decision already taken for `wire_default_permissions()` in
+-- section 6, for the same reason: a fresh install should be correct from the
+-- earliest migration, and an existing one should not have to guess.
+--
+-- WHAT IS AND IS NOT RESTATED
+-- 030 also repaired the podcast RLS that 029 got wrong, but that is a SEPARATE
+-- file with a SEPARATE failure mode and it does not depend on anything here, so
+-- 033 does not absorb it. If a podcast submission is refused, the cause is 029,
+-- not this file.
+create or replace function public.can_approve()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, extensions
+as $$
+  select public.is_owner()
+      or exists (
+    select 1
+      from public.staff_accounts a
+     where a.id = public.current_account_id()
+       and a.status = 'active'
+       and a.role = 'Board Manager'
+  );
+$$;
+
+comment on function public.can_approve() is
+  'May this session move a row between review states? The Owner seat, or an '
+  'ACTIVE Board Manager. Grants the approve DECISION and nothing else.';
+
+revoke all on function public.can_approve() from public;
+grant execute on function public.can_approve() to anon, authenticated;
+
+-- The three status-only update policies. Without them a Board Manager has no
+-- path to approve anything: 030's whole point is that an approver's authority is
+-- granted by POLICY and bounded by the guard trigger in section 4.
+drop policy if exists articles_approver_update on public.articles;
+create policy articles_approver_update on public.articles
+  for update to anon, authenticated
+  using (public.can_approve())
+  with check (public.can_approve());
+grant update (status) on public.articles to anon, authenticated;
+
+drop policy if exists interviews_approver_update on public.interviews;
+create policy interviews_approver_update on public.interviews
+  for update to anon, authenticated
+  using (public.can_approve())
+  with check (public.can_approve());
+grant update (status) on public.interviews to anon, authenticated;
+
+drop policy if exists podcasts_approver_update on public.podcasts;
+create policy podcasts_approver_update on public.podcasts
+  for update to anon, authenticated
+  using (public.can_approve())
+  with check (public.can_approve());
+grant update (status) on public.podcasts to anon, authenticated;
+
+-- -----------------------------------------------------------------------------
 -- 1. ARTICLES HAD NO PUBLISH GUARD AT ALL
 -- -----------------------------------------------------------------------------
 -- THE WORST OF THE FIVE, AND THE ONE NOBODY WAS LOOKING FOR
