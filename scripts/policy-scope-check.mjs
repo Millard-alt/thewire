@@ -423,6 +423,60 @@ console.log('\n--- 034 verification block -------------------------------------'
 }
 
 // ---------------------------------------------------------------------------
+console.log('\n--- pg_policies column names ------------------------------------');
+
+{
+  // The real columns. `table_name` is the trap: it exists on
+  // information_schema.columns / role_table_grants, which several migrations in
+  // this repo query legitimately, so it is easy to carry over by accident.
+  // pg_policies spells it `tablename`.
+  const REAL = 'schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check';
+
+  // Scoped to the migrations this audit added, NOT the whole repo. Earlier
+  // migrations that read pg_policies sit next to information_schema queries
+  // where table_name is correct, and a statement window cannot tell the two
+  // apart -- a repo-wide version of this check flagged 022, 030 and 033, all of
+  // which apply cleanly. Auditing those is a separate job.
+  const MINE = migrationFiles.filter((f) => /0(34|35|36)_/.test(f));
+
+  // Single-token near-misses only. `with check` is excluded because it is real
+  // SQL inside a CREATE POLICY, not a column reference.
+  const NOT_REAL = ['table_name', 'policy_name', 'schema_name', 'qualify', 'tableowner'];
+
+  const offenders = [];
+  let checked = 0;
+
+  for (const file of MINE) {
+    const lines = stripComments(readFileSync(file, 'utf8')).split('\n');
+    const fromLines = lines
+      .map((l, i) => ({ l, i }))
+      .filter(({ l }) => /\bfrom\s+pg_policies\b/i.test(l))
+      .map(({ i }) => i);
+
+    for (const from of fromLines) {
+      let start = from;
+      while (start >= 0 && !/^\s*select\b/i.test(lines[start])) start--;
+      let end = from;
+      while (end < lines.length && !/;\s*$/.test(lines[end])) end++;
+      const window = lines.slice(Math.max(0, start), Math.min(lines.length, end + 1)).join('\n');
+      checked++;
+
+      for (const wrong of NOT_REAL) {
+        if (new RegExp(`\\b${wrong}\\b`, 'i').test(window)) {
+          offenders.push(`${file}: a pg_policies query uses "${wrong}" (real columns: ${REAL})`);
+        }
+      }
+    }
+  }
+
+  if (offenders.length) {
+    for (const o of offenders) bad(o);
+  } else {
+    ok(`all ${checked} pg_policies queries in 034/035/036 use real column names`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 console.log('\n------------------------------------------------------------------');
 if (problems.length) {
   console.log(`${problems.length} problem(s):`);

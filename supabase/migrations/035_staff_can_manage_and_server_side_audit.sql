@@ -212,11 +212,15 @@ declare
   loose text;
 begin
   -- (a) nothing may still write these tables on a bare is_staff().
-  select string_agg(table_name || '.' || policyname, ', ' order by table_name)
+  -- `tablename`, NOT `table_name`. pg_policies exposes schemaname / tablename /
+  -- policyname / permissive / roles / cmd / qual / with_check. `table_name`
+  -- exists on information_schema.columns, which is where this mistake came
+  -- from, but not here -- so the whole statement failed with 42703.
+  select string_agg(tablename || '.' || policyname, ', ' order by tablename)
     into loose
     from pg_policies
    where schemaname = 'public'
-     and table_name in ('site_settings', 'broadcasts', 'assignments', 'staff')
+     and tablename in ('site_settings', 'broadcasts', 'assignments', 'staff')
      and (coalesce(qual, '') || ' ' || coalesce(with_check, '')) = 'public.is_staff()';
 
   if loose is not null then
