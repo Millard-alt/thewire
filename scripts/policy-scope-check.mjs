@@ -477,6 +477,63 @@ console.log('\n--- pg_policies column names ------------------------------------
 }
 
 // ---------------------------------------------------------------------------
+console.log('\n--- 035 predicate comparisons must tolerate dequalification ---');
+
+{
+  const src = stripComments(readFileSync('supabase/migrations/035_staff_can_manage_and_server_side_audit.sql', 'utf8'));
+
+  // pg_policies renders `qual` through pg_get_expr, which DROPS the schema
+  // qualifier for anything visible in search_path. A policy written
+  // `using (public.is_owner())` reads back as `is_owner()`.
+  //
+  // So an exact comparison against the qualified spelling is wrong twice over:
+  // it aborts on a correct policy (this bit 035), and -- worse -- a check that
+  // can never match passes silently forever, which is what happened to the
+  // "still gated on a bare is_staff()" assertion.
+  const exactCompares = [
+    // `= '` , `<> '` , `!= '` -- any comparison operator followed by the
+    // qualified literal.
+    /[<>=!]+\s*'public\.is_(staff|owner|manager|approve)/i,
+    /[<>=!]+\s*'is_(staff|owner)\(\)'/i
+  ];
+
+  let offender = null;
+  for (const re of exactCompares) {
+    const m = src.match(re);
+    if (m) offender = m[0].trim();
+  }
+
+  if (offender) {
+    bad(`035 compares a pg_policies predicate to an exact literal (${offender}); pg_get_expr dequalifies it, so this either aborts on a correct policy or can never match`);
+  } else {
+    ok('035 compares no pg_policies predicate against an exact qualified literal');
+  }
+
+  // The prefix-tolerant form must actually be there, not merely absent.
+  if (/~\s*'\^\(public\\\.\)\?is_staff\\\(\\\)\$'/i.test(src)) {
+    ok('035 (a) matches is_staff() with an optional public. prefix');
+  } else {
+    bad('035 (a) does not use a prefix-tolerant regex -- it must accept both is_staff() and public.is_staff()');
+  }
+
+  if (/!~\s*'\^\(public\\\.\)\?is_owner\\\(\\\)\$'/i.test(src)) {
+    ok('035 (c) matches is_owner() with an optional public. prefix');
+  } else {
+    bad('035 (c) does not use a prefix-tolerant regex');
+  }
+
+  // 034's checks are substring LIKE on the function NAME, which survives the
+  // prefix because "public.is_staff()" still contains "is_staff". Assert that
+  // property so nobody "tightens" it into an equality and reopens the bug.
+  const src034 = stripComments(readFileSync('supabase/migrations/034_close_wire_media_storage_policies.sql', 'utf8'));
+  if (/like\s+'%is_staff%'/i.test(src034) && !/=\s*'public\.is_staff\(\)'/i.test(src034)) {
+    ok("034 matches on the substring '%is_staff%', which is immune to dequalification");
+  } else {
+    bad("034's is_staff() check is not substring-based and would break on dequalification");
+  }
+}
+
+// ---------------------------------------------------------------------------
 console.log('\n------------------------------------------------------------------');
 if (problems.length) {
   console.log(`${problems.length} problem(s):`);

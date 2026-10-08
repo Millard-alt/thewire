@@ -216,12 +216,22 @@ begin
   -- policyname / permissive / roles / cmd / qual / with_check. `table_name`
   -- exists on information_schema.columns, which is where this mistake came
   -- from, but not here -- so the whole statement failed with 42703.
+  --
+  -- The regex, and not `= 'public.is_staff()'`, is load-bearing. pg_policies
+  -- renders `qual` through pg_get_expr, which DEQUALIFIES any schema name that
+  -- is visible in the current search_path. A policy written
+  -- `using (public.is_staff())` therefore reads back as `is_staff()`, so an
+  -- exact comparison against the qualified spelling never matches and this
+  -- check silently passed forever -- a verification that verified nothing.
+  -- `^(public\.)?is_staff\(\)$` accepts either rendering and still refuses
+  -- anything that has grown a real condition around it.
   select string_agg(tablename || '.' || policyname, ', ' order by tablename)
     into loose
     from pg_policies
    where schemaname = 'public'
      and tablename in ('site_settings', 'broadcasts', 'assignments', 'staff')
-     and (coalesce(qual, '') || ' ' || coalesce(with_check, '')) = 'public.is_staff()';
+     and coalesce(qual, '') ~ '^(public\.)?is_staff\(\)$'
+     and coalesce(with_check, '') ~ '^(public\.)?is_staff\(\)$';
 
   if loose is not null then
     raise exception 'still gated on a bare is_staff(): %', loose;
@@ -245,12 +255,17 @@ begin
      and tablename  = 'audit_logs'
      and cmd        = 'SELECT';
 
-  -- `<>` and `coalesce`, not `IS NOT`. `IS NOT` is not a text comparison
+  -- `<>`/regex, not `IS NOT`. `IS NOT` is not a text comparison
   -- operator (it is NULL/TRUE/DISTINCT FROM), so writing it here is a 42601
   -- syntax error. The coalesce also matters: if no SELECT policy existed, `loose`
   -- would be NULL and `NULL <> '...'` is NULL, which is not TRUE -- the missing
   -- policy would sail through the very check meant to catch it.
-  if coalesce(loose, '') <> 'public.is_owner()' then
+  --
+  -- Prefix tolerance for the same reason as check (a): pg_policies renders this
+  -- predicate as `is_owner()`, without the `public.` schema qualifier. An exact
+  -- comparison against 'public.is_owner()' therefore always mismatched, and the
+  -- migration aborted on a policy that was in fact correct.
+  if coalesce(loose, '') !~ '^(public\.)?is_owner\(\)$' then
     raise exception 'audit_logs read policy is not is_owner(): %', coalesce(loose, 'MISSING');
   end if;
 
