@@ -352,7 +352,7 @@ begin
 end;
 $$;
 
-comment on function public.wire_approver_scope_guard(text) is
+comment on function public.wire_approver_scope_guard() is
   'Enforces migration 030''s "status only" intent, which its column grant could not '
   'deliver because credentials.sql / 022 / 029 each grant a table-wide UPDATE to '
   'anon and Postgres checks the table privilege first. Compares every column except '

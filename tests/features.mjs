@@ -1942,6 +1942,83 @@ function sqlLinesOutsideFunctionBodies(path) {
 }
 
 report(
+  'EVERY FUNCTION REFERENCE MATCHES A DECLARED SIGNATURE',
+  (() => {
+    /*
+      THE GENERAL INVARIANT, ADDED AFTER GETTING THIS WRONG THREE TIMES.
+
+        42883 can_approve() does not exist          -- a reference with no
+                                                       declaration in this file
+        42P13  trigger functions cannot have args   -- a declaration that is
+                                                       illegal for `returns trigger`
+        42883  wire_approver_scope_guard(text)      -- a reference to a signature
+                                                       that no longer matches its
+                                                       own declaration
+
+      The third one is the interesting one. The signature was fixed at six call
+      sites because that is the number that came to mind, and `comment on function`
+      was the seventh. `COMMENT ON FUNCTION` resolves its target the same way
+      PostgEST does -- by exact signature -- so a stale `(text)` on the comment is
+      as fatal as a stale one on a trigger, and it is the least visible of the
+      three because it is a documentation statement about the function.
+
+      So: normalise an argument list to just its TYPE names, collect the declared
+      signature of every function defined in the file, and require every reference
+      to match it. `drop function if exists` is exempt on purpose -- naming a
+      signature there is the whole point of it, and `IF EXISTS` is what makes a
+      signature that may or may not be present safe.
+    */
+    const ARITY = /^\s*(?:public\.)?(\w+)\s*\(([^)]*)\)/;
+
+    // type names only, so `p_table text` and `text` are recognised as the same
+    const types = (list) =>
+      (list || '')
+        .split(',')
+        .map((a) => a.trim())
+        .filter(Boolean)
+        .map((a) => a.replace(/^\w+\s+/, '').replace(/\s+/g, ' ').toLowerCase())
+        .sort()
+        .join(',');
+
+    const declarations = new Map();
+    for (const m of lockdownSql.matchAll(
+      /create (?:or replace )?function (?:public\.)?(\w+)\s*\(([^)]*)\)/g
+    )) {
+      declarations.set(m[1], types(m[2]));
+    }
+
+    const problems = [];
+    const REFERENCE =
+      /(comment on function|revoke (?:all|execute)? ?[a-z ]*|grant (?:all|execute)? ?[a-z ]*|execute function)\s+(?:on function )?(?:public\.)?(\w+)\s*\(([^)]*)\)/g;
+    for (const m of lockdownSql.matchAll(REFERENCE)) {
+      const [, kind, name, args] = m;
+      if (!declarations.has(name)) {
+        problems.push(`${kind}: ${name}() is referenced but not declared in this file`);
+        continue;
+      }
+      if (types(args) !== declarations.get(name)) {
+        problems.push(
+          `${kind}: ${name}(${types(args)}) vs declared ${name}(${declarations.get(name)})`
+        );
+      }
+    }
+
+    if (problems.length) {
+      console.log('        ' + problems.join('\n        '));
+      return false;
+    }
+    return declarations.size > 0;
+  })(),
+  'COMMENT ON FUNCTION, REVOKE, GRANT and a trigger attachment all resolve their target by EXACT signature, so a stale one is 42883 exactly like a missing function -- and the comment is the least visible of them because it is a statement ABOUT the function'
+);
+report(
+  'and a trigger is never attached with an argument list',
+  ![...lockdownSql.matchAll(/execute function (?:public\.)?(\w+)\(([^)]+)\)/g)].some(
+    (m) => m[2].trim() !== ''
+  ),
+  '42P13. The guard was attached as wire_approver_scope_guard(...) and the parameter was never read'
+);
+report(
   'NO TRIGGER FUNCTION IN THE REPO DECLARES ARGUMENTS',
   (() => {
     // `returns trigger` may not take parameters at all:
