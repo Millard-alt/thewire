@@ -19,8 +19,10 @@
  *
  * AUTHENTICATION
  *   Two accepted credentials, so the Owner Panel can call this directly:
- *     1. PUSH_SEND_TOKEN, as `Authorization: Bearer <token>` or `?token=`. This
- *        is for the cron and the Supabase webhook.
+ *     1. PUSH_SEND_TOKEN, as `Authorization: Bearer <token>`. This is for the
+ *        cron and the Supabase webhook. Header only: `?token=` was removed
+ *        because a query string is written to Vercel's request logs and browser
+ *        history.
  *     2. The Owner's own browser session, presented in the `x-wire-token`
  *        header. This is the SAME opaque token every other database request in
  *        this app already carries (see src/lib/supabase.js), and it is resolved
@@ -33,6 +35,7 @@
  *   endpoint refuses the call rather than defaulting to open.
  */
 
+import crypto from 'node:crypto';
 import webpush from 'web-push';
 import { createClient } from '@supabase/supabase-js';
 
@@ -61,13 +64,44 @@ function fail(res, status, code, detail) {
   return res.status(status).json({ ok: false, code, detail: detail || null });
 }
 
-/** True when the caller's bearer/query token matches PUSH_SEND_TOKEN. */
+/**
+ * Compare a candidate against an expected secret without leaking its length or
+ * contents through timing.
+ *
+ * `crypto.timingSafeEqual` throws when the buffers differ in length, so the
+ * length is checked first. That check does reveal length, which is acceptable
+ * for a fixed-length deployment secret and is what every Node comparison ends
+ * up doing.
+ *
+ * The `if (!expected)` guard is the load-bearing part: without it an unset
+ * PUSH_SEND_TOKEN compares equal to an empty bearer and the endpoint opens.
+ */
+function secretMatches(candidate, expected) {
+  if (!expected || !candidate) return false;
+  const a = Buffer.from(candidate, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * True when the caller presents PUSH_SEND_TOKEN as a bearer header.
+ *
+ * Header only. `?token=` was removed: a query string lands in Vercel request
+ * logs, in browser history, and in the Referer header of anything the response
+ * links to. Vercel Cron sends `Authorization: Bearer <CRON_SECRET|PUSH_SEND_TOKEN>`,
+ * and the Supabase webhook can be configured with a header too, so nothing that
+ * worked stops working.
+ */
 function hasSharedSecret(req) {
   const header = req.headers.authorization || '';
   const bearer = header.startsWith('Bearer ') ? header.slice(7) : '';
-  const query = new URL(req.url, 'http://localhost').searchParams.get('token');
-  return bearer === PUSH_TOKEN || query === PUSH_TOKEN;
+  return secretMatches(bearer, PUSH_TOKEN);
 }
+
+// Exported for scripts/api-auth-check.mjs. Vercel routes on the default export,
+// so named exports here do not become endpoints.
+export { secretMatches, hasSharedSecret };
 
 /**
  * Is the caller the Owner, using the browser session token the rest of the app
@@ -178,7 +212,7 @@ async function readRequest(req) {
  * public/sw.js parses in its `push` handler.
  *
  * `icon` is included because the Service Worker honours it, and
- * `/icons/icon-192.png` is the file that actually exists in `public/` —
+ * `/icons/icon-192.png` is the file that actually exists in `public/` â€”
  * `/icon-192.png` would 404 and the OS would fall back to a generic glyph.
  */
 function payloadFor(broadcast) {

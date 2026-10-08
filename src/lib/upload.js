@@ -19,15 +19,22 @@ import { getSupabase } from './supabase.js';
 
 const BUCKET = 'wire-media';
 
-/** Only image types, and a hard 8 MB ceiling (Storage's per-object limit). */
-const MAX_BYTES = 8 * 1024 * 1024;
+/**
+ * Only image types, and a 5 MB ceiling.
+ *
+ * These MUST match the wire-media bucket's own limits, set in
+ * supabase/migrations/034_close_wire_media_storage_policies.sql:
+ * allowed_mime_types = png/jpeg/webp, file_size_limit = 5 MB. If the client
+ * accepts something the bucket rejects, the editor gets a raw Storage error
+ * instead of the sentence below. GIF and AVIF were dropped for that reason --
+ * the server allowlist is the authority now, not this object.
+ */
+const MAX_BYTES = 5 * 1024 * 1024;
 
 const ALLOWED = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
-  'image/webp': 'webp',
-  'image/gif': 'gif',
-  'image/avif': 'avif'
+  'image/webp': 'webp'
 };
 
 /**
@@ -38,11 +45,11 @@ const ALLOWED = {
 export function validateImageFile(file) {
   if (!file) return 'Choose an image from your device first.';
   if (!ALLOWED[file.type]) {
-    return 'Use a JPEG, PNG, WebP, GIF or AVIF image.';
+    return 'Use a JPEG, PNG or WebP image.';
   }
   if (file.size > MAX_BYTES) {
     const mb = Math.round(file.size / (1024 * 1024));
-    return `That image is ${mb} MB. The limit is 8 MB.`;
+    return `That image is ${mb} MB. The limit is 5 MB.`;
   }
   return '';
 }

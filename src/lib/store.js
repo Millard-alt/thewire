@@ -785,8 +785,15 @@ export async function refresh() {
 /**
  * Record an administrative action. Never throws — auditing must not be able
  * to break an operation the user already completed.
+ *
+ * The database row is written by `wire_log_audit` (migration 035), which fills
+ * `actor_name` from the bearer token. `actor` is therefore cosmetic here: it
+ * labels the optimistic local entry only. It used to be sent to the server,
+ * which let any staff member write a log line naming somebody else — the row
+ * is now unforgeable.
+ *
  * @param {string} action
- * @param {string} [actor] Display name of whoever performed it.
+ * @param {string} [actor] Display name for the optimistic local entry.
  */
 export async function addAuditLog(action, actor = 'Owner') {
   const entry = { id: newId('audit'), user: actor, action, time: nowStamp() };
@@ -796,9 +803,7 @@ export async function addAuditLog(action, actor = 'Owner') {
   if (!config.demoMode && db()) {
     try {
       assertOk(
-        await db()
-          .from(TABLES.auditLogs)
-          .insert({ action, actor_name: actor }),
+        await db().rpc('wire_log_audit', { p_action: action }),
         'write audit log'
       );
     } catch (error) {

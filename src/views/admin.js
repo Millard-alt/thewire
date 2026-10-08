@@ -1620,7 +1620,7 @@ function renderMediaTab() {
             class="field"
             type="file"
             multiple
-            accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+            accept="image/jpeg,image/png,image/webp"
           />
           <p class="ink-muted mt-1 text-xs">
             Select as many as you like. They are uploaded one at a time.
@@ -2188,7 +2188,7 @@ function articleEditorDialog() {
               id="article-image-file"
               class="field"
               type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+              accept="image/jpeg,image/png,image/webp"
             />
             <input
               id="article-image"
@@ -2206,7 +2206,7 @@ function articleEditorDialog() {
               class="field"
               type="file"
               multiple
-              accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+              accept="image/jpeg,image/png,image/webp"
             />
             <input
               id="article-extra-url"
@@ -2331,7 +2331,7 @@ function interviewEditorDialog() {
               id="interview-image-file"
               class="field"
               type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif,image/avif"
+              accept="image/jpeg,image/png,image/webp"
             />
             <input
               id="interview-image"
@@ -2528,7 +2528,7 @@ function staffEditorDialog() {
                 id="staff-portrait-file"
                 class="field"
                 type="file"
-                accept="image/png,image/jpeg,image/webp,image/avif"
+                accept="image/png,image/jpeg,image/webp"
               />
             </div>
             <div>

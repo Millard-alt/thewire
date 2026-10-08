@@ -21,6 +21,7 @@
 //    next pass retries instead of silently losing the alert.
 // =============================================================================
 
+import crypto from 'node:crypto';
 import webpush from 'web-push';
 import { createClient } from '@supabase/supabase-js';
 
@@ -38,9 +39,27 @@ const CRON_SECRET = process.env.CRON_SECRET || '';
 const MAX_PER_PASS = 200;
 
 /**
+ * Constant-time comparison that fails closed.
+ *
+ * The `if (!expected)` guard matters more than the timing: an unset
+ * CRON_SECRET / PUSH_SEND_TOKEN must never compare equal to an empty bearer,
+ * or the endpoint accepts anonymous callers.
+ */
+function secretMatches(candidate, expected) {
+  if (!expected || !candidate) return false;
+  const a = Buffer.from(candidate, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+/**
  * Vercel Cron presents CRON_SECRET as a bearer token, but PUSH_SEND_TOKEN is what
  * the rest of the push stack already uses. Accept either so the schedule works
  * whichever secret the project has configured.
+ *
+ * Header only -- `?token=` was removed because a query string lands in Vercel
+ * request logs and browser history.
  *
  * With neither configured there is nothing to check against, so this refuses
  * rather than leaving an open relay anyone can trigger to spam staff.
@@ -48,12 +67,15 @@ const MAX_PER_PASS = 200;
 function authorised(req) {
   const header = req.headers.authorization || '';
   const bearer = header.startsWith('Bearer ') ? header.slice(7) : '';
-  const query = new URL(req.url, 'http://localhost').searchParams.get('token');
 
-  if (CRON_SECRET && (bearer === CRON_SECRET || query === CRON_SECRET)) return true;
-  if (PUSH_TOKEN && (bearer === PUSH_TOKEN || query === PUSH_TOKEN)) return true;
+  if (secretMatches(bearer, CRON_SECRET)) return true;
+  if (secretMatches(bearer, PUSH_TOKEN)) return true;
   return false;
 }
+
+// Exported for scripts/api-auth-check.mjs. Vercel routes on the default export,
+// so named exports here do not become endpoints.
+export { secretMatches, authorised };
 
 /** Whole hours until the deadline, rounded up, floored at 1 so it never reads "0 hours". */
 function hoursUntil(dueAt) {
