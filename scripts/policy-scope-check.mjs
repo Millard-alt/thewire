@@ -340,6 +340,90 @@ console.log('\n--- wire_media storage (migration 034) -------------------------'
 // ---------------------------------------------------------------------------
 
 console.log('\n------------------------------------------------------------------');
+// ---------------------------------------------------------------------------
+//  6. The migration files themselves.
+//
+//  034 and 035 both failed against the live database before these checks
+//  existed, so the failures are encoded here. Each one cost a round trip to a
+//  production database, which is the most expensive place to find a typo.
+// ---------------------------------------------------------------------------
+
+console.log('\n--- migration PL/pgSQL syntax traps ----------------------------');
+
+const migrationFiles = readdirSync('supabase/migrations', { withFileTypes: true })
+  .filter((e) => e.isFile() && e.name.endsWith('.sql'))
+  .map((e) => path.join('supabase/migrations', e.name));
+
+const syntaxProblems = [];
+
+for (const file of migrationFiles) {
+  const lines = stripComments(readFileSync(file, 'utf8')).split('\n');
+
+  lines.forEach((line, i) => {
+    const next = (lines[i + 1] || '').trim();
+
+    // (a) A PL/pgSQL block must close with END; -- the semicolon is required.
+    // Bare END before the closing $$ is a syntax error. Caught 034 three times.
+    if (/^\s*end\s*$/i.test(line) && /^\$\$\s*;?\s*$/i.test(next)) {
+      syntaxProblems.push(`${file}:${i + 1} closes a DO block with a bare END (needs "end;")`);
+    }
+
+    // (b) IS NOT is not a text comparison operator. It is NULL / TRUE /
+    // DISTINCT FROM. Comparing it to a literal is 42601. Caught in 035.
+    if (/\bis\s+not\s+'/i.test(line)) {
+      syntaxProblems.push(`${file}:${i + 1} uses "IS NOT '<literal>'" -- that is 42601, use <>`);
+    }
+  });
+}
+
+if (syntaxProblems.length) {
+  for (const p of syntaxProblems) bad(p);
+} else {
+  ok('every DO block under supabase/migrations closes with "end;"');
+  ok("no \"IS NOT '<literal>'\" comparison under supabase/migrations");
+}
+
+console.log('\n--- 034 verification block -------------------------------------');
+
+{
+  const src = stripComments(readFileSync('supabase/migrations/034_close_wire_media_storage_policies.sql', 'utf8'));
+
+  // (c) Matching policy NAMES with LIKE and an underscore is a wildcard trap:
+  // `wire_media%` also matches "wire media owner delete", which is exactly how
+  // 034 failed on its first run.
+  if (/policyname\s+like\s+'wire_media%'/i.test(src)) {
+    bad("034 matches policyname LIKE 'wire_media%' -- `_` is a single-character wildcard and also matches spaces");
+  } else {
+    ok('034 does not pattern-match policy names with an underscore');
+  }
+
+  // (d) The sweep must skip SELECT. wire_media_read has no authorisation check
+  // by design, because the bucket is public.
+  if (/cmd\s+in\s*\(\s*'INSERT'\s*,\s*'UPDATE'\s*,\s*'DELETE'\s*,\s*'ALL'\s*\)/i.test(src)) {
+    ok('034 restricts its sweep to write policies, so the public read policy cannot trip it');
+  } else {
+    bad('034 does not filter its sweep to write policies -- wire_media_read would be flagged as unguarded');
+  }
+
+  // (e) A stricter guard must satisfy the check. Demanding the literal string
+  // `is_staff()` wrongly reports `is_owner()` as unguarded, which is backwards:
+  // is_owner() satisfies everything is_staff() does.
+  if (/not like '%is_owner%'/.test(src) && /not like '%can_manage%'/.test(src)) {
+    ok('034 accepts is_staff(), is_owner() or can_manage() as an authorisation guard');
+  } else {
+    bad('034 only accepts is_staff(); a stricter guard such as is_owner() would be reported as unguarded');
+  }
+
+  // (f) The two legacy space-named policies from credentials.sql must be
+  // retired, or they linger as dead `to authenticated` rules on a public bucket.
+  for (const legacy of ['"wire media staff upload"', '"wire media owner delete"']) {
+    if (src.includes(`drop policy if exists ${legacy}`)) ok(`034 drops the legacy policy ${legacy}`);
+    else bad(`034 does not drop the legacy policy ${legacy} left behind by credentials.sql`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n------------------------------------------------------------------');
 if (problems.length) {
   console.log(`${problems.length} problem(s):`);
   for (const p of problems) console.log('  - ' + p);

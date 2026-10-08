@@ -51,7 +51,7 @@ begin
   end if;
 
   raise notice 'site_settings.edition is now: %', v_edition;
-end
+end;
 $$;
 
 commit;

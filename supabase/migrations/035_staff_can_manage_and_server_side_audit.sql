@@ -241,7 +241,12 @@ begin
      and tablename  = 'audit_logs'
      and cmd        = 'SELECT';
 
-  if loose is not 'public.is_owner()' then
+  -- `<>` and `coalesce`, not `IS NOT`. `IS NOT` is not a text comparison
+  -- operator (it is NULL/TRUE/DISTINCT FROM), so writing it here is a 42601
+  -- syntax error. The coalesce also matters: if no SELECT policy existed, `loose`
+  -- would be NULL and `NULL <> '...'` is NULL, which is not TRUE -- the missing
+  -- policy would sail through the very check meant to catch it.
+  if coalesce(loose, '') <> 'public.is_owner()' then
     raise exception 'audit_logs read policy is not is_owner(): %', coalesce(loose, 'MISSING');
   end if;
 
@@ -272,7 +277,7 @@ begin
   end if;
 
   raise notice '035 verified: policies re-scoped, audit writes server-side only.';
-end
+end;
 $$;
 
 commit;

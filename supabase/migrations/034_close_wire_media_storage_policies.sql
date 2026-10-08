@@ -71,7 +71,7 @@ begin
     raise exception
       'The wire-media bucket does not exist. Run supabase/013_portrait_upload_and_identity.sql first.';
   end if;
-end
+end;
 $$;
 
 -- -----------------------------------------------------------------------------
@@ -108,7 +108,7 @@ begin
       'old for the bucket-level MIME allowlist in 034. Apply the rest of this '
       'migration, then enforce the MIME type in an Edge Function.';
   end if;
-end
+end;
 $$;
 
 -- -----------------------------------------------------------------------------
@@ -176,16 +176,72 @@ create policy wire_media_delete on storage.objects
   );
 
 -- -----------------------------------------------------------------------------
---  5. Verification. Every policy that mentions wire-media must now name
---     is_staff(). This is the assertion that would have failed on 013.
+--  5. Retire the two space-named policies from credentials.sql.
+--
+--  credentials.sql:592-603 created, on this same bucket:
+--
+--      "wire media staff upload"  for insert to authenticated
+--      "wire media owner delete"  for delete to authenticated
+--
+--  Both name a Postgres role, and this project has no Supabase Auth JWT, so
+--  every request reaches Storage as `anon` and `to authenticated` matches no
+--  policy. They are dead -- the same reasoning 025 applied to podcasts_upload.
+--  They are dropped here so the bucket ends up with ONE set of policies instead
+--  of five that half of which silently never fire.
+--  Nothing is lost: the insert/delete paths are covered by the policies above.
+-- -----------------------------------------------------------------------------
+drop policy if exists "wire media staff upload" on storage.objects;
+drop policy if exists "wire media owner delete" on storage.objects;
+
+-- -----------------------------------------------------------------------------
+--  6. Verification.
+--
+--  The check is by PREDICATE, not by policy name. It asks: does any policy that
+--  mentions this bucket in its USING/WITH CHECK lack an authorisation
+--  function?
+--
+--  Matching on the name `wire_media%` was wrong twice over. `_` is a
+--  single-character wildcard in LIKE, so that pattern also matches
+--  "wire media owner delete" -- which is how this block failed on the first run.
+--  And demanding the literal `is_staff()` wrongly rejects a stricter guard:
+--  `is_owner()` satisfies everything `is_staff()` does, so a policy using it is
+--  safer, not looser.
+--
+--  This is the assertion that would have failed on 013, where all three
+--  policies gated on nothing but the bucket name.
 -- -----------------------------------------------------------------------------
 do $$
 declare
   unguarded text;
 begin
-  -- An INSERT policy has no USING clause, so its guard lives in with_check and
-  -- `qual` is NULL. Checking only `qual` would pass vacuously for
-  -- wire_media_insert, which is the policy that actually matters.
+  select string_agg(policyname, ', ' order by policyname)
+    into unguarded
+    from pg_policies
+   where schemaname = 'storage'
+     and tablename  = 'objects'
+     -- WRITE policies only. wire_media_read has no authorisation check and must
+     -- not have one: the bucket is public, so readers are served without a
+     -- policy at all. Sweeping it in here would fail the migration for guarding
+     -- nothing.
+     and cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL')
+     -- Any write policy that mentions this bucket in its predicate. Covers
+     -- names this migration has never heard of.
+     and coalesce(qual, '') || ' ' || coalesce(with_check, '') like '%wire-media%'
+     -- ... and which authorises nobody.
+     and coalesce(qual, '') || ' ' || coalesce(with_check, '')
+         not like '%is_staff%'
+     and coalesce(qual, '') || ' ' || coalesce(with_check, '')
+         not like '%is_owner%'
+     and coalesce(qual, '') || ' ' || coalesce(with_check, '')
+         not like '%can_manage%';
+
+  if unguarded is not null then
+    raise exception
+      'these policies write the wire-media bucket with no authorisation check: %',
+      unguarded;
+  end if;
+
+  -- The three policies this migration exists to fix, asserted by name.
   select string_agg(policyname, ', ' order by policyname)
     into unguarded
     from pg_policies
@@ -195,25 +251,20 @@ begin
      and coalesce(qual, '') || ' ' || coalesce(with_check, '') not like '%is_staff%';
 
   if unguarded is not null then
-    raise exception 'wire-media policies still missing is_staff(): %', unguarded;
+    raise exception 'wire_media policies still missing is_staff(): %', unguarded;
   end if;
 
-  -- Any other policy still writing to this bucket without an is_staff() check
-  -- would reopen the hole, including one added by a future migration.
-  select string_agg(policyname, ', ' order by policyname)
-    into unguarded
-    from pg_policies
-   where schemaname = 'storage'
-     and tablename  = 'objects'
-     and policyname like 'wire_media%'
-     and policyname not in ('wire_media_insert', 'wire_media_update',
-                            'wire_media_delete', 'wire_media_read')
-     and coalesce(qual, '') || ' ' || coalesce(with_check, '') not like '%is_staff%';
-
-  if unguarded is not null then
-    raise exception 'unexpected wire_media policy without is_staff(): %', unguarded;
+  if not exists (
+    select 1 from pg_policies
+     where schemaname = 'storage'
+       and tablename  = 'objects'
+       and policyname = 'wire_media_read'
+  ) then
+    raise notice
+      'note: wire_media_read is absent. That is fine -- the bucket is public, so '
+      'reads are served without a policy.';
   end if;
 
-  raise notice 'wire-media: insert/update/delete all require is_staff().';
-end
+  raise notice 'wire-media: every write policy requires a staff, owner or manager session.';
+end;
 $$;
