@@ -1450,12 +1450,24 @@ export function renderPodcastsPage() {
  * without pulling the whole file down for a reader who only ever sees the card.
  */
 function podcastCard(episode) {
-  const id = escapeHtml(episode.id || '');
   const duration = Number(episode.duration_seconds) || 0;
   const playable = Boolean(episode.audio_url);
+  // Artwork, which migration 031 added and this card never rendered: the column
+  // was stored and nothing read it, so a Writer who set a cover and an Owner who
+  // did not produced visually identical episodes. `safeUrl` because it lands in
+  // an `src`, and `imageFallbackAttr` so an episode whose art 404s loses the
+  // picture rather than the episode.
+  const cover = safeUrl(episode.cover_url);
 
   return `
     <article class="podcast-card" data-podcast-player>
+      ${
+        cover
+          ? `<img class="podcast-card__cover" src="${escapeHtml(cover)}" ${imageFallbackAttr()}
+               alt="" width="96" height="96" loading="lazy" decoding="async" />`
+          : ''
+      }
+
       <div class="podcast-card__head">
         <h3 class="podcast-card__title">${escapeHtml(episode.title || 'Untitled episode')}</h3>
         <p class="podcast-card__byline">${escapeHtml(episode.author_name || 'The Pulse Staff')}</p>

@@ -65,6 +65,7 @@ const stylesSrc = read('src/styles.css');
 const migration = read('supabase/migrations/024_about_podcasts_and_layout.sql');
 const repairSql = read('supabase/migrations/025_podcasts_storage_repair.sql');
 const rosterSql = read('supabase/migrations/032_roster_leads_and_subcategories.sql');
+const lockdownSql = read('supabase/migrations/033_writer_lockdown.sql');
 
 let pass = 0;
 let fail = 0;
@@ -91,9 +92,10 @@ report(
   'a phrase left in the masthead is a phrase a reader sees'
 );
 report(
-  'the document title and description carry the new name',
-  /<title>The Pulse — MJLA Press Club<\/title>/.test(indexHtml) &&
-    /content="The Pulse — MJLA Press Club\./.test(indexHtml)
+  'the document title and description are the ones Search Console indexed',
+  /<title>The Pulse \| Official Press &amp; News<\/title>/.test(indexHtml) &&
+    /Stories that matter\. Voices that count\./.test(indexHtml),
+  'these were changed for SEO and are asserted by name here so a later rebrand cannot quietly swap them back without this failing'
 );
 report(
   'the footer copyright is exactly as specified',
@@ -1918,6 +1920,224 @@ function sqlLinesOutsideFunctionBodies(path) {
     'portrait uploads go through the same Storage client and succeed, so they are the proof that the anon role is not itself the obstacle'
   );
 }
+
+console.log('\nSECTION 12 — the Writer lockdown (migration 033)\n');
+
+/*
+ * "Editor" in the brief is the WRITER. This project has no such role: ROLES in
+ * auth.js and every CHECK on `role` list exactly three, and role-consistency.mjs
+ * keeps 'Editor' in FORBIDDEN_STORED so it can never come back. The assertions
+ * below therefore read "Editor" as the junior editorial role -- the one that files
+ * content and does not decide what the paper publishes.
+ *
+ * The client gates are convenience. Everything a Writer cannot do is enforced in
+ * migration 033, and that is what these assertions mostly check, because the
+ * client-side half is the part a screenshot can confirm and the database half is
+ * the part that matters.
+ */
+report(
+  'ARTICLES HAD NO PUBLISH GUARD, SO A WRITER COULD SELF-PUBLISH',
+  /create or replace function public\.articles_publish_guard\(\)/.test(lockdownSql) &&
+    /create trigger articles_publish_guard_trg[\s\S]{0,120}before update on public\.articles/.test(
+      lockdownSql
+    ) &&
+    /if new\.status = 'Published' and old\.status <> 'Published' then/.test(lockdownSql),
+  'interviews had one and articles did not, so a Writer could set status = Published on their own draft and put it on the front page'
+);
+report(
+  'the article INSERT policy pins the status, so the draft cannot be skipped either',
+  /status = 'Pending Review'[\s\S]{0,200}author_account_id = public\.current_account_id\(\)/.test(
+    lockdownSql
+  ),
+  'articles_staff_insert was `with check (is_staff())` with no condition on status at all, so all four CHECKed values were reachable by anyone who filed a story'
+);
+report(
+  'the unowned-row rescue arm is gone from both update policies',
+  /create policy articles_update_own[\s\S]{0,300}wire_owns_article\(id\)\s*\n\s*or public\.is_owner\(\)\s*\n\s*\)/.test(
+    lockdownSql
+  ) &&
+    /create policy interviews_update_own[\s\S]{0,300}wire_owns_interview\(id\)\s*\n\s*or public\.is_owner\(\)\s*\n\s*\)/.test(
+      lockdownSql
+    ) &&
+    !/create policy articles_update_own[\s\S]{0,300}author_account_id is null/.test(lockdownSql),
+  'it matched EVERY row whose author_account_id was null -- including the seeded front page -- so a Writer could rewrite the articles the paper itself published'
+);
+report(
+  'the approver "status only" grant is enforced by a TRIGGER, not by the revoke 030 asked for',
+  /wire_approver_scope_guard/.test(lockdownSql) &&
+    /to_jsonb\(new\) - 'status' - 'updated_at'/.test(lockdownSql) &&
+    /Do NOT `revoke update on public\.articles from anon`/.test(lockdownSql),
+  'credentials.sql, 022 and 029 each grant a table-wide UPDATE to anon, and Postgres checks the table privilege first, so the column grant in migration 030 was inert. Revoking it would have taken away the ability of the Owner to edit an article, so the restriction moved into a trigger instead.'
+);
+report(
+  'the approver guard is DIFFERENTIAL, so a column added later cannot slip past it',
+  /if \(to_jsonb\(new\) - 'status' - 'updated_at'\)[\s\S]{0,120}is distinct from \(to_jsonb\(old\) - 'status' - 'updated_at'\)/.test(
+    lockdownSql
+  ) &&
+    !/new\.title is distinct from old\.title/.test(lockdownSql),
+  'enumerating the protected columns would make the guard silently weaker with every new column, which is the failure mode of a hand-maintained list'
+);
+report(
+  'the approver guard skips the OWN row of the approver, or a Board Manager could not edit their own draft',
+  /new\.author_account_id = public\.current_account_id\(\)/.test(lockdownSql) &&
+    /if new\.author_account_id is not null[\s\S]{0,160}then\s*\n\s*return new;/.test(lockdownSql),
+  '"you may edit what you filed" has to hold for every role above the floor, not only the Owner'
+);
+report(
+  'the interview publish guard now honours the approver tier',
+  /create or replace function public\.interviews_publish_guard\(\)[\s\S]{0,400}if public\.can_approve\(\) then/.test(
+    lockdownSql
+  ) &&
+    /only the Owner or a Board Manager can publish an interview/.test(lockdownSql),
+  'it tested not is_owner(), so the approver policy 030 added could never actually publish an interview -- the tier was dead for that one table'
+);
+report(
+  'the capability map no longer claims a Writer may publish',
+  /when 'Writer' then '\{"publish":false/.test(lockdownSql) &&
+    /when 'Board Manager' then '\{"publish":true,"edit_others":false/.test(lockdownSql) &&
+    !/when 'Writer' then '\{"publish":true/.test(lockdownSql),
+  'the Owner reads this table in the Accounts tab, so a wrong entry is documentation of a permission the database does not grant'
+);
+report(
+  'the Overview review queue is gated on the approver tier, and its container with it',
+  /const canReview = store\.canApprove\(\);/.test(adminSrc) &&
+    /canReview \|\| isOwnerView[\s\S]{0,600}grid gap-6 lg:grid-cols-2/.test(adminSrc) &&
+    /canReview[\s\S]{0,400}Review queue/.test(adminSrc),
+  'it rendered for everyone, complete with a LIVE article-publish button. Gating each child was necessary and not sufficient: a Writer fails both gates, which left an empty grid behind.'
+);
+report(
+  'the Coverage Order panel is OWNER-ONLY, and so is the save that writes it',
+  /function contentLayoutPanel\(\)[\s\S]{0,1800}if \(!isOwner\(\)\) return '';/.test(adminSrc) &&
+    /case 'layout-save':[\s\S]{0,900}if \(!isOwner\(\)\) \{/.test(adminSrc),
+  'it rendered live drag handles, arrows and Save for every Writer, and wire_set_article_layout is Owner-only, so every control was a dead end'
+);
+report(
+  'every approve handler re-checks the tier, not only the button that renders it',
+  /case 'article-publish':[\s\S]{0,900}if \(!store\.canApprove\(\)\)/.test(adminSrc) &&
+    /case 'interview-publish':[\s\S]{0,900}if \(!store\.canApprove\(\)\)/.test(adminSrc) &&
+    /case 'podcast-approve':[\s\S]{0,900}if \(!store\.canApprove\(\)\)/.test(adminSrc),
+  'a gate in a template and a gate in a handler are different code, and only the second runs when `data-id` has been edited by hand'
+);
+report(
+  'the EDIT handlers re-check ownership, which DELETE already did',
+  /case 'article-edit':[\s\S]{0,1200}canEditArticle/.test(adminSrc) &&
+    /case 'interview-edit':[\s\S]{0,1200}canEditInterview/.test(adminSrc),
+  'Edit was gated at render and then trusted the id from the DOM. Delete has carried this re-check since it was hardened; Edit had not.'
+);
+report(
+  'refusing a submission and DELETING a published episode are now different acts',
+  /action === 'podcast-delete' && !isOwner\(\)/.test(adminSrc),
+  'a Board Manager may refuse a pending episode -- that is what the approver tier is for -- but podcasts_delete in Storage and podcasts_owner_all both require is_owner()'
+);
+
+console.log('\nSECTION 13 — the podcast submission path actually RUNS\n');
+
+/*
+ * These four are the reason this file has a browser check at all.
+ *
+ * `submitPodcast()` called `safeUrl()` WITHOUT IMPORTING IT, so every writer
+ * submission threw `ReferenceError` -- and the suite was green, because the old
+ * assertion was a regex over the call site. A regex cannot tell whether a name was
+ * ever bound, and demo mode short-circuits before the network, so nothing in the
+ * project ever executed the function.
+ *
+ * The fix is the import; the durable fix is `scripts/podcast-submit-check.mjs`,
+ * which submits the real form in a browser. Mutation-tested: deleting the import
+ * line takes that check from 33/33 to 26/33 with the exact error in the detail.
+ */
+report(
+  'safeUrl is imported where it is called',
+  /import \{ safeUrl \} from '\.\/dom\.js';/.test(podcastsSrc) &&
+    /const cleanAudioUrl = safeUrl\(audioUrl\);/.test(podcastsSrc),
+  'the unbound name took down BOTH writer submission paths, and the previous regex-over-the-call-site assertion could not see it'
+);
+report(
+  'a pasted audio URL is no longer rejected for having no file',
+  /const problem = file \? validateAudioFile\(file\) : '';/.test(podcastsSrc) &&
+    /if \(!file && !cleanAudioUrl\)/.test(podcastsSrc),
+  'validateAudioFile(null) returns "Choose an MP3 from your device first.", so the check above it established file OR url and then this demanded the file. The URL field has been on the form since the feature shipped.'
+);
+report(
+  'the Speaker / host field is wired to author_name, which is the public byline',
+  /byId\('podcast-sub-host'\)\?\.value\.trim\(\) \|\| ''/.test(adminSrc) &&
+    /const who = String\(authorName \|\| ''\)\.trim\(\) \|\| displayName\(\);/.test(podcastsSrc),
+  'the field rendered on the form from the beginning and nothing read it, so the name of a guest was silently discarded -- exactly the case a podcast submission form exists for'
+);
+report(
+  'the cover image is stored AND rendered, on both publication paths',
+  /podcast-card__cover/.test(publicSrc) &&
+    /safeUrl\(episode\.cover_url\)/.test(publicSrc) &&
+    /podcast-up-cover/.test(adminSrc) &&
+    /cover_url: cleanCoverUrl \|\| null/.test(podcastsSrc) &&
+    /\.podcast-card__cover \{[\s\S]{0,200}float: left/.test(stylesSrc),
+  'migration 031 added the column, it was written on submit and never read -- so a Writer who set a cover and an Owner who did not produced visually identical episodes'
+);
+report(
+  'the submission is submitted as pending and the panel says so',
+  /status: 'pending'/.test(podcastsSrc) &&
+    /awaiting Owner\/Board Manager approval/.test(adminSrc) &&
+    /and status = 'pending'[\s\S]{0,120}author_account_id = public\.current_account_id\(\)/.test(
+      read('supabase/migrations/029_podcast_role_gates.sql')
+    ),
+  'the client writes pending and podcasts_staff_submit pins it, so a crafted request cannot self-approve either'
+);
+
+console.log('\nSECTION 14 — indexable URLs, not fragments\n');
+
+/*
+ * Every reader view used to live behind `#about` / `#podcasts`. A fragment is
+ * never sent to the server, so Google fetched `/`, rendered the front page, and
+ * treated every other view as a client-side state of that one URL -- a
+ * publication with six pages had a single indexable address, and a sitemap could
+ * not honestly have listed any of the other five.
+ *
+ * So a sitemap that lists paths which 404 is worse than no sitemap: it gets the
+ * domain flagged in Search Console. Three lists have to agree, and these
+ * assertions are what stop a hand-edited route from shipping a dead link.
+ */
+const sitemap = read('public/sitemap.xml');
+const vercel = JSON.parse(read('vercel.json'));
+report(
+  'every sitemap URL is a real path the app can route',
+  /'\/about': 'about'/.test(appSrc) &&
+    /'\/credits': 'credits'/.test(appSrc) &&
+    /'\/podcasts': 'podcasts'/.test(appSrc) &&
+    /'\/interviews': 'interviews'/.test(appSrc) &&
+    /\[ASSIGNMENTS_PATH\]: 'publication'/.test(appSrc) &&
+    (sitemap.match(/<loc>https:\/\/thewire\.us\.ci\/(about|credits|podcasts|interviews|assignments)<\/loc>/g) ||
+      []).length === 5,
+  'the routes, the PATH_ROUTES map in app.js and the sitemap are one fact in three files'
+);
+report(
+  'and every one of them has a rewrite, so a refresh does not 404',
+  ['/about', '/credits', '/gallery', '/interviews', '/podcasts', '/assignments'].every((p) =>
+    (vercel.rewrites || []).some((r) => r.source === p && r.destination === '/index.html')
+  ),
+  'PATH_ROUTES alone changes what the ROUTER does with a path that already resolved; the rewrite is what makes the path resolve'
+);
+report(
+  'the sitemap contains no fragment',
+  !/#/.test(sitemap.replace(/<!--[\s\S]*?-->/g, '')) && /<urlset[^>]*>/.test(sitemap) && (sitemap.match(/<url>/g) || []).length === 6,
+  'Google drops the fragment before indexing, so `/#about` would be a sixth copy of `/`'
+);
+report(
+  'the crawler-facing SEO tags are in the static HTML, not in a script',
+  /<meta\s+name="google-site-verification"\s+content="WrMBbZb5-s-IS9j7mESfL-h1LW0L1uDKZwUO8lMs2a8"\s*\/>/.test(
+    indexHtml
+  ) &&
+    /<meta name="robots" content="index, follow" \/>/.test(indexHtml) &&
+    /<title>The Pulse \| Official Press &amp; News<\/title>/.test(indexHtml) &&
+    /<meta\s+name="description"[\s\S]{0,200}Stories that matter\. Voices that count\./.test(indexHtml) &&
+    /<link rel="canonical" href="https:\/\/thewire\.us\.ci\/" \/>/.test(indexHtml),
+  'Search Console refuses a token that is not in the served HTML, and a crawler that does not run JavaScript would not find one injected by a script'
+);
+report(
+  'the fragment is still honoured, and still wins, because existing links use it',
+  /const deepLink = window\.location\.hash\.replace\(\/\^#\/, ''\) \|\| pathToView\(window\.location\.pathname\);/.test(
+    appSrc
+  ),
+  'breaking every already-shared link would be a worse outcome than a slightly stale canonical URL'
+);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 

@@ -51,6 +51,16 @@ alter table public.staff_accounts
 --    that resolve to anything. Mirrors ROLE_CAPABILITIES in admin.js.
 --    NOTE: the enum of staff *job titles* (seed.js `reporter`, the
 --    assignments.reporter column) is a different concept and is untouched here.
+-- `publish` and `edit_others` are CORRECTED IN PLACE below, and migration 033
+-- restates the corrected function so that a database where this file has ALREADY
+-- been applied also gets it. Doing both is deliberate: a fresh install is correct
+-- from 006 onward, and an existing one is corrected by 033, and neither depends on
+-- the other being re-run.
+--
+-- What changed: a Writer does not publish (they file, and it waits), and a Board
+-- Manager does not edit other people's content (they move the review status, and
+-- `wire_approver_scope_guard` enforces that at the row level). `ROLE_CAPABILITIES`
+-- in src/views/admin.js carries the same two corrections -- keep all three in step.
 create or replace function public.wire_default_permissions(p_role text)
 returns jsonb
 language sql
@@ -58,12 +68,14 @@ immutable
 as $$
   select case p_role
     when 'Owner' then '{"publish":true,"edit_others":true,"broadcast":true,"media":true,"manage_staff":true,"approve_portraits":true,"edit_credits":true}'::jsonb
-    when 'Board Manager' then '{"publish":true,"edit_others":true,"broadcast":true,"media":true,"manage_staff":false,"approve_portraits":true,"edit_credits":true}'::jsonb
-    when 'Writer' then '{"publish":true,"edit_others":false,"broadcast":false,"media":true,"manage_staff":false,"approve_portraits":false,"edit_credits":false}'::jsonb
+    when 'Board Manager' then '{"publish":true,"edit_others":false,"broadcast":true,"media":true,"manage_staff":false,"approve_portraits":true,"edit_credits":true}'::jsonb
+    when 'Writer' then '{"publish":false,"edit_others":false,"broadcast":false,"media":true,"manage_staff":false,"approve_portraits":false,"edit_credits":false}'::jsonb
     -- 'Editor' is the old name for 'Writer'. Kept as an explicit branch so an
     -- account still carrying the old spelling resolves to the right capability
     -- set even if this function is called before step 1 has normalised the row.
-    when 'Editor' then '{"publish":true,"edit_others":false,"broadcast":false,"media":true,"manage_staff":false,"approve_portraits":false,"edit_credits":false}'::jsonb
+    -- It is an ALIAS, not a tier: `scripts/role-consistency.mjs` keeps 'Editor' in
+    -- FORBIDDEN_STORED so the spelling can never come back as a stored role.
+    when 'Editor' then '{"publish":false,"edit_others":false,"broadcast":false,"media":true,"manage_staff":false,"approve_portraits":false,"edit_credits":false}'::jsonb
     else '{"publish":false,"edit_others":false,"broadcast":false,"media":false,"manage_staff":false,"approve_portraits":false,"edit_credits":false}'::jsonb
   end;
 $$;

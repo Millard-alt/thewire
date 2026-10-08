@@ -239,6 +239,28 @@ function renderOverview() {
     ? metrics
     : metrics.filter((m) => m.label !== 'Active subscribers');
 
+  /*
+    THE REVIEW QUEUE IS THE APPROVER TIER, NOT A READ-ONLY LIST.
+    A Writer gets neither the section nor a placeholder, for the same reason the
+    audit trail is Owner-only: an empty "Review queue" heading reads as "nothing
+    is waiting", which is a FALSE statement about other people's work. It rendered
+    for everyone here, complete with a LIVE `article-publish` button, so a Writer
+    was handed the one control the brief reserves for the Owner and a Board
+    Manager.
+
+    It is gated on `canApprove()` rather than `isOwner()` because migration 030
+    made a Board Manager an approver and this list is where an approver works.
+    The rendering of the queue is a convenience; `articles_publish_guard` and
+    `public.can_approve()` in migration 033 are the enforcement, and this button
+    was never the thing standing between a Writer and the front page.
+
+    Note the asymmetry with the "Awaiting review" TILE above, which a Writer keeps:
+    the tile counts their own filings and shows no names, and the list names other
+    people and offers to publish them. Keeping one and gating the other is
+    deliberate, not an oversight.
+  */
+  const canReview = store.canApprove();
+
   return `
     <div class="space-y-6">
       ${panelHeader('Newsroom overview', `Backend: ${backend.label}`,
@@ -275,8 +297,20 @@ function renderOverview() {
         </div>
       </div>
 
-      <div class="grid gap-6 lg:grid-cols-2">
-        <section>
+      ${
+        /*
+          THE WHOLE TWO-COLUMN GRID IS OMITTED FOR A WRITER, not just its two
+          sections. Both are gated above -- the queue on `canReview`, the audit
+          trail on `isOwnerView` -- and a Writer fails both, which left an empty
+          `grid gap-6 lg:grid-cols-2` element in the document contributing
+          nothing but a phantom row of space. Gating each child was necessary and
+          is not sufficient; the container is gated too.
+        */
+        canReview || isOwnerView
+          ? `<div class="grid gap-6 lg:grid-cols-2">
+        ${
+          canReview
+            ? `<section>
           <h3 class="font-headline text-lg font-black tracking-wide uppercase">
             Review queue
           </h3>
@@ -302,7 +336,9 @@ function renderOverview() {
                 : emptyState('Nothing is waiting for review.', 'fa-circle-check')
             }
           </div>
-        </section>
+        </section>`
+            : ''
+        }
 
         ${
           /*
@@ -337,7 +373,9 @@ function renderOverview() {
           </section>`
               : ''
         }
-    </div>
+    </div>`
+          : ''
+      }
     `;
   }
 
@@ -390,6 +428,27 @@ function layoutIsDirty() {
 function contentLayoutPanel() {
   const published = store.listPublishedArticles();
   if (!published.length) return '';
+
+  /*
+    THE FRONT PAGE ORDER IS THE OWNER'S, AND THE PANEL NOW SAYS SO.
+    ------------------------------------------------------------------
+    This panel rendered for every Writer: live drag handles, live arrows and a
+    live Save button. `wire_set_article_layout` is Owner-only on the server, so
+    every one of those controls was a dead end that cost a Writer a click to
+    discover they did not have the permission -- and before migration 033 the
+    `articles_approver_update` policy plus a table-wide UPDATE grant meant a
+    Board Manager could set `display_order` directly, bypassing the RPC entirely.
+
+    Return NOTHING rather than a disabled panel. The Content tab is `minRole:
+    'Writer'`, so this is the tab a Writer spends their time in; an inert
+    reorder list in it is a control that invites a mistake, and "the front page
+    order" is not a thing a Writer is being asked about.
+
+    The enforcement is `wire_set_article_layout`'s `is_owner()` check plus
+    `wire_approver_scope_guard` in migration 033. This is the same shape as the
+    Audit trail: hiding it keeps the panel honest, the database keeps it true.
+  */
+  if (!isOwner()) return '';
 
   const byId = new Map(published.map((article) => [article.id, article]));
   const order = currentLayoutOrder().filter((id) => byId.has(id));
@@ -2638,7 +2697,7 @@ const ROLE_CAPABILITIES = {
   ],
   'Board Manager': [
     ['Publish anything', true],
-    ['Edit other people’s drafts', true],
+    ['Edit other people’s drafts', false],
     ['Send broadcasts', true],
     ['Upload media', true],
     ['Approve & suspend accounts', false],
@@ -2646,7 +2705,7 @@ const ROLE_CAPABILITIES = {
     ['Curate the credits board', true]
   ],
   Writer: [
-    ['Publish anything', true],
+    ['Publish anything', false],
     ['Edit other people’s drafts', false],
     ['Send broadcasts', false],
     ['Upload media', true],
@@ -4382,10 +4441,31 @@ function podcastUploadDialog() {
           </div>
 
           <div>
+            <label class="field-label" for="podcast-up-host">Speaker / host name</label>
+            <input id="podcast-up-host" class="field" type="text" maxlength="80"
+              placeholder="Defaults to your name" />
+            <p class="mt-1 text-[0.6875rem] ink-muted">
+              Whoever the episode is about. This is the byline readers see, so use a
+              guest's name when they are not you.
+            </p>
+          </div>
+
+          <div>
             <label class="field-label" for="podcast-up-file">MP3 file</label>
             <input id="podcast-up-file" class="field" type="file" accept=".mp3,audio/mpeg" />
             <p class="mt-1 text-[0.6875rem] ink-muted" data-podcast-up-note>
               MP3 only, up to 25 MB. The length is worked out from the file.
+            </p>
+          </div>
+
+          <div>
+            <label class="field-label" for="podcast-up-cover">Cover image URL</label>
+            <input id="podcast-up-cover" class="field" type="url"
+              placeholder="https://example.com/cover.jpg" />
+            <p class="mt-1 text-[0.6875rem] ink-muted">
+              Artwork for the episode card. The same field the Writer's submission
+              form offers -- without it, an episode published here and the same
+              episode filed by a Writer looked like two different episodes.
             </p>
           </div>
 
@@ -4458,6 +4538,10 @@ async function submitPodcastFromWriterForm(form) {
     description: byId('podcast-sub-description')?.value.trim() || '',
     file,
     audioUrl,
+    // `podcast-sub-host` was rendered by this form from the beginning and never
+    // read. `podcasts.author_name` IS the public byline, so this is where a
+    // guest's name goes -- a podcast about somebody the writer did not record.
+    authorName: byId('podcast-sub-host')?.value.trim() || '',
     coverUrl: byId('podcast-sub-cover')?.value.trim() || ''
   });
 
@@ -4491,7 +4575,14 @@ async function savePodcastUploadFromForm() {
   const busy = showToast('Uploading the episode…', { type: 'info', duration: 0 });
   try {
     const durationSeconds = await readAudioDuration(file);
-    const result = await publishPodcast({ title, description, file, durationSeconds });
+    const result = await publishPodcast({
+      title,
+      description,
+      file,
+      durationSeconds,
+      authorName: byId('podcast-up-host')?.value.trim() || '',
+      coverUrl: byId('podcast-up-cover')?.value.trim() || ''
+    });
 
     if (!result.ok) {
       showToast(result.message, { type: 'error', duration: 12000 });
@@ -6902,13 +6993,30 @@ function handleClick(event) {
     // Local reordering. Nothing is written until Save is pressed, so a mis-drag
     // costs one tap of the arrow buttons rather than a round trip and a repaint.
     case 'layout-up':
+      // The arrows reorder the DRAFT in memory; `layout-save` is what writes it.
+      // Both are Owner-only, and both are gated because a Writer reaching this
+      // switch has already got past the panel that no longer renders for them.
+      if (!isOwner()) break;
       nudgeLayout(id, -1);
       break;
     case 'layout-down':
+      if (!isOwner()) break;
       nudgeLayout(id, 1);
       break;
 
     case 'layout-save': {
+      /*
+        ONLY THE OWNER SETS THE FRONT PAGE ORDER.
+        `contentLayoutPanel()` no longer renders for a non-Owner, so this is the
+        second gate. It is kept because the other one lives in a template and
+        templates are re-rendered; a gate that only exists at render time is a gate
+        that disappears the moment somebody adds the panel somewhere else.
+        `wire_set_article_layout` raises on anything but `is_owner()` regardless.
+      */
+      if (!isOwner()) {
+        showToast('Only the Owner can set the front page order.', { type: 'error' });
+        break;
+      }
       const order = currentLayoutOrder();
       guard(async () => {
         const button = trigger;
@@ -6936,9 +7044,30 @@ function handleClick(event) {
     case 'article-new':
       openArticleEditor(null);
       break;
-    case 'article-edit':
+    case 'article-edit': {
+      /*
+        AN OWNERSHIP RE-CHECK, WHICH `article-delete` ALREADY HAD
+        -------------------------------------------------------
+        Delete has always re-checked `canDeleteArticle()` in the handler and says
+        so in a comment. Edit did not: the button was gated when it was rendered
+        and then `openArticleEditor(id)` was called on nothing more than the id
+        from the DOM. Those are not the same thing, because `data-id` is an
+        ATTRIBUTE, and the whole point of the exercise is that an attacker with
+        devtools can change an attribute.
+
+        So the handler trusts the button only as far as the button is a
+        convenience, and the authority is the RLS policy in supabase/007 plus
+        `articles_publish_guard`. The re-check here exists to turn a permission
+        error from Postgres into a sentence a Writer can act on.
+      */
+      const article = store.listArticles().find((item) => item.id === id);
+      if (!store.canEditArticle(article)) {
+        showToast('You can only edit your own articles.', { type: 'error' });
+        break;
+      }
       openArticleEditor(id);
       break;
+    }
     case 'article-extra-remove': {
       // Indices come from the rendered thumbnails, which are drawn straight
       // from articleExtras, so they cannot drift out of step with it.
@@ -6950,12 +7079,33 @@ function handleClick(event) {
       break;
     }
     case 'article-publish':
+      /*
+        APPROVING IS THE APPROVER TIER, RE-CHECKED HERE
+        ------------------------------------------------
+        The buttons are already gated on `canApprove()` where they are rendered,
+        and this is the second gate. `data-action="article-publish"` also appears
+        in the Overview review queue, which is gated the same way -- two renderers
+        to keep in step with one handler is two chances to forget.
+
+        Without this, a Writer who edited `data-id` by hand got a raw Postgres
+        error, or -- before `articles_publish_guard` existed in migration 033 --
+        a story on the front page. `store.canApprove()` mirrors
+        `public.can_approve()`; the guard trigger is what makes it true.
+      */
+      if (!store.canApprove()) {
+        showToast('Only the Owner or a Board Manager can approve.', { type: 'error' });
+        break;
+      }
       guard(async () => {
         await store.publishArticle(id);
         showToast('Article approved and published.', { type: 'success' });
       });
       break;
     case 'article-reject':
+      if (!store.canApprove()) {
+        showToast('Only the Owner or a Board Manager can unpublish.', { type: 'error' });
+        break;
+      }
       guard(async () => {
         await store.rejectArticle(id);
         showToast('Article moved out of publication.');
@@ -6992,16 +7142,38 @@ function handleClick(event) {
     case 'podcast-new':
       openPodcastEditor();
       break;
-    case 'interview-edit':
+    case 'interview-edit': {
+      // Same reasoning as `article-edit` above, and for the same reason the
+      // buttons are already gated at render: a gate in a template and a gate in a
+      // handler are different code, and only the second one runs when `data-id`
+      // has been changed by hand.
+      const interview = store.listInterviews().find((item) => item.id === id);
+      if (!store.canEditInterview(interview)) {
+        showToast('You can only edit interviews you filed.', { type: 'error' });
+        break;
+      }
       openInterviewEditor(id);
       break;
+    }
     case 'interview-publish':
+      // The approver tier, re-checked for the same reason as `article-publish`
+      // above. Migration 033 widened `interviews_publish_guard` to
+      // `can_approve()`, so this is now the only remaining thing that used to stop
+      // a Board Manager here.
+      if (!store.canApprove()) {
+        showToast('Only the Owner or a Board Manager can approve.', { type: 'error' });
+        break;
+      }
       guard(async () => {
         await store.publishInterview(id);
         showToast('Interview approved and published.', { type: 'success' });
       });
       break;
     case 'interview-unpublish':
+      if (!store.canApprove()) {
+        showToast('Only the Owner or a Board Manager can unpublish.', { type: 'error' });
+        break;
+      }
       guard(async () => {
         await store.unpublishInterview(id);
         showToast('Interview pulled back to the review queue.');
@@ -7192,6 +7364,10 @@ function handleClick(event) {
       break;
 
     case 'podcast-approve':
+      if (!store.canApprove()) {
+        showToast('Only the Owner or a Board Manager can approve.', { type: 'error' });
+        break;
+      }
       guard(async () => {
         const result = await decidePodcast(id, 'approved');
         showToast(result.message, { type: result.ok ? 'success' : 'error' });
@@ -7202,13 +7378,38 @@ function handleClick(event) {
       break;
 
     case 'podcast-reject':
-    case 'podcast-delete':
+    case 'podcast-delete': {
+      /*
+        APPROVE IS THE TIER; DELETE IS THE OWNER SEAT.
+
+        Refusing a PENDING episode and deleting a PUBLISHED one are the same act on
+        different rows -- both delete the row and purge the MP3 -- and migration 030
+        made a Board Manager an approver, so refusing one is theirs to do. Deleting
+        something readers can currently hear is not: `podcasts_delete` in Storage and
+        `podcasts_owner_all` both require `is_owner()`, and migration 033 leaves them
+        alone. So the two cases are separated HERE, where a Board Manager gets the
+        refusal and not the deletion.
+
+        Both are gated on `canApprove()` first because the whole queue panel is only
+        rendered for an approver, and a gate that exists only at render time is a
+        gate that disappears the moment the panel is reused somewhere else.
+      */
+      if (!store.canApprove()) {
+        showToast('Only the Owner or a Board Manager can decide a submission.', {
+          type: 'error'
+        });
+        break;
+      }
+      if (action === 'podcast-delete' && !isOwner()) {
+        showToast('Only the Owner can delete a published episode.', { type: 'error' });
+        break;
+      }
+
       // Named in the brief because it is irreversible and it deletes storage:
       // there is no second confirmation in the panel to appeal to, so the
       // browser confirm is the last thing between a mis-click and a deleted
-      // recording. Both actions are the SAME act on different rows -- refuse a
-      // pending one, delete a published one -- and share one function so the
-      // object purge can never be forgotten on one path.
+      // recording. Both actions share one guard so the object purge can never be
+      // forgotten on one path.
       if (
         !window.confirm(
           action === 'podcast-reject'
@@ -7229,6 +7430,7 @@ function handleClick(event) {
         paintActiveTab();
       });
       break;
+    }
 
     /* --- credits --- */
     // There is no scope-switcher case any more.

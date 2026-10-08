@@ -6,6 +6,32 @@
   "framework": "vite",
   "cleanUrls": true,
   "trailingSlash": false,
+  "rewrites": [
+    {
+      "source": "/about",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/credits",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/gallery",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/interviews",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/podcasts",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/assignments",
+      "destination": "/index.html"
+    }
+  ],
   "build": {
     "env": {
       "NODE_OPTIONS": "--max-old-space-size=4096"

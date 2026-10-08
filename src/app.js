@@ -112,13 +112,83 @@ const READER_VIEWS = [
  * switcher uses so a new view cannot ship without one.
  */
 const VIEW_TITLES = {
-  publication: 'The Pulse — MJLA Press Club',
-  credits: 'Credits — The Pulse',
-  gallery: 'Photo Gallery — The Pulse',
-  interviews: 'Interviews — The Pulse',
-  about: 'About Us — The Pulse',
-  podcasts: 'Podcasts — The Pulse'
+  publication: 'The Pulse | Official Press & News',
+  credits: 'Credits | The Pulse',
+  gallery: 'Photo Gallery | The Pulse',
+  interviews: 'Interviews | The Pulse',
+  about: 'About Us | The Pulse',
+  podcasts: 'Podcasts | The Pulse'
 };
+
+/**
+ * CLEAN PATHS, and the one place they are spelled out.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * Every reader view used to live behind a fragment: `/#about`, `/#podcasts`. A
+ * fragment is never sent to the server, so Google fetched `/`, rendered the front
+ * page, and treated every other view as a client-side state of that same URL. A
+ * publication with six pages had exactly one indexable address, and a sitemap
+ * could not honestly have listed any of the other five.
+ *
+ * So each view now also answers to a real path. Two lists have to agree -- this
+ * one and `vercel.json`'s rewrites, which is what makes the path actually resolve
+ * rather than 404 on a refresh -- and `tests/features.mjs` asserts the two match,
+ * because a sitemap that lists URLs which 404 is worse than no sitemap at all: it
+ * gets the domain flagged in Search Console.
+ *
+ * `/assignments` is here because the Assignment Board is a destination people are
+ * told to link to, but it is a SECTION of the front page rather than a view that
+ * owns the screen. It routes to `publication` and scrolls to the board, which is
+ * why it is resolved separately below rather than added to `READER_VIEWS`.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+const ASSIGNMENTS_PATH = '/assignments';
+
+const PATH_ROUTES = {
+  '/': 'publication',
+  '/index.html': 'publication',
+  '/about': 'about',
+  '/credits': 'credits',
+  '/gallery': 'gallery',
+  '/interviews': 'interviews',
+  '/podcasts': 'podcasts',
+  // Resolves to the publication; the caller scrolls to the board afterwards.
+  [ASSIGNMENTS_PATH]: 'publication'
+};
+
+/**
+ * Fold a pathname onto a view id, or '' when it is not one of ours.
+ *
+ * Case-insensitive and tolerant of a trailing slash, because a link pasted from
+ * somewhere else may carry either and a reader who reaches the front page instead
+ * of the page they asked for has no way to tell that is what happened.
+ *
+ * @param {string} pathname
+ * @returns {string} a `READER_VIEWS` member, or ''
+ */
+function pathToView(pathname) {
+  const clean = String(pathname || '').trim().toLowerCase().replace(/\/+$/, '');
+  const key = clean === '' ? '/' : clean;
+  return PATH_ROUTES[key] || '';
+}
+
+/**
+ * The address a view should be written to as the reader moves around.
+ *
+ * A view with a clean path is written as the clean path, NOT as a hash, so the
+ * URL in the address bar is the one Google indexed and the one a reader can copy
+ * into a message. `publication` goes back to `/` so the front page never
+ * accumulates `/publication` URLs that nothing links to.
+ *
+ * @param {string} view
+ * @returns {string}
+ */
+function viewToPath(view) {
+  const match = Object.keys(PATH_ROUTES).find((path) => PATH_ROUTES[path] === view);
+  return match || '/';
+}
 
 /**
  * Show exactly one reader view. The Owner workspace is untouched by this, so a
@@ -279,7 +349,9 @@ function initReaderNavigation() {
     }
   });
 
-  // Land on the right page when a reader arrives with a reader-page hash.
+  // Land on the right page when a reader arrives with a reader-page hash, or
+  // with a CLEAN PATH.
+  //
   // These are pages, not in-page anchors, so they need the full view swap.
   //
   // Driven off READER_VIEWS rather than a hand-written `if` per page. The list
@@ -287,8 +359,36 @@ function initReaderNavigation() {
   // drifts: #credits and #gallery were handled while #interviews was not, so a
   // shared link to an interview silently landed on the front page. One list, and
   // a deep link works for every page that exists.
-  const deepLink = window.location.hash.replace(/^#/, '');
+  //
+  // WHY THE PATH IS CHECKED AT ALL
+  // ------------------------------
+  // A fragment is not an address. Google indexes `example.com/#about` as
+  // `example.com/` and treats the fragment as a client-side state that was never
+  // part of the page it fetched, so a hash-routed publication has exactly ONE
+  // indexable URL no matter how many pages it has. That is why public/sitemap.xml
+  // could not honestly have listed anything but `/`.
+  //
+  // The hash is still honoured, and still wins, because it is what every existing
+  // shared link uses and breaking those is a worse outcome than a slightly stale
+  // canonical URL. The path is the fallback for an arrival that carries no hash.
+  const deepLink = window.location.hash.replace(/^#/, '') || pathToView(window.location.pathname);
   if (READER_VIEWS.includes(deepLink)) showReaderView(deepLink);
+
+  // `/assignments` is not a page of its own -- the board is a SECTION of the
+  // front page -- so the route resolves to the publication and then scrolls to
+  // the board. Declared here rather than by adding it to `READER_VIEWS`, which is
+  // what keeps that list meaning "a view that owns the whole screen".
+  if (
+    !window.location.hash &&
+    String(window.location.pathname || '').replace(/\/+$/, '').toLowerCase() === ASSIGNMENTS_PATH
+  ) {
+    // Deferred by one frame: the publication paints asynchronously, so the
+    // section does not exist yet and an immediate scrollIntoView finds nothing
+    // and the reader lands on the front page with no idea why.
+    const scrollToBoard = () => byId('assignments')?.scrollIntoView({ block: 'start' });
+    if (byId('assignments')) scrollToBoard();
+    else requestAnimationFrame(() => requestAnimationFrame(scrollToBoard));
+  }
 
   // Public views ask the shell to change page without knowing how the router
   // works (src/views/public.js owns the gallery door, not the routing).
@@ -302,8 +402,12 @@ function initReaderNavigation() {
     byId('main-content')?.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
-    if (window.location.hash !== `#${target}`) {
-      history.replaceState(null, '', `#${target}`);
+    // The CLEAN PATH, not `#${target}`. See `viewToPath()`: the address in the
+    // bar is the one Google indexed and the one a reader copies into a message.
+    // A hash would work in the browser and be invisible to a crawler.
+    const path = viewToPath(target);
+    if (window.location.pathname !== path) {
+      history.replaceState(null, '', path);
     }
   });
 }

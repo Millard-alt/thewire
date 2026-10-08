@@ -22,6 +22,18 @@
 import { config } from './config.js';
 import { getSupabase } from './supabase.js';
 import { getSession, isOwner } from './auth.js';
+// `safeUrl` VALIDATES the two URLs a submission carries — the audio link and the
+// cover image — and both land in an inline attribute or an <audio> src. Without
+// this import `submitPodcast()` threw `ReferenceError: safeUrl is not defined` on
+// the FIRST line that touched either field, so every writer podcast submission
+// failed at runtime and both submit paths were dead.
+//
+// It passed the test suite because `tests/features.mjs` asserts the CALL SITE
+// (`/const cleanAudioUrl = safeUrl\(audioUrl\)/`) with a source regex, and a
+// regex cannot tell whether the name was ever bound. A static test that greps for
+// a call is not evidence the call can run; the fix for that is a runtime assertion,
+// added below.
+import { safeUrl } from './dom.js';
 
 /** The storage bucket. Created by migration 024. */
 const BUCKET = 'podcasts';
@@ -403,10 +415,11 @@ export function listPendingPodcasts() {
  * so a crafted request gains nothing by lying here.
  *
  * @param {{title: string, description?: string, file: File,
- *          durationSeconds?: number}} input
+ *          authorName?: string, durationSeconds?: number,
+ *          coverUrl?: string, audioUrl?: string}} input
  * @returns {Promise<{ok: boolean, message?: string, podcast?: object}>}
  */
-export async function submitPodcast({ title, description = '', file, durationSeconds = null, coverUrl = null, audioUrl = null } = {}) {
+export async function submitPodcast({ title, description = '', file, authorName = '', durationSeconds = null, coverUrl = null, audioUrl = null } = {}) {
     const cleanTitle = String(title || '').trim();
     if (!cleanTitle) return { ok: false, message: 'Give the episode a title.' };
 
@@ -438,14 +451,46 @@ export async function submitPodcast({ title, description = '', file, durationSec
       return { ok: false, message: 'Choose an MP3 or paste a link to the audio.' };
     }
 
-  const problem = validateAudioFile(file);
+  /*
+    ONLY VALIDATE A FILE THAT EXISTS.
+
+    This line used to be unconditional:
+        const problem = validateAudioFile(file);
+
+    and `validateAudioFile(null)` returns 'Choose an MP3 from your device first.'
+    -- so a submission that PASTED AN AUDIO URL was rejected by the validator for
+    the one thing it did not have: a file. The check immediately above had already
+    established that file OR URL was supplied; this then demanded the file. The
+    form has offered the URL field since the feature shipped, so half of the
+    documented submission path could never succeed, and it failed with a message
+    about the field the writer had deliberately left blank.
+
+    Guarding on `file` is the whole fix, and it is the guard the function above
+    implies should be here.
+  */
+  const problem = file ? validateAudioFile(file) : '';
   if (problem) return { ok: false, message: problem };
 
   const seconds = Number.isFinite(Number(durationSeconds))
     ? Math.max(0, Math.round(Number(durationSeconds)))
     : null;
 
-  const who = displayName();
+  /*
+    THE SPEAKER / HOST NAME IS `author_name`, and this was a DEAD FIELD until now.
+
+    The panel has rendered "Speaker / host name" since the submission form was
+    written, and the submit handler never read it. `podcasts` has no separate host
+    column -- `author_name` IS the byline the public card renders -- so the field
+    was always going to be that column, and nobody connected the two.
+
+    A podcast guest is frequently not the person who recorded the file, which is
+    exactly the case this feature exists for: "Mercy Kamande on the athletics
+    funding gap", filed by a writer who is not Mercy. Typing the guest's name and
+    having it silently ignored is worse than not offering the field at all.
+
+    Falls back to the signed-in account's display name, exactly as before.
+  */
+  const who = String(authorName || '').trim() || displayName();
 
   if (config.demoMode) {
     // Declared here, not shared with the live path below: the demo branch
@@ -656,6 +701,7 @@ export function canDecidePodcasts() {
  * the one path a writer can reach cannot be widened by adding a parameter to it.
  *
  * @param {{title: string, description?: string, file?: File, audioUrl?: string,
+ *          authorName?: string, coverUrl?: string,
  *          durationSeconds?: number}} input
  */
 export async function publishPodcast({
@@ -663,6 +709,8 @@ export async function publishPodcast({
   description = '',
   file = null,
   audioUrl = '',
+  authorName = '',
+  coverUrl = null,
   durationSeconds = null
 } = {}) {
   const cleanTitle = String(title || '').trim();
@@ -676,7 +724,16 @@ export async function publishPodcast({
     };
   }
 
-  const who = displayName();
+  // The Owner's own byline, overridable for a guest they are interviewing, and
+  // falling back to the account exactly as the writer path does.
+  const who = String(authorName || '').trim() || displayName();
+
+  // `safeUrl` on the cover, same gate as the audio link and for the same reason:
+  // it is rendered into a `src` on the public card.
+  const cleanCoverUrl = safeUrl(coverUrl);
+  if (coverUrl && !cleanCoverUrl) {
+    return { ok: false, message: 'That cover image link is not a usable http(s) URL.' };
+  }
 
   // A pasted URL is accepted as well as an upload, matching every other media
   // field in this panel. It is validated with safeUrl by the caller-facing form;
@@ -698,6 +755,10 @@ export async function publishPodcast({
       status: 'approved',
       audio_url: file ? URL.createObjectURL(file) : String(audioUrl).trim(),
       storage_path: path,
+      // Same shape as the live insert below: the demo store must not be able to
+      // hold an episode the database could not, or a demo Owner would see
+      // artwork that vanishes the moment they sign in for real.
+      cover_url: cleanCoverUrl || null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
@@ -756,7 +817,12 @@ export async function publishPodcast({
       // published episodes be attributed and later edited by the same code path
       // that edits an approved row.
       author_account_id: accountId(),
-      author_name: who
+      author_name: who,
+      // The Owner's publish-now path had no artwork field at all, so a podcast
+      // published this way could never carry a cover while a submitted one could:
+      // the same episode published by two different roles looked like two
+      // different episodes.
+      cover_url: cleanCoverUrl || null
     })
     .select()
     .single();

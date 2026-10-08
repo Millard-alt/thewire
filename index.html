@@ -4,11 +4,47 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#F7F4EC" />
+
+    <!--
+      SEO. The verification tag is the only reason this project is listed in
+      Google Search Console, and Search Console REJECTS a site whose token is not
+      present in the served HTML -- so this must stay in index.html and must not
+      be moved into a script, where a crawler that does not execute JavaScript
+      would never see it. `npm test` asserts all four tags below are still here.
+    -->
+    <meta
+      name="google-site-verification"
+      content="WrMBbZb5-s-IS9j7mESfL-h1LW0L1uDKZwUO8lMs2a8"
+    />
+
+    <!--
+      `index, follow` is the DEFAULT, so saying it changes nothing today. It is
+      here deliberately: this is a publication that wants to be indexed, the
+      value is stated rather than inherited, and a future "block indexing while
+      the newsroom panel is in review" decision then has to REPLACE a visible tag
+      instead of removing an invisible default nobody was watching for.
+    -->
+    <meta name="robots" content="index, follow" />
+
+    <!--
+      The canonical URL. Every reader view has a real path now (see the PATH_ROUTES
+      map in src/app.js and the rewrites in vercel.json), but the app also still
+      honours a `#about`-style fragment, so both `/about` and `/#about` reach the
+      same content. Without this Google indexes two URLs for one page and splits
+      the ranking between them.
+
+      Set to the site root rather than left off: one canonical for the whole
+      publication is honest here because every view is one HTML document, and
+      putting a canonical on each path would need one tag per view in a single
+      static file, which the client-side router cannot rewrite for a crawler.
+    -->
+    <link rel="canonical" href="https://thewire.us.ci/" />
+
     <meta
       name="description"
-      content="The Pulse — MJLA Press Club. Independent, verified dispatches and the full newsroom panel for the writing desk."
+      content="Stories that matter. Voices that count. Read the latest news, interviews, podcasts, and articles from The Pulse."
     />
-    <title>The Pulse — MJLA Press Club</title>
+    <title>The Pulse | Official Press &amp; News</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
