@@ -138,7 +138,7 @@ await stage('schemas, roles, tables', `
   create table public.broadcasts (id uuid primary key default gen_random_uuid(), title text, body text);
   create table public.assignments (id uuid primary key default gen_random_uuid(), title text);
   create table public.articles (id uuid primary key default gen_random_uuid(), title text, status text);
-  create table public.media_assets (id uuid primary key default gen_random_uuid(), url text);
+  create table public.media_assets (id uuid primary key default gen_random_uuid(), url text, caption text, created_at timestamptz not null default now());
   create table public.top_performers (id uuid primary key default gen_random_uuid(), name text);
 
   create table public.audit_logs (
@@ -302,13 +302,24 @@ await stage('table grants + row level security', `
   alter table public.articles       enable row level security;
 `);
 
+// Two photos that already exist BEFORE 037 runs.
+//
+// Inserted HERE, not in the media section: a column default is applied to rows
+// already in the table, which is precisely the trap 037's backfill exists to
+// avoid. A row inserted after 037 correctly becomes 'pending'.
+await db.exec(`
+  insert into public.media_assets (url, caption) values ('https://x.test/a.jpg','old one');
+  insert into public.media_assets (url, caption) values ('https://x.test/b.jpg','old two');
+`);
+
 // ===========================================================================
 console.log('\n=== APPLYING THE MIGRATIONS FOR REAL ===');
 
 for (const f of [
   'supabase/migrations/034_close_wire_media_storage_policies.sql',
   'supabase/migrations/035_staff_can_manage_and_server_side_audit.sql',
-  'supabase/migrations/036_edition_line_drop_invented_volume_number.sql'
+  'supabase/migrations/036_edition_line_drop_invented_volume_number.sql',
+  'supabase/migrations/037_media_requires_approval.sql'
 ]) {
   const name = f.split('/').pop();
   try {
@@ -558,6 +569,100 @@ console.log('\n-- how the new policies render --');
        and policyname like 'wire media%'`)).rows;
   if (rows.length === 0) ok('the dead space-named policies are gone');
   else bad('still present: ' + rows.map((r) => r.policyname).join(', '));
+}
+
+// --- 037: media must not be postable by a Writer without approval -----------
+console.log('\n-- media approval (037) --');
+
+{
+  const rows = (await db.query(`select caption, status from public.media_assets order by caption`)).rows;
+  const allApproved = rows.length === 2 && rows.every((r) => r.status === 'approved');
+  if (allApproved) ok('the 2 pre-existing photos are backfilled to approved -- the gallery is not blanked');
+  else bad('pre-existing photos were not all approved: ' + JSON.stringify(rows));
+}
+
+{
+  // Readers must not see a pending row.
+  await db.exec(`insert into public.media_assets (url, caption, status) values ('https://x.test/p.jpg','pending one','pending')`);
+  const r = await asRole('anon', null, () => db.query('select caption from public.media_assets'));
+  const visible = (r.value?.rows ?? []).map((x) => x.caption);
+  if (!visible.includes('pending one')) ok('a reader cannot see a PENDING photo');
+  else bad('a reader can see a pending photo: ' + JSON.stringify(visible));
+  if (visible.includes('old one')) ok('a reader still sees the pre-existing approved photo');
+  else bad('the existing gallery went blank');
+}
+
+// A Writer uploading lands as pending and cannot self-approve.
+{
+  const r = await asRole('anon', 'tok-writer',
+    () => db.query(`insert into public.media_assets (url, caption) values ('https://x.test/w.jpg','writer upload') returning status`));
+  if (r.ok && r.value.rows[0]?.status === 'pending') ok("a Writer's upload lands as pending, automatically");
+  else bad("a Writer's upload status is " + JSON.stringify(r.value?.rows?.[0]?.status ?? r.error));
+}
+
+{
+  const r = await asRole('anon', 'tok-writer',
+    () => db.query(`insert into public.media_assets (url, caption, status) values ('https://x.test/hack.jpg','sneaky','approved')`));
+  if (!r.ok) ok('a Writer CANNOT insert a row that is already approved');
+  else bad('a Writer self-approved an upload on insert');
+}
+
+{
+  const r = await asRole('anon', 'tok-writer',
+    () => db.query(`update public.media_assets set status='approved' where caption='writer upload'`));
+  const touched = r.ok && (r.value.rowCount ?? 0) > 0;
+  if (!touched) ok('a Writer CANNOT promote their pending photo to approved');
+  else bad('a Writer promoted a pending photo to approved');
+}
+
+{
+  // A Writer may still fix a caption while the row is pending.
+  const r = await asRole('anon', 'tok-writer',
+    () => db.query(`update public.media_assets set caption='fixed caption' where url='https://x.test/w.jpg' returning caption`));
+  if (r.ok && (r.value.rowCount ?? 0) > 0) ok('a Writer can still edit their PENDING row (fix a caption)');
+  else bad('a Writer cannot edit their own pending row: ' + (r.error || '0 rows'));
+}
+
+{
+  // A Writer must not be able to edit an APPROVED row.
+  const r = await asRole('anon', 'tok-writer',
+    () => db.query(`update public.media_assets set caption='vandalised' where caption='old one'`));
+  const touched = r.ok && (r.value.rowCount ?? 0) > 0;
+  if (!touched) ok('a Writer cannot edit an APPROVED row');
+  else bad('a Writer edited an approved row');
+}
+
+// The approvers.
+{
+  const r = await asRole('anon', 'tok-manager',
+    () => db.query(`update public.media_assets set status='approved' where url='https://x.test/w.jpg' returning status`));
+  if (r.ok && r.value.rows[0]?.status === 'approved') ok('a Board Manager CAN approve a pending photo');
+  else bad('a Board Manager could not approve: ' + (r.error || JSON.stringify(r.value?.rows)));
+}
+
+{
+  const r = await asRole('anon', 'tok-owner',
+    () => db.query(`update public.media_assets set status='approved' where url='https://x.test/p.jpg' returning status`));
+  if (r.ok && r.value.rows[0]?.status === 'approved') ok('the Owner CAN approve a pending photo');
+  else bad('the Owner could not approve: ' + (r.error || JSON.stringify(r.value?.rows)));
+}
+
+{
+  const r = await asRole('anon', null, () => db.query(`select caption from public.media_assets`));
+  const visible = (r.value?.rows ?? []).map((x) => x.caption);
+  // Matched by url, not caption: the row's caption was deliberately edited by an
+  // earlier assertion, so asserting on it here would test the wrong thing.
+  if (visible.some((c) => c === 'fixed caption')) ok('the newly approved photo is now publicly visible');
+  else bad('an approved photo is still not publicly visible: ' + JSON.stringify(visible));
+
+  if (visible.includes('old one')) ok('the pre-existing gallery photos are still publicly visible');
+  else bad('the existing gallery went blank: ' + JSON.stringify(visible));
+}
+
+{
+  const r = await asRole('anon', 'tok-writer', () => db.query(`delete from public.media_assets where caption='old two'`));
+  if (r.ok && (r.value.rowCount ?? 0) === 0) ok('a Writer still cannot DELETE a photo (Owner only)');
+  else bad('a Writer deleted a photo');
 }
 
 // ===========================================================================
