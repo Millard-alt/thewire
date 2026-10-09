@@ -1601,6 +1601,22 @@ function renderResetButton(member) {
 }
 
 
+/**
+ * May this session approve media? Migration 037 gates the approval decision on
+ * `can_approve()`, which is the Owner seat or an ACTIVE Board Manager.
+ *
+ * The client check here exists so a Writer is not shown buttons that the
+ * database will refuse. It is NOT the enforcement -- the insert and update
+ * policies in 037 do that, and they are what stop a Writer self-approving even
+ * if this returned the wrong answer or a caller skipped the UI entirely.
+ *
+ * Reuses the same roleAtLeast import the tab gates use, rather than re-listing
+ * roles, because that is the single ordering the whole panel trusts.
+ */
+function canApproveMedia() {
+  return roleAtLeast(currentRole(), 'Board Manager');
+}
+
 function renderMediaTab() {
   const media = store.listMedia();
   const categories = store.listGalleryCategories();
@@ -1707,6 +1723,25 @@ function renderMediaTab() {
                   ? '<span class="badge badge-amber block w-fit text-[0.625rem]">Published but hidden — file it</span>'
                   : ''
               }
+              ${
+                // 037: media needs sign-off before the public can see it. The
+                // badge is shown to EVERYONE, not just the Writer who uploaded
+                // it -- a photo sitting in "Pending" and nowhere on the site is
+                // exactly the state that looks like a bug to the person waiting.
+                item.status === 'pending'
+                  ? '<span class="badge badge-amber block w-fit text-[0.625rem]" data-media-status="pending"><i class="fa-solid fa-clock" aria-hidden="true"></i> Pending approval</span>'
+                  : ''
+              }
+              ${
+                item.status === 'rejected'
+                  ? '<span class="badge badge-red block w-fit text-[0.625rem]" data-media-status="rejected"><i class="fa-solid fa-xmark" aria-hidden="true"></i> Rejected</span>'
+                  : ''
+              }
+              ${
+                item.inGallery && item.status !== 'approved'
+                  ? '<span class="block text-[0.625rem] ink-muted">Not on the public gallery until it is approved.</span>'
+                  : ''
+              }
               <div class="flex items-center gap-2">
                 <button class="btn ${item.inGallery ? 'btn-accent' : 'btn-ghost'} flex-1"
                   data-action="media-gallery"
@@ -1717,6 +1752,24 @@ function renderMediaTab() {
                   <i class="fa-solid ${item.inGallery ? faEyeSlash() : faImages()}" aria-hidden="true"></i>
                   ${item.inGallery ? 'In gallery' : 'Add to gallery'}
                 </button>
+                ${
+                  // Approve / Reject only for the Owner or a Board Manager, which
+                  // is exactly what can_approve() means. A Writer never sees
+                  // them. Hiding the button is cosmetic on its own -- the insert
+                  // and update policies in migration 037 are what actually stop
+                  // a Writer self-approving.
+                  canApproveMedia()
+                    ? `<button class="btn btn-accent" data-action="media-approve"
+                         data-id="${escapeHtml(item.id)}"
+                         aria-label="Approve image">
+                         <i class="fa-solid fa-check" aria-hidden="true"></i>
+                       </button>
+                       <button class="btn btn-quiet" data-action="media-reject"
+                         data-id="${escapeHtml(item.id)}" aria-label="Reject image">
+                         <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                       </button>`
+                    : ''
+                }
                 <button class="btn btn-quiet" data-action="media-delete"
                   data-id="${escapeHtml(item.id)}" aria-label="Delete image">
                   <i class="fa-solid fa-trash" aria-hidden="true"></i>
@@ -1737,8 +1790,17 @@ function renderMediaTab() {
             0
           )
         } of ${media.length} image${media.length === 1 ? '' : 's'} currently
-        appear on the public Photo Gallery.
+        appear on the public Photo Gallery.${
+          media.some((item) => item.status === 'pending')
+            ? ` ${media.filter((item) => item.status === 'pending').length} awaiting approval.`
+            : ''
+        }
       </p>
+      ${
+        media.some((item) => item.status === 'pending') && !canApproveMedia()
+          ? '<p class="mt-2 text-xs ink-muted"><i class="fa-solid fa-clock" aria-hidden="true"></i> An image has to be approved by the Owner or a Board Manager before the public can see it.</p>'
+          : ''
+      }
     </div>
   `;
 }
@@ -7606,6 +7668,45 @@ case 'gallery-category-delete': {
       break;
     }
     /* --- media --- */
+    case 'media-approve': {
+      if (!canApproveMedia()) {
+        showToast('Only the Owner or a Board Manager can approve media.', {
+          type: 'error'
+        });
+        return;
+      }
+      guard(async () => {
+        const item = await store.approveMedia(id);
+        if (!item) {
+          showToast('That image is no longer on the shelf.', { type: 'error' });
+          return;
+        }
+        showToast(
+          `"${item.caption || 'Image'}" approved. It can now appear on the public Photo Gallery.`,
+          { type: 'success' }
+        );
+      });
+      break;
+    }
+    case 'media-reject': {
+      if (!canApproveMedia()) {
+        showToast('Only the Owner or a Board Manager can reject media.', {
+          type: 'error'
+        });
+        return;
+      }
+      guard(async () => {
+        const item = await store.rejectMedia(id);
+        if (!item) {
+          showToast('That image is no longer on the shelf.', { type: 'error' });
+          return;
+        }
+        showToast(`"${item.caption || 'Image'}" rejected and pulled from the gallery.`, {
+          type: 'info'
+        });
+      });
+      break;
+    }
     case 'media-gallery': {
       // Read off `trigger`, not a destructured local -- `next` is not one of the
       // names pulled out of `trigger.dataset` above.

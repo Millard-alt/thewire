@@ -695,6 +695,11 @@ export async function hydrate() {
         // uploaded image on the public page.
         inGallery: Boolean(row.in_gallery),
         galleryOrder: row.gallery_order ?? null,
+        // 037: media needs approval before it is public. A row that predates the
+        // column reads back undefined, and 037 backfilled every existing row to
+        // 'approved', so undefined means "a database where 037 has not been
+        // applied" -- treat it as approved so the gallery is not blanked there.
+        status: row.status ?? 'approved',
         // Null when the photo is not filed under a category. 017 may not be
         // applied yet, in which case PostgREST omits the key entirely.
         categoryId: row.category_id ?? null
@@ -2068,7 +2073,15 @@ export function listMedia() {
   }));
 }
 
-/** CREATE — add an image URL to the shared media shelf. */
+/** CREATE — add an image URL to the shared media shelf.
+ *
+ *  `status` is deliberately NOT sent. The column defaults to 'pending' in the
+ *  database (migration 037) and the insert policy refuses any value a Writer
+ *  chooses, so letting the server decide is what makes "a Writer cannot
+ *  self-approve" true rather than merely intended. Sending status here would be
+ *  a silent attempt to bypass a policy, and it would fail for Writers while
+ *  succeeding for the Owner, which is a confusing bug rather than a clear one.
+ */
 export async function createMedia(input) {
   const current = getState();
   const item = {
@@ -2079,7 +2092,12 @@ export async function createMedia(input) {
     inGallery: Boolean(input.inGallery),
     galleryOrder: input.galleryOrder ?? null,
     // null = filed under the built-in "Other" group on the gallery page.
-    categoryId: input.categoryId ?? null
+    categoryId: input.categoryId ?? null,
+    // Local copy only; the database owns this value. Demo mode gets the SAME
+    // 'pending' start as production on purpose -- otherwise the Pending badge
+    // and the approve flow would be untestable in demo mode, which is exactly
+    // where the Playwright panel tests run.
+    status: 'pending'
   };
   if (!item.url) throw new Error('A media item needs an image URL.');
 
@@ -2124,6 +2142,7 @@ export async function updateMedia(id, patch) {
     if (patch.caption !== undefined) row.caption = patch.caption;
     if (patch.inGallery !== undefined) row.in_gallery = Boolean(patch.inGallery);
     if (patch.galleryOrder !== undefined) row.gallery_order = patch.galleryOrder;
+    if (patch.status !== undefined) row.status = patch.status;
     if (patch.categoryId !== undefined && (await hasCategoryColumn())) {
       row.category_id = patch.categoryId || null;
     }
@@ -2145,10 +2164,76 @@ export async function updateMedia(id, patch) {
   return item;
 }
 
+/**
+ * Approve or reject a media item. Migration 037.
+ *
+ * The database is the authority here, not this function: `media_staff_write`
+ * and `media_staff_update` both read `can_approve() or status = 'pending'`, so
+ * a Writer calling this gets an RLS error rather than a silent no-op. That is
+ * the point -- the button is hidden for Writers in the panel, but hiding a
+ * button is cosmetic and the policy is what actually enforces it.
+ *
+ * Approving also clears inGallery. A photo that was waiting for sign-off should
+ * not silently appear in the public gallery as a side effect of approval unless
+ * it was already opted in.
+ *
+ * @param {string} id
+ * @param {'approved'|'rejected'} status
+ */
+export async function setMediaStatus(id, status) {
+  const current = getState();
+  const item = current.mediaLibrary.find((entry) => entry.id === id);
+  if (!item) return null;
+
+  if (status !== 'approved' && status !== 'rejected') {
+    throw new Error(`Unknown media status "${status}".`);
+  }
+  if (item.status === status) return item;
+
+  await updateMedia(id, {
+    status,
+    ...(status === 'approved' ? { inGallery: Boolean(item.inGallery) } : { inGallery: false })
+  });
+
+  await addAuditLog(
+    `${status === 'approved' ? 'Approved' : 'Rejected'} media asset "${item.caption || item.id}"`
+  );
+  return item;
+}
+
+/** Shorthand for the Approve button. */
+export async function approveMedia(id) {
+  return setMediaStatus(id, 'approved');
+}
+
+/** Shorthand for the Reject button. Removes it from the gallery as well. */
+export async function rejectMedia(id) {
+  return setMediaStatus(id, 'rejected');
+}
+
+/** Media still waiting on a Board Manager or the Owner. */
+export function listPendingMedia() {
+  return getState().mediaLibrary.filter((entry) => entry.status === 'pending');
+}
+
+/**
+ * Has this media item cleared approval? Migration 037.
+ *
+ * A MISSING status counts as approved, and that is not a loophole. 037 makes the
+ * column NOT NULL, so `status === undefined` can only mean the database has not
+ * had 037 applied -- and in that world there is no approval gate at all, so
+ * treating the gallery as empty would hide every existing photograph for no
+ * benefit. Once 037 is applied the value is always one of the three literals and
+ * this branch never fires.
+ */
+function isMediaApproved(entry) {
+  return entry.status === undefined || entry.status === null || entry.status === 'approved';
+}
+
 /** The photos the Owner has chosen to publish, in their chosen order. */
 export function listGallery() {
   return getState()
-    .mediaLibrary.filter((entry) => entry.inGallery)
+    .mediaLibrary.filter((entry) => entry.inGallery && isMediaApproved(entry))
     .sort((a, b) => (a.galleryOrder ?? 9999) - (b.galleryOrder ?? 9999));
 }
 
