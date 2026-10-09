@@ -249,18 +249,37 @@ export async function checkPodcastStorage() {
       .from(BUCKET)
       .upload(probePath, new Blob([new Uint8Array(1)]), {
         contentType: 'application/octet-stream',
-        upsert: true
+        // NOT upsert.
+        //
+        // `upsert: true` makes Storage send `x-upsert: true` and perform an
+        // upsert, which requires UPDATE authority as well as INSERT. The
+        // podcasts bucket has no UPDATE policy -- 025 deliberately defines only
+        // podcasts_read (select), podcasts_upload (insert) and podcasts_delete
+        // (delete) -- so the probe was refused with a 400 and the panel reported
+        // "the upload policy is missing", sending everyone to re-run a migration
+        // that was already correctly applied.
+        //
+        // The probe is a one-byte object that is deleted a few lines below.
+        // There is nothing to upsert over, and the real episode upload already
+        // uses upsert: false. The portraits probe can use upsert: true because
+        // 034 gives wire-media an UPDATE policy; this bucket deliberately has
+        // none.
+        upsert: false
       });
 
     if (writeError) {
+      // The old wording here pointed at migration 025, which was the wrong
+      // advice: the cause was this probe's own upsert flag, and re-running a
+      // correctly applied migration cannot fix it. Name what is actually
+      // actionable instead.
       return {
         ok: false,
         message:
           describeStorageError(writeError, 'the podcast bucket') +
-          ' The bucket exists, so the upload policy is missing or this account is ' +
-          'not an active staffer: run ' +
-          'supabase/migrations/025_podcasts_storage_repair.sql, then check the ' +
-          'Staff roster has an Active row for you.'
+          ' The bucket is there and readable, so this is a write-permission ' +
+          'problem for this account: it needs an active row in staff_accounts, ' +
+          'and the podcasts bucket allows INSERT but no UPDATE. If you recently ' +
+          'changed this probe, check it does not pass upsert: true.'
       };
     }
   } catch (error) {
