@@ -695,8 +695,8 @@ export async function decidePodcast(id, decision) {
     .eq('id', id)
     .maybeSingle();
 
-  const { error } = await client.from('podcasts').delete().eq('id', id);
-  if (error) return { ok: false, message: 'That submission could not be removed.' };
+  const deleted = await deletePodcastRow(client, id);
+  if (!deleted.ok) return { ok: false, message: deleted.message };
 
   if (existing?.storage_path) {
     const { error: purgeError } = await client.storage.from(BUCKET).remove([existing.storage_path]);
@@ -932,6 +932,39 @@ export async function updatePodcastText(id, patch) {
 }
 
 /**
+ * Delete a podcast row and ASSERT that it went.
+ *
+ * RLS filters rows; it does not raise. A DELETE whose policy matches nothing
+ * comes back as success with zero rows affected, which is how a Board Manager
+ * clicking "Refuse" on a Writer's episode got a green toast, an emptied queue
+ * and an episode that was still live -- see 038, which grants the authority the
+ * panel already promised. The grant fixes the cause; this makes the symptom
+ * impossible to hide if any other policy is ever too narrow again.
+ *
+ * `.select('id')` is what turns "no error" into evidence. Without it PostgREST
+ * has no row to hand back and a filtered delete is indistinguishable from a real
+ * one.
+ *
+ * @param {object} client
+ * @param {string} id
+ * @returns {Promise<{ok: boolean, message?: string}>}
+ */
+async function deletePodcastRow(client, id) {
+  const { data, error } = await client.from('podcasts').delete().eq('id', id).select('id');
+  if (error) return { ok: false, message: error.message };
+
+  if (!Array.isArray(data) || data.length === 0) {
+    return {
+      ok: false,
+      message:
+        'That episode was not removed. Either it has already gone, or this ' +
+        'account is not allowed to delete it.'
+    };
+  }
+  return { ok: true };
+}
+
+/**
  * Delete an episode and purge its audio.
  *
  * Used by BOTH "remove" and "refuse": they are the same act on different rows,
@@ -958,8 +991,10 @@ export async function deletePodcast(id) {
     .eq('id', id)
     .maybeSingle();
 
-  const { error } = await client.from('podcasts').delete().eq('id', id);
-  if (error) return { ok: false, message: `The episode could not be deleted: ${error.message}` };
+  const deleted = await deletePodcastRow(client, id);
+  if (!deleted.ok) {
+    return { ok: false, message: `The episode could not be deleted: ${deleted.message}` };
+  }
 
   if (existing?.storage_path) {
     const { error: purgeError } = await client.storage

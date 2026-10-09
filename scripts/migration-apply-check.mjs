@@ -141,6 +141,15 @@ await stage('schemas, roles, tables', `
   create table public.media_assets (id uuid primary key default gen_random_uuid(), url text, caption text, created_at timestamptz not null default now());
   create table public.top_performers (id uuid primary key default gen_random_uuid(), name text);
 
+  create table public.podcasts (
+    id                uuid primary key default gen_random_uuid(),
+    title             text not null,
+    storage_path      text,
+    duration_seconds  integer,
+    status            text not null default 'pending',
+    author_account_id uuid references public.staff_accounts (id) on delete set null
+  );
+
   create table public.audit_logs (
     id         uuid primary key default gen_random_uuid(),
     actor_id   uuid references auth.users(id) on delete set null,
@@ -263,6 +272,25 @@ await stage('pre-034 and pre-035 policies', `
   create policy performers_staff_write  on public.top_performers for all using (public.is_staff()) with check (public.is_staff());
   create policy audit_staff_read        on public.audit_logs    for select using (public.is_staff());
   create policy audit_staff_insert      on public.audit_logs    for insert with check (public.is_staff());
+
+  -- 024/029/030/033 verbatim. 038 is what changes these, so the PRE-038 state has
+  -- to be right or the test would pass against a strawman.
+  insert into storage.buckets (id, name, public) values ('podcasts','podcasts',true);
+  create policy podcasts_public_read       on public.podcasts for select using (status = 'approved' or public.is_staff());
+  create policy podcasts_staff_submit      on public.podcasts for insert
+    with check (public.is_staff() and status = 'pending' and author_account_id = public.current_account_id());
+  create policy podcasts_owner_all         on public.podcasts for all
+    using (public.is_owner()) with check (public.is_owner());
+  create policy podcasts_delete_own_pending on public.podcasts for delete
+    using (public.is_staff() and status = 'pending' and author_account_id = public.current_account_id());
+  create policy podcasts_approver_update   on public.podcasts for update to anon, authenticated
+    using (public.can_approve()) with check (public.can_approve());
+
+  create policy podcasts_read   on storage.objects for select using (bucket_id = 'podcasts');
+  create policy podcasts_upload on storage.objects for insert
+    with check (bucket_id = 'podcasts' and public.is_staff() and coalesce((storage.foldername(name))[1], '') = 'episodes');
+  create policy podcasts_delete on storage.objects for delete
+    using (bucket_id = 'podcasts' and public.is_owner());
 `);
 
 // ---------------------------------------------------------------------------
@@ -286,6 +314,7 @@ await stage('table grants + row level security', `
   grant select, insert, update, delete on public.media_assets      to anon, authenticated;
   grant select, insert, update, delete on public.top_performers    to anon, authenticated;
   grant select, insert, update, delete on public.articles          to anon, authenticated;
+  grant select, insert, update, delete on public.podcasts          to anon, authenticated;
 
   -- RLS MUST be enabled or the policies below are inert text. Leaving this out
   -- is not a subtle mistake: every assertion passes for the wrong reason --
@@ -300,6 +329,7 @@ await stage('table grants + row level security', `
   alter table public.media_assets   enable row level security;
   alter table public.top_performers enable row level security;
   alter table public.articles       enable row level security;
+  alter table public.podcasts       enable row level security;
 `);
 
 // Two photos that already exist BEFORE 037 runs.
@@ -319,7 +349,8 @@ for (const f of [
   'supabase/migrations/034_close_wire_media_storage_policies.sql',
   'supabase/migrations/035_staff_can_manage_and_server_side_audit.sql',
   'supabase/migrations/036_edition_line_drop_invented_volume_number.sql',
-  'supabase/migrations/037_media_requires_approval.sql'
+  'supabase/migrations/037_media_requires_approval.sql',
+  'supabase/migrations/038_approver_can_refuse_a_pending_episode.sql'
 ]) {
   const name = f.split('/').pop();
   try {
@@ -664,6 +695,90 @@ console.log('\n-- media approval (037) --');
   if (r.ok && (r.value.rowCount ?? 0) === 0) ok('a Writer still cannot DELETE a photo (Owner only)');
   else bad('a Writer deleted a photo');
 }
+
+// --- 038: an approver can refuse a PENDING episode --------------------------
+//
+// THE BUG THIS FIXES, STATED AS A TEST.
+//
+// The panel has always offered a Board Manager a "Refuse" button on a Writer's
+// pending episode, but podcasts_delete was is_owner() only. RLS FILTERS, so the
+// DELETE succeeded having removed nothing, and the client reported "Submission
+// refused and its audio purged." These assertions fail against the pre-038
+// policies and pass after it.
+console.log('\n-- 038 approver refuses a pending episode --');
+
+{
+  // The Writer's own submission, pending.
+  await db.exec(`
+    insert into public.podcasts (title, storage_path, status, author_account_id)
+    values ('pending ep','episodes/pending.mp3','pending',
+            '33333333-3333-3333-3333-333333333333');
+    insert into public.podcasts (title, storage_path, status, author_account_id)
+    values ('live ep','episodes/live.mp3','approved',
+            '33333333-3333-3333-3333-333333333333');
+  `);
+  await db.exec(`
+    insert into storage.objects (bucket_id,name) values ('podcasts','episodes/pending.mp3');
+    insert into storage.objects (bucket_id,name) values ('podcasts','episodes/live.mp3');
+  `);
+}
+
+await allowed('a Board Manager CAN delete a PENDING row (this is the bug)', 'authenticated', 'tok-manager',
+  `delete from public.podcasts where title = 'pending ep'`, 'delete');
+
+await allowed('a Board Manager CAN purge the audio of a refused episode', 'authenticated', 'tok-manager',
+  `delete from storage.objects where name = 'episodes/pending.mp3'`, 'delete');
+
+await denied('a Board Manager still CANNOT delete a PUBLISHED episode', 'authenticated', 'tok-manager',
+  `delete from public.podcasts where title = 'live ep'`, 'delete');
+
+await denied('a Board Manager still CANNOT purge a published episode\'s audio', 'authenticated', 'tok-manager',
+  `delete from storage.objects where name = 'episodes/live.mp3'`, 'delete');
+
+await denied('a WRITER cannot delete a pending episode they did not file', 'authenticated', 'tok-writer',
+  `delete from public.podcasts where title = 'live ep'`, 'delete');
+
+await denied('a Writer cannot purge any audio at all', 'authenticated', 'tok-writer',
+  `delete from storage.objects where bucket_id='podcasts'`, 'delete');
+
+// The Owner must not have been narrowed by 038.
+await allowed('the Owner can still delete a published episode', 'authenticated', 'tok-owner',
+  `delete from public.podcasts where title = 'live ep'`, 'delete');
+
+// The live row is gone but its audio must SURVIVE, which is the proof that the
+// two halves were not widened together by accident.
+//
+// Needs its own still-published row. The Owner has just deleted the 'live ep'
+// row above, which leaves 'episodes/live.mp3' an ORPHAN -- and an orphan is
+// purgeable on purpose, or the 1-byte write probes could never be swept by
+// anyone but the Owner. Asserting against that orphan tests the wrong thing.
+{
+  await db.exec(`
+    insert into public.podcasts (title, storage_path, status, author_account_id)
+    values ('still live','episodes/still-live.mp3','approved',
+            '33333333-3333-3333-3333-333333333333');
+    insert into storage.objects (bucket_id,name) values ('podcasts','episodes/still-live.mp3');
+  `);
+  const r = await asRole('authenticated', 'tok-manager',
+    () => db.query(`delete from storage.objects where name='episodes/still-live.mp3'`));
+  const gone = r.ok && (r.value.rowCount ?? 0) > 0;
+  if (gone) bad('a Board Manager purged a PUBLISHED episode\'s audio -- 038 widened the storage policy too far');
+  else ok('a published episode\'s audio survives while its row exists -- an unpublish cannot erase the recording');
+}
+
+// An orphan with no row at all must be sweepable, or the 1-byte write probes
+// (which cleanup cannot remove, because that is is_owner()-only) accumulate
+// forever with nobody able to clear them.
+{
+  await db.exec(`insert into storage.objects (bucket_id,name) values ('podcasts','episodes/.write-probe-abc')`);
+  await allowed('a Board Manager CAN sweep an orphaned probe object', 'authenticated', 'tok-manager',
+    `delete from storage.objects where name = 'episodes/.write-probe-abc'`, 'delete');
+}
+
+// A suspended approver is still refused. can_approve() carries the status check;
+// this is what stops a de-activated Board Manager from purging anything.
+await denied('a SUSPENDED Board Manager cannot refuse an episode', 'authenticated', 'tok-pending',
+  `delete from public.podcasts where title = 'live ep'`, 'delete');
 
 // ===========================================================================
 await db.close();
