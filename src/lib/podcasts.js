@@ -243,7 +243,17 @@ export async function checkPodcastStorage() {
    * the interesting failure, and folding it into the same catch as the read
    * would blur "the bucket is gone" with "you may not write to it".
    */
-  const probePath = 'episodes/.write-probe';
+  /*
+   * UNIQUE PER ATTEMPT, deliberately. With `upsert: false` a path that already
+   * exists is refused as a duplicate rather than overwritten -- and the cleanup
+   * below is Owner-only, so a Writer can never remove their own probe. A fixed
+   * path therefore breaks permanently after one Writer probe: the orphan stays
+   * and every later probe fails on the duplicate. A fresh name each time costs
+   * one byte per failed cleanup and keeps the probe repeatable for everyone.
+   */
+  const probePath = `episodes/.write-probe-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
   try {
     const { error: writeError } = await client.storage
       .from(BUCKET)
@@ -278,19 +288,22 @@ export async function checkPodcastStorage() {
           describeStorageError(writeError, 'the podcast bucket') +
           ' The bucket is there and readable, so this is a write-permission ' +
           'problem for this account: it needs an active row in staff_accounts, ' +
-          'and the podcasts bucket allows INSERT but no UPDATE. If you recently ' +
-          'changed this probe, check it does not pass upsert: true.'
+          'and the podcasts bucket accepts new objects under episodes/ but ' +
+          'refuses to overwrite one that is already there.'
       };
     }
   } catch (error) {
     return { ok: false, message: describeStorageError(error, 'the podcast bucket') };
   }
 
-  // Best-effort cleanup. Owner-only delete, so a writer simply leaves the probe.
+  // Best-effort cleanup. podcasts_delete is is_owner() only, so a Writer or a
+  // Board Manager cannot remove their own probe and silently leaves a 1-byte
+  // orphan behind. That is why probePath is unique per attempt: the orphans
+  // accumulate, but they can never block the next probe.
   try {
     await client.storage.from(BUCKET).remove([probePath]);
   } catch {
-    /* a 1-byte orphan at a .probe path is not worth failing an upload over */
+    /* a 1-byte orphan at a .write-probe path is not worth failing an upload over */
   }
 
   return { ok: true };
