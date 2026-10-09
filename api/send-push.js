@@ -3,17 +3,29 @@
  *
  * Until now a "broadcast" was only a row in `public.broadcasts` that every
  * opted-in browser discovered by POLLING. That cannot reach a phone with the app
- * closed, which is the entire point of push. This is the missing server: it loads
- * the newest broadcast, loads every subscription that has real keys, and hands
- * each to `web-push`, which does the ECDH handshake and posts an encrypted
- * payload to the push service (FCM on Android, APNs on iOS).
+ * closed, which is the entire point of push. This is the missing server: it claims
+ * the oldest undelivered broadcast, loads every subscription that has real keys,
+ * and hands each to `web-push`, which does the ECDH handshake and posts an
+ * encrypted payload to the push service (FCM on Android, APNs on iOS).
+ *
+ * CLAIMING IS ATOMIC (migration 039)
+ *   The broadcast is marked delivered by `wire_claim_next_broadcast()` in the
+ *   same statement that returns it, so two overlapping invocations cannot both
+ *   send the same broadcast. This matters more than it used to: the flush is
+ *   driven by an external scheduler firing every minute, and a send takes
+ *   seconds, so the read-then-write this replaced overlapped routinely. The
+ *   cost is at-most-once delivery -- a crash mid-send loses that one broadcast.
  *
  * Three ways in:
  *   POST /api/send-push   body { broadcastId } or { title, body, audience }
  *                         (the Owner Panel's custom broadcast form posts here)
- *   GET  /api/send-push   flushes anything not yet sent (Vercel Cron)
+ *   GET  /api/send-push   flushes anything not yet sent (the cron)
  *   Supabase Database Webhook on INSERT into public.broadcasts posting
  *   { type: 'INSERT', table: 'broadcasts', record: { id } }
+ *
+ *   The webhook posts the id of a row that was just inserted, so claiming it by
+ *   name is the same operation with one extra predicate. A retried webhook finds
+ *   nothing to send rather than pushing the broadcast to every subscriber twice.
  *
  * `/api/broadcast` is an alias of this route, so the Owner Panel can use either.
  *
@@ -300,22 +312,47 @@ export default async function handler(req, res) {
       requiresAction: request.inline.requiresAction,
     };
   } else {
-    let query = db
-      .from('broadcasts')
-      .select('id, title, message, audience, pushed_at')
-      .order('created_at', { ascending: false })
-      .limit(5);
+    /*
+     * ATOMIC CLAIM, migration 039.
+     *
+     * This used to be a plain `select ... where pushed_at is null` followed by an
+     * `update` after the send finished. Two statements means an interval in
+     * which another invocation sees the same row and sends it too, and with an
+     * external scheduler firing every minute that overlap is routine rather
+     * than exceptional: a send to several hundred devices takes seconds.
+     *
+     * `wire_claim_next_broadcast` stamps pushed_at in the same statement that
+     * returns the row, with `for update skip locked`, so a concurrent caller
+     * finds an empty queue instead of the same broadcast. It is the same shape
+     * as `wire_claim_due_reminders` (021), which is why the deadline cron was
+     * always safe and this one was not.
+     *
+     * Trade, stated plainly: claiming first means a crash mid-send loses that
+     * one broadcast permanently. The alternative duplicated to every reader on
+     * every overlap. For a school paper a missed push is recoverable and a
+     * doubled one is not, and the previous behaviour also could not deliver a
+     * backlog in order.
+     */
+    const { data: claimed, error: claimError } = await db.rpc('wire_claim_next_broadcast', {
+      p_broadcast_id: request.broadcastId ?? null
+    });
 
-    if (request.broadcastId) query = query.eq('id', request.broadcastId);
-    else query = query.is('pushed_at', null);
+    if (claimError) {
+      return fail(res, 502, 'broadcast_claim_failed', claimError.message);
+    }
 
-    const { data, error } = await query;
-    if (error) return fail(res, 502, 'broadcasts_unreadable', error.message);
-    if (!data || data.length === 0) {
-      console.log(`${TAG} nothing to send`, { source: request.source, broadcastId: request.broadcastId });
+    // An empty result is the ordinary "queue drained" answer, not a failure. A
+    // named broadcast that has already been claimed returns here too, which is
+    // what stops a retried webhook from sending it twice.
+    const rows = Array.isArray(claimed) ? claimed : [];
+    if (rows.length === 0) {
+      console.log(`${TAG} nothing to send`, {
+        source: request.source,
+        broadcastId: request.broadcastId
+      });
       return res.status(200).json({ ok: true, sent: 0, reason: 'nothing_pending' });
     }
-    broadcast = data[0];
+    broadcast = rows[0];
   }
 
   const payload = payloadFor(broadcast);
@@ -413,15 +450,25 @@ export default async function handler(req, res) {
     }
   }
 
-  // ------------------------------------------------- mark the row as pushed
-  // A direct update is fine: this runs as service_role, and the sender must not
-  // touch the row when the push failed, or the cron will never retry it.
-  if (broadcast.id && sent > 0) {
+  // ------------------------------------------------- record the delivery count
+  //
+  // pushed_at is NOT written here: migration 039 already stamped it inside the
+  // claim, which is what makes the claim atomic. Writing it again would be
+  // harmless on its own but it would reintroduce the split the claim exists to
+  // remove, and re-stamping a row the claim already owns is how a future
+  // refactor ends up marking a broadcast that was never claimed.
+  //
+  // delivered_count is still recorded, and only when at least one device
+  // accepted, so the panel reports a real number rather than a hopeful one.
+  //
+  // The inline path has no row to update: a custom broadcast posted straight
+  // from the panel was never a queue entry.
+  if (broadcast.id && !request.inline && sent > 0) {
     const { error: markError } = await db
       .from('broadcasts')
-      .update({ pushed_at: new Date().toISOString(), delivered_count: sent })
+      .update({ delivered_count: sent })
       .eq('id', broadcast.id);
-    if (markError) console.error(`${TAG} could not mark pushed`, markError.message);
+    if (markError) console.error(`${TAG} could not record delivered_count`, markError.message);
   }
 
   console.log(`${TAG} done`, { sent, pruned, failed: failed.length, skipped });

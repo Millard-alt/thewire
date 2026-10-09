@@ -135,7 +135,19 @@ await stage('schemas, roles, tables', `
     todays_pick_id uuid
   );
 
-  create table public.broadcasts (id uuid primary key default gen_random_uuid(), title text, body text);
+  -- The REAL shape from schema.sql + 019/020, not a stand-in. 039 claims on
+  -- pushed_at and orders by created_at, so both columns have to exist and have
+  -- to mean what it assumes.
+  create table public.broadcasts (
+    id              uuid primary key default gen_random_uuid(),
+    title           text not null,
+    message         text,
+    body            text,
+    audience        text not null default 'Everyone',
+    delivered_count integer not null default 0,
+    created_at      timestamptz not null default now(),
+    pushed_at       timestamptz
+  );
   create table public.assignments (id uuid primary key default gen_random_uuid(), title text);
   create table public.articles (id uuid primary key default gen_random_uuid(), title text, status text);
   create table public.media_assets (id uuid primary key default gen_random_uuid(), url text, caption text, created_at timestamptz not null default now());
@@ -350,7 +362,8 @@ for (const f of [
   'supabase/migrations/035_staff_can_manage_and_server_side_audit.sql',
   'supabase/migrations/036_edition_line_drop_invented_volume_number.sql',
   'supabase/migrations/037_media_requires_approval.sql',
-  'supabase/migrations/038_approver_can_refuse_a_pending_episode.sql'
+  'supabase/migrations/038_approver_can_refuse_a_pending_episode.sql',
+  'supabase/migrations/039_claim_next_broadcast.sql'
 ]) {
   const name = f.split('/').pop();
   try {
@@ -421,6 +434,26 @@ const allowed = async (label, role, token, sql, kind) => {
   const touched = (r.value.rowCount ?? 0) > 0 || (r.value.rows?.length ?? 0) > 0;
   if (!touched) { bad(`${label}  <-- permitted but changed nothing`); return; }
   ok(label);
+};
+
+/**
+ * Assert an operation is refused by a PRIVILEGE, which is a different mechanism
+ * from RLS and behaves differently.
+ *
+ * A missing table GRANT or function EXECUTE fails at the permission layer, before
+ * any policy is consulted, so it RAISES 42501 rather than filtering rows. The
+ * `denied` helper above treats a raise as a failure on purpose -- for an UPDATE
+ * or DELETE, "succeeded but matched nothing" is the dangerous case and "raised"
+ * is the safe one -- but for a table with no SELECT policy a filtered read and a
+ * refused read look identical, which is why those two live in different helpers.
+ *
+ * Using `denied` here would report a correctly refused call as a broken one.
+ */
+const refused = async (label, role, token, sql) => {
+  const r = await asRole(role, token, () => db.query(sql));
+  if (!r.ok) { ok(`${label}  (refused: ${r.error.slice(0, 62)})`); return; }
+  if ((r.value.rows?.length ?? 0) > 0) { bad(`${label}  <-- it was permitted`); return; }
+  bad(`${label}  <-- returned rows without raising`);
 };
 
 // --- storage: the CRITICAL bug ---------------------------------------------
@@ -779,6 +812,186 @@ await allowed('the Owner can still delete a published episode', 'authenticated',
 // this is what stops a de-activated Board Manager from purging anything.
 await denied('a SUSPENDED Board Manager cannot refuse an episode', 'authenticated', 'tok-pending',
   `delete from public.podcasts where title = 'live ep'`, 'delete');
+
+// --- 039: a broadcast can only be claimed once ------------------------------
+//
+// THE BUG THIS FIXES. The handler used to SELECT `pushed_at is null`, send to
+// every subscriber, and only THEN stamp `pushed_at`. Two statements, so a second
+// invocation in between reads the same row and sends it too. An external
+// scheduler firing every minute makes that overlap routine: a send takes
+// seconds.
+//
+// Note on method: PGlite is a SINGLE connection and serialises transactions, so
+// genuine parallel interleaving cannot be exercised here -- a second
+// transaction waits for the first to commit. Verified experimentally before
+// writing this. What IS provable here, and is asserted below, is the property
+// that makes overlap harmless: the claim stamps the row in the same statement
+// that returns it, so there is no window. The lock-holding half of that is
+// asserted statically on the function source, since `for update skip locked` is
+// a property of the SQL text rather than of a single-connection test run.
+console.log('\n-- 039 atomic broadcast claim --');
+
+// Cleared first: an earlier section inserted a broadcast ('probe-by-manager') to
+// test broadcasts_staff_all, so it is still sitting in this table unpushed and
+// would be claimed here, making every assertion about WHICH row came back
+// meaningless. Each scenario below re-seeds its own rows, because claiming
+// CONSUMES them -- that is the entire behaviour under test.
+await stage('broadcast fixtures', `
+  delete from public.broadcasts;
+`);
+
+/** Fresh queue, oldest first. Each scenario owns its rows. */
+const seedBroadcasts = async (titles) => {
+  await db.exec(`delete from public.broadcasts`);
+  for (let i = 0; i < titles.length; i++) {
+    await db.query(
+      `insert into public.broadcasts (title, created_at) values ($1, now() - make_interval(mins => $2))`,
+      [titles[i], (titles.length - i) * 10]
+    );
+  }
+};
+
+const claim = async (id = null) => {
+  const r = await asRole('service_role', null, () =>
+    db.query(`select title from public.wire_claim_next_broadcast($1)`, [id]));
+  return r.ok ? r.value.rows : null;
+};
+
+// --- the ordering fix ------------------------------------------------------
+//
+// The old handler selected newest-first with limit(5) and used the first row, so
+// a backlog went out newest-to-oldest: the newest broadcast jumped the queue
+// while older ones waited. Broadcasting is a sequence people read in order.
+await seedBroadcasts(['first', 'second', 'third']);
+
+{
+  const got = await claim();
+  if (got?.[0]?.title === 'first') ok('the OLDEST undelivered broadcast is claimed first');
+  else bad('claimed ' + JSON.stringify(got?.map((x) => x.title) ?? null) + ', expected "first"');
+
+  const stamped = (await db.query(
+    `select pushed_at is not null as stamped from public.broadcasts where title='first'`)).rows[0];
+  if (stamped.stamped) ok('the claim STAMPS pushed_at in the same statement that returns the row');
+  else bad('the returned row was not stamped -- there is still a window for a duplicate send');
+}
+
+// --- the queue drains in order ---------------------------------------------
+//
+// Continues from the claim above rather than starting over: a queue that
+// restarts from the beginning on every tick would send 'first' repeatedly.
+{
+  const seen = [];
+  for (let i = 0; i < 3; i++) {
+    const rows = await claim();
+    if (rows?.length) seen.push(rows[0].title);
+  }
+  const joined = seen.join(',');
+  if (joined === 'second,third') ok('the queue drains in order, one broadcast per call: ' + joined);
+  else bad('drained as [' + joined + '], expected second,third');
+}
+
+// --- the duplicate-send window --------------------------------------------
+//
+// THE assertion that would fail against the old read-then-write code.
+//
+// Deliberately run against a queue holding EXACTLY ONE broadcast. With a backlog
+// present, a second claim correctly returns the next undelivered row, and
+// asserting on that would be asserting the wrong thing: the queue draining is
+// correct behaviour. The duplicate is a single broadcast becoming available to
+// two senders, so the queue has to hold one row for that to be observable.
+await seedBroadcasts(['only one']);
+
+{
+  const first = await claim();
+
+  // The old code stamped pushed_at only AFTER a send that takes seconds. This
+  // call stands in for the second scheduler tick landing inside that window.
+  const second = await claim();
+
+  if (first?.[0]?.title === 'only one') ok('the single broadcast is claimed');
+  else bad('the claim returned ' + JSON.stringify(first?.map((x) => x.title) ?? null));
+
+  if (second?.length === 0) {
+    ok('a second claim of the SAME broadcast finds nothing -- no duplicate send possible');
+  } else {
+    bad('the same broadcast was claimable twice: ' + JSON.stringify(second.map((x) => x.title)));
+  }
+}
+
+// --- the webhook path ------------------------------------------------------
+//
+// The Supabase webhook posts the id of a row it just saw inserted. It used to
+// select by id with NO pushed_at filter at all, so a retried webhook -- which
+// is exactly what a timeout causes -- resent the broadcast to everyone.
+await seedBroadcasts(['from webhook']);
+
+{
+  const target = (await db.query(`select id from public.broadcasts where title='from webhook'`)).rows[0];
+
+  const first = await claim(target.id);
+  const retry = await claim(target.id);
+
+  if (first?.[0]?.title === 'from webhook') ok('a webhook can claim its broadcast by id');
+  else bad('claiming by id returned ' + JSON.stringify(first?.map((x) => x.title) ?? null));
+
+  if (retry?.length === 0) ok('a RETRIED webhook finds nothing -- no duplicate send');
+  else bad('a retried webhook claimed the same broadcast again: ' + JSON.stringify(retry));
+}
+
+// A named broadcast that was never inserted must not claim some OTHER row, which
+// `= null` would do.
+{
+  const got = await claim('99999999-9999-9999-9999-999999999999');
+  if (got?.length === 0) ok('an unknown id claims nothing rather than falling through');
+  else bad('an unknown id returned ' + JSON.stringify(got.map((x) => x.title)));
+}
+
+// --- who may claim ---------------------------------------------------------
+//
+// This one matters more than it looks. The function marks a broadcast delivered
+// WITHOUT sending anything, so anyone able to call it could silence push for the
+// whole paper permanently, leaving no trace in the data.
+await refused('anon CANNOT claim a broadcast (it would silence push silently)', 'anon', null,
+  `select * from public.wire_claim_next_broadcast(null)`);
+await refused('a Writer CANNOT claim a broadcast', 'authenticated', 'tok-writer',
+  `select * from public.wire_claim_next_broadcast(null)`);
+
+// --- the locking clause, asserted statically ------------------------------
+{
+  // `for update skip locked` is what makes a concurrent caller SKIP rather than
+  // WAIT. With plain `for update` the second invocation blocks until the first
+  // commits and then receives the same row: the same duplicate, serialised, and
+  // much harder to notice because the timing looks normal.
+  //
+  // Asserted on the function source because PGlite serialises transactions and
+  // cannot demonstrate the lock behaviour at all. See the note at the top.
+  const src = (await db.query(`
+    select p.prosrc from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname='public' and p.proname='wire_claim_next_broadcast'`)).rows[0]?.prosrc || '';
+
+  if (/for\s+update\s+skip\s+locked/i.test(src)) {
+    ok('the claim uses FOR UPDATE SKIP LOCKED, so a concurrent caller skips rather than waits');
+  } else {
+    bad('no FOR UPDATE SKIP LOCKED in wire_claim_next_broadcast(): concurrent callers would duplicate');
+  }
+
+  if (/set\s+(\w+\.)?pushed_at\s*=\s*now\(\)/i.test(src)) {
+    ok('the stamp is inside the claiming statement, not a separate step');
+  } else {
+    bad('pushed_at is not stamped by the claim -- the duplicate window is back');
+  }
+
+  const priv = await db.query(`
+    select has_function_privilege('anon', p.oid, 'execute') as anon_ok,
+           has_function_privilege('service_role', p.oid, 'execute') as svc_ok
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname='public' and p.proname='wire_claim_next_broadcast'`);
+  if (priv.rows[0] && priv.rows[0].anon_ok === false && priv.rows[0].svc_ok === true) {
+    ok('execute is granted to service_role and withheld from anon');
+  } else {
+    bad('privileges are anon=' + priv.rows[0]?.anon_ok + ' service_role=' + priv.rows[0]?.svc_ok);
+  }
+}
 
 // ===========================================================================
 await db.close();
