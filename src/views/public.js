@@ -1779,9 +1779,26 @@ function initNavigation() {
   // scrolling. showModal() provides all four; a hidden <ul> provides none.
   if (drawer && drawerList) {
     drawerList.innerHTML = NAV_LINKS.map((link) => {
+      /*
+       * `nav-link` on BOTH kinds of control, and the class is load-bearing.
+       *
+       * The delegated section-anchor handler in app.js matches
+       * `a.nav-link[href^="#"]`. The drawer anchors were emitted as bare
+       * `<a href="#latest">` with no class, so that handler never saw them --
+       * which meant tapping "Latest" or "Assignments" in the mobile drawer did
+       * nothing at all when the reader was on any OTHER page: the drawer's own
+       * close handler ran, the anchor was left to the browser, and because the
+       * publication view was `hidden` the fragment had nowhere to scroll. The
+       * drawer closed and the page silently did not change. Desktop links and
+       * the footer both carry `nav-link`, which is why only mobile was affected.
+       *
+       * Adding the class rather than duplicating the scroll-and-reveal logic is
+       * the point: there is now ONE implementation of "go to this section", and
+       * the drawer joins the desktop nav in using it.
+       */
       const inner = link.page
-        ? `<button type="button" data-nav="${escapeHtml(link.page)}">${escapeHtml(link.label)}</button>`
-        : `<a href="${escapeHtml(link.anchor)}">${escapeHtml(link.label)}</a>`;
+        ? `<button type="button" class="nav-link" data-nav="${escapeHtml(link.page)}">${escapeHtml(link.label)}</button>`
+        : `<a class="nav-link" href="${escapeHtml(link.anchor)}">${escapeHtml(link.label)}</a>`;
       return `<li class="nav-drawer__item">${inner}</li>`;
     }).join('');
 
