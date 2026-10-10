@@ -1159,6 +1159,42 @@ console.log('\n-- 040 interviews get a category --');
   }
 }
 
+// A video is filed with NO guest, and the insert must succeed.
+//
+// This is the assertion that proves 040's `drop not null` actually ran. The
+// fixture above still declares 022's `guest text not null`, deliberately: it is
+// the pre-migration shape, so if the `drop not null` were missing or were
+// spelled wrongly, this insert would fail with 23502 and the video form would be
+// broken in production while every other test still passed. Nothing else in this
+// file can tell the difference -- the Writer's video row above supplies a guest
+// and would insert fine either way.
+{
+  const r = await asRole('anon', 'tok-writer', () => db.query(
+    `insert into public.interviews (title, guest, status, category, author_account_id)
+     values ('House athletics final', null, 'pending', 'video', '33333333-3333-3333-3333-333333333333')
+     returning id, guest, category`));
+  if (r.ok && r.value.rows[0]?.guest === null && r.value.rows[0]?.category === 'video') {
+    ok("a video with no guest inserts (guest is nullable, so the video form is clean)");
+  } else {
+    bad("a guest-less video was refused: " + JSON.stringify(r.value?.rows?.[0] ?? r.error));
+  }
+}
+
+// And the constraint must still bite for an INTERVIEW's sake where it is asked
+// of -- this is asserted in the browser, not here, because the column itself no
+// longer knows the difference. Recorded so the removal is not mistaken for a
+// loosening that was unintended.
+{
+  const r = await db.query(
+    `select is_nullable from information_schema.columns
+      where table_schema = 'public' and table_name = 'interviews' and column_name = 'guest'`);
+  if (r.rows[0]?.is_nullable === 'YES') {
+    ok("guest is documented nullable; an interview's guest is now a FORM rule, not a column rule");
+  } else {
+    bad("guest is still " + r.rows[0]?.is_nullable + " -- the video form's missing field would be a data loss");
+  }
+}
+
 // The vocabulary is closed. Without this a typo creates a row in neither feed,
 // invisible everywhere -- the worst possible failure for published content.
 await denied('a Writer CANNOT invent a category', 'anon', 'tok-writer',

@@ -1368,7 +1368,10 @@ report(
 );
 report(
   'the generated "Part N" caption is left alone',
-  /Part \$\{index\} of this interview/.test(publicSrc),
+  // Still a GENERATED caption, not a stored one -- that is what the assertion is
+  // for, so it matches the template rather than the rendered word. The noun is a
+  // parameter because a video's part caption reads "of this video".
+  /Part \$\{index\} of this \$\{nounLower\}/.test(publicSrc),
   'it is always meaningful and never a stored placeholder, so it is not a caption bar to suppress'
 );
 

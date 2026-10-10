@@ -1638,7 +1638,14 @@ function interviewRowFrom(input = {}, existing = {}) {
   const status = String(input.status ?? existing.status ?? 'pending').toLowerCase();
   return {
     title: String(input.title ?? existing.title ?? '').trim() || 'Untitled interview',
-    guest: String(input.guest ?? existing.guest ?? '').trim() || 'Unnamed guest',
+    // Blank stays blank. This used to be coerced to the literal 'Unnamed guest',
+    // which was a workaround for 022's NOT NULL: the column demanded a value for
+    // a video, which has no guest, so the store invented one and it rendered as
+    // the card's headline. 040 drops the constraint and the video form drops the
+    // field, so a missing guest is now honest and the renderers fall back to the
+    // title. Inventing text here would put a placeholder in the DATABASE, where
+    // the Owner would edit around it and readers would see it.
+    guest: String(input.guest ?? existing.guest ?? '').trim(),
     guest_role: String(input.guestRole ?? existing.guestRole ?? '').trim(),
     interviewer: String(input.interviewer ?? existing.interviewer ?? '').trim(),
     summary: String(input.summary ?? existing.summary ?? '').trim(),

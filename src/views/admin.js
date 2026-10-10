@@ -824,6 +824,15 @@ function mediaSubmitPanel() {
         ''
       )}
 
+      <!--
+      A Writer files BOTH kinds, so the switcher has to be here. Without it
+      mediaSubTab stays at its 'interview' default and a writer cannot file a
+      video at all -- the "Submit a video" heading below was unreachable, because
+      nothing on this panel could set it. Counts are hidden: the queue is not this
+      role's to see.
+      -->
+      ${mediaSubTabs({ showCounts: false })}
+
       <p class="panel-sunken p-4 text-xs ink-muted">
         <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
         Everything you file here starts as <strong>pending</strong> and stays off the public
@@ -835,16 +844,25 @@ function mediaSubmitPanel() {
       <form id="media-submit-form" class="panel-raised space-y-4 p-4" novalidate>
         <div class="grid gap-3 sm:grid-cols-2">
           <div>
-            <label class="field-label" for="media-sub-title">Title</label>
+            <label class="field-label" for="media-sub-title">${
+              isVideo ? 'Headline' : 'Title'
+            }</label>
             <input id="media-sub-title" class="field" type="text" maxlength="120" required />
           </div>
-          <div>
-            <label class="field-label" for="media-sub-subject">${
-              isVideo ? 'Subject' : 'Guest'
-            }</label>
+          <!--
+          INTERVIEW-ONLY, same reasoning as the Owner editor: a video has no guest,
+          so asking produces filler that ends up on a public page. The guest column is
+          nullable (040), and the store no longer invents 'Unnamed guest'.
+          -->
+          ${
+            isVideo
+              ? ''
+              : `<div>
+            <label class="field-label" for="media-sub-subject">Guest</label>
             <input id="media-sub-subject" class="field" type="text" maxlength="80"
-              placeholder="${isVideo ? 'e.g. House athletics final' : 'Who was interviewed'}" required />
-          </div>
+              placeholder="Who was interviewed" required />
+          </div>`
+          }
         </div>
 
         <div>
@@ -856,10 +874,14 @@ function mediaSubmitPanel() {
           </p>
         </div>
 
-        <div>
+        ${
+          isVideo
+            ? ''
+            : `<div>
           <label class="field-label" for="media-sub-summary">One-line summary</label>
           <input id="media-sub-summary" class="field" type="text" maxlength="140" />
-        </div>
+        </div>`
+        }
 
         <div>
           <label class="field-label" for="media-sub-description">Description</label>
@@ -891,6 +913,50 @@ function mediaSubmitPanel() {
  * client-side over the rows hydrate() already loaded, which is why the counts in
  * both tabs are real numbers rather than placeholders.
  */
+/**
+ * The interview/video switcher, as a shared helper.
+ *
+ * Extracted because two callers need it and a copy would drift: the desk above
+ * shows the archive counts, and a Writer's submit panel must NOT -- a writer who
+ * cannot see the queue has no business being told how many entries it holds.
+ * `showCounts` is the only difference.
+ */
+function mediaSubTabs({ showCounts }) {
+  return `
+      <div
+        class="inline-flex rounded-lg border border-[color:var(--rule)] p-1"
+        role="tablist"
+        aria-label="Choose between the interviews and videos archives"
+      >
+        ${[
+          { key: 'interview', emoji: '&#127897;&#65039;', label: 'Interviews' },
+          { key: 'video', emoji: '&#127916;&#65039;', label: 'Videos' }
+        ]
+          .map(
+            (tab) => `
+          <button
+            type="button"
+            role="tab"
+            class="btn ${mediaSubTab === tab.key ? 'btn-accent' : 'btn-ghost'}"
+            data-action="media-subtab"
+            data-media-category="${tab.key}"
+            aria-selected="${mediaSubTab === tab.key}"
+          >
+            <span aria-hidden="true">${tab.emoji}</span>
+            ${tab.label}
+            ${
+              showCounts
+                ? `<span class="ml-1 opacity-70">(${
+                    store.countMediaByCategory()[tab.key]
+                  })</span>`
+                : ''
+            }
+          </button>`
+          )
+          .join('')}
+      </div>`;
+}
+
 function renderInterviewsTab() {
   const all = store.listInterviews();
   const isVideo = mediaSubTab === 'video';
@@ -930,34 +996,7 @@ function renderInterviewsTab() {
        </button>`
     )}
 
-      <div
-        class="inline-flex rounded-lg border border-[color:var(--rule)] p-1"
-        role="tablist"
-        aria-label="Choose between the interviews and videos archives"
-      >
-        ${[
-          { key: 'interview', emoji: '&#127897;&#65039;', label: 'Interviews' },
-          { key: 'video', emoji: '&#127916;&#65039;', label: 'Videos' }
-        ]
-          .map(
-            (tab) => `
-          <button
-            type="button"
-            role="tab"
-            class="btn ${mediaSubTab === tab.key ? 'btn-accent' : 'btn-ghost'}"
-            data-action="media-subtab"
-            data-media-category="${tab.key}"
-            aria-selected="${mediaSubTab === tab.key}"
-          >
-            <span aria-hidden="true">${tab.emoji}</span>
-            ${tab.label}
-            <span class="ml-1 opacity-70">(${
-              store.countMediaByCategory()[tab.key]
-            })</span>
-          </button>`
-          )
-          .join('')}
-      </div>
+      ${mediaSubTabs({ showCounts: true })}
 
       <div class="flex flex-wrap gap-2" role="group" aria-label="Filter ${noun}s by status">
         ${filters
@@ -2525,36 +2564,51 @@ function interviewEditorDialog() {
             <input id="interview-title" class="field" type="text" required />
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label class="field-label" id="interview-guest-label" for="interview-guest">Guest</label>
-              <input id="interview-guest" class="field" type="text" required />
+            <!--
+            INTERVIEW-ONLY FIELDS.
+
+            Hidden entirely when the row being edited is a video, rather than
+            shown empty. Three questions -- guest, guest role, interviewer -- that
+            have no correct answer for a match highlight invite filler, and filler
+            is what ends up on a public page. The required attribute is moved off
+            the guest input at
+            the same time (see openInterviewEditor) so a hidden field cannot block
+            the form's submission, and the guest column is now genuinely nullable
+            (040), so
+            there is no value to invent for it.
+            -->
+            <div id="interview-only-guest-fields" class="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label class="field-label" id="interview-guest-label" for="interview-guest">Guest</label>
+                <input id="interview-guest" class="field" type="text" required />
+              </div>
+              <div>
+                <label class="field-label" for="interview-guest-role">Guest role</label>
+                <input
+                  id="interview-guest-role"
+                  class="field"
+                  type="text"
+                  placeholder="County Governor"
+                />
+              </div>
             </div>
-            <div>
-              <label class="field-label" for="interview-guest-role">Guest role</label>
-              <input
-                id="interview-guest-role"
-                class="field"
-                type="text"
-                placeholder="County Governor"
-              />
-            </div>
-          </div>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label class="field-label" for="interview-interviewer">Interviewer</label>
-              <input id="interview-interviewer" class="field" type="text" />
-            </div>
-            <div>
-              <label class="field-label" for="interview-status">Status</label>
-              <select id="interview-status" class="field">
-                ${store.INTERVIEW_STATUSES.map(
-                  (status) =>
-                    `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`
-                ).join('')}
-              </select>
-              <p class="ink-muted mt-1 text-xs">
-                Writers file as <strong>pending</strong>; the Owner approves to publish.
-              </p>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <div id="interview-only-interviewer-field">
+                <label class="field-label" for="interview-interviewer">Interviewer</label>
+                <input id="interview-interviewer" class="field" type="text" />
+              </div>
+              <div>
+                <label class="field-label" for="interview-status">Status</label>
+                <select id="interview-status" class="field">
+                  ${store.INTERVIEW_STATUSES.map(
+                    (status) =>
+                      `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`
+                  ).join('')}
+                </select>
+                <p class="ink-muted mt-1 text-xs">
+                  Writers file as <strong>pending</strong>; the Owner approves to publish.
+                </p>
+              </div>
             </div>
           </div>
           <div>
@@ -2572,7 +2626,7 @@ function interviewEditorDialog() {
               placeholder="...or paste an image URL"
             />
           </div>
-          <div>
+          <div id="interview-only-summary-field">
             <label class="field-label" for="interview-summary">Standfirst</label>
             <textarea id="interview-summary" class="field min-h-16" rows="2"></textarea>
           </div>
@@ -4815,14 +4869,12 @@ async function submitMediaFromWriterForm(form) {
     return;
   }
 
+  // A video has no guest field at all, so `subject` is legitimately empty here.
+  // The requirement is asked of an INTERVIEW only, and only when the field is on
+  // screen to answer it.
   const subject = byId('media-sub-subject')?.value.trim() || '';
-  if (!subject) {
-    showToast(
-      mediaSubTab === 'video'
-        ? 'Name what this video covers.'
-        : 'Name the person who was interviewed.',
-      { type: 'error' }
-    );
+  if (mediaSubTab !== 'video' && !subject) {
+    showToast('Name the person who was interviewed.', { type: 'error' });
     byId('media-sub-subject')?.focus();
     return;
   }
@@ -7110,12 +7162,35 @@ function openInterviewEditor(interviewId, category = 'interview') {
   byId('interview-guest-role').value = interview?.guestRole ?? '';
   byId('interview-interviewer').value = interview?.interviewer ?? '';
   byId('interview-status').value = interview?.status ?? 'pending';
-  // The label follows the archive. The column is `guest` for both kinds because
-  // it is NOT NULL and renaming it would rewrite the interview editor and the
-  // byline logic for every existing entry -- but a video form asking for a
-  // "Guest" is a question the person filing a match report cannot answer.
-  const guestLabel = byId('interview-guest-label');
-  if (guestLabel) guestLabel.textContent = isVideo ? 'Subject' : 'Guest';
+
+  /*
+  VIDEO = the four fields and nothing else: headline, YouTube link, status,
+  description.
+
+  The guest fields are REMOVED from the DOM path, not blanked. `hidden` is set on
+  the wrapping div rather than `disabled` on the inputs, because a disabled input
+  is still submitted by the form and would carry a stale guest over from whatever
+  was open before -- an interview edited, then a video created, would silently
+  file the video under the interview's guest.
+  */
+  const interviewOnlyFields = [
+    'interview-only-guest-fields',
+    'interview-only-interviewer-field',
+    'interview-only-summary-field'
+  ];
+  for (const id of interviewOnlyFields) {
+    const field = byId(id);
+    if (field) field.hidden = isVideo;
+  }
+
+  // `required` has to come off the guest input as well. The form carries
+  // `novalidate`, so the browser will not block the submit on its own -- but the
+  // attribute still drives assistive technology, and a control announced as
+  // required that is not on screen is a lie. An interview still requires one;
+  // saveInterviewFromForm() is what refuses to save an interview without one.
+  const guestInput = byId('interview-guest');
+  if (guestInput) guestInput.required = !isVideo;
+
   byId('interview-summary').value = interview?.summary ?? '';
   byId('interview-description').value = interview?.description ?? '';
   byId('interview-image').value = interview?.image ?? '';
@@ -7132,13 +7207,20 @@ function openInterviewEditor(interviewId, category = 'interview') {
 
 /** CREATE or UPDATE an interview from the editor dialog. */
 async function saveInterviewFromForm() {
+  const isVideo = editingMediaCategory === 'video';
   const payload = {
     title: byId('interview-title').value,
-    guest: byId('interview-guest').value,
-    guestRole: byId('interview-guest-role').value,
-    interviewer: byId('interview-interviewer').value,
+    // Read from the DOM ONLY for an interview. For a video these three are sent
+    // as empty strings regardless of what the inputs happen to contain, because
+    // the inputs are hidden rather than absent and a value left over from an
+    // interview opened earlier in the session would otherwise be written onto the
+    // video row -- an edit that looks like it filed a match highlight and instead
+    // filed it under a politician's name.
+    guest: isVideo ? '' : byId('interview-guest').value,
+    guestRole: isVideo ? '' : byId('interview-guest-role').value,
+    interviewer: isVideo ? '' : byId('interview-interviewer').value,
     status: byId('interview-status').value,
-    summary: byId('interview-summary').value,
+    summary: isVideo ? '' : byId('interview-summary').value,
     description: byId('interview-description').value,
     image: byId('interview-image').value.trim(),
     videoIds: interviewVideoDraft,
@@ -7149,29 +7231,30 @@ async function saveInterviewFromForm() {
     category: editingMediaCategory
   };
 
-  const isVideo = editingMediaCategory === 'video';
   const noun = isVideo ? 'video' : 'interview';
 
   if (!payload.title.trim()) {
-    showToast('Every interview needs a headline.', { type: 'error' });
+    showToast(
+      isVideo ? 'Every video needs a headline.' : 'Every interview needs a headline.',
+      { type: 'error' }
+    );
     byId('interview-title').focus();
     return;
   }
 
-  // The guest is the subject of the interview, so a record without one is a
-  // record nobody can identify in the Owner's queue. Title alone is not enough.
-  //
-  // `interviews.guest` is NOT NULL, so a video needs a value here too -- but
-  // "the person who was interviewed" is the wrong instruction for a match
-  // report, and the label on the field says "Guest". So for a video the prompt
-  // names what the column actually holds: the subject of the coverage.
-  if (!payload.guest.trim()) {
-    showToast(
-      isVideo
-        ? 'Name what this video covers, e.g. the teams or the event.'
-        : 'Name the person who was interviewed.',
-      { type: 'error' }
-    );
+  /*
+  A video is saved with NO guest, and this is the only place that decides that.
+  The column is nullable since 040 precisely so this branch can exist: the form
+  hides the field, the store no longer invents 'Unnamed guest', and the renderers
+  fall back to the title. Any one of those three lying would put a placeholder on
+  a public page.
+
+  An interview still refuses to save without one -- a conversation with no
+  subject is a record nobody can identify in the Owner's queue, and that rule
+  belongs here, where the question is actually asked.
+  */
+  if (!isVideo && !payload.guest.trim()) {
+    showToast('Name the person who was interviewed.', { type: 'error' });
     byId('interview-guest').focus();
     return;
   }

@@ -317,6 +317,36 @@ report(
   (await store.createInterview({})).title.length > 0
 );
 
+/*
+A video has no guest. `interviewRowFrom` used to coerce a blank guest to the
+literal string 'Unnamed guest', which existed only to satisfy 022's NOT NULL --
+and that string is the card's HEADLINE, so a video's archive card read
+"Unnamed guest" in the same type as a person's name. 040 makes the column
+nullable and the video form omits the field; this asserts the placeholder is
+gone, because it would otherwise still be sitting in the database where an
+editor could not tell it apart from something a human typed.
+*/
+const guestlessVideo = await store.createInterview({
+  title: 'House athletics final',
+  category: 'video',
+  status: 'published',
+  videoIds: [ID_A]
+});
+report(
+  "a video with no guest stores a blank one, not the 'Unnamed guest' placeholder",
+  guestlessVideo.guest === '',
+  JSON.stringify(guestlessVideo.guest)
+);
+report(
+  'and it is still a video, not silently filed as an interview',
+  guestlessVideo.category === 'video',
+  guestlessVideo.category
+);
+report(
+  "the 'Unnamed guest' placeholder cannot come back through an update either",
+  (await store.updateInterview(guestlessVideo.id, { title: 'Renamed' })).guest === ''
+);
+
 section('CRUD — update');
 
 const updated = await store.updateInterview(created.id, {

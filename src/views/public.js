@@ -750,7 +750,7 @@ const mediaPages = { interview: 1, video: 1 };
  * @param {number} index 1-based, for the label
  * @returns {string} markup, or '' if the id is unusable
  */
-function interviewEmbed(videoId, title, index) {
+function interviewEmbed(videoId, title, index, nounLower = 'interview') {
   /*
   Asserted against YOUTUBE_EMBED_HOSTS rather than trusted because it came out of
   our own youtubeEmbedUrl(). The id is the untrusted part -- it arrives from a
@@ -778,7 +778,7 @@ function interviewEmbed(videoId, title, index) {
       </div>
       <figcaption class="interview-embed__caption">
         <span class="interview-embed__part" aria-hidden="true">${index}</span>
-        <span>Part ${index} of this interview</span>
+        <span>Part ${index} of this ${nounLower}</span>
       </figcaption>
     </figure>
   `;
@@ -794,6 +794,14 @@ function interviewEmbed(videoId, title, index) {
  * @param {object} interview
  */
 function interviewCard(interview) {
+  const isVideo = interview.category === 'video';
+  /*
+  `guest` is empty for a video -- there is no person being interviewed -- so the
+  headline falls back to the title. It must NOT fall back to the old
+  'Unnamed guest' placeholder: that string would sit in the position of a real
+  headline, in the same type, on the public archive.
+  */
+  const heading = interview.guest || interview.title || (isVideo ? 'Untitled video' : 'Untitled interview');
   if (!interview) return '';
   const poster = safeUrl(interview.image) || BLANK_IMAGE;
   const videoCount = (interview.videoIds || []).length;
@@ -821,22 +829,32 @@ function interviewCard(interview) {
 
       <div class="flex flex-1 flex-col p-4">
         <p class="text-[0.625rem] font-semibold tracking-[0.12em] uppercase">
-          <span class="accent-text">Interview</span>
+          <span class="accent-text">${isVideo ? 'Video' : 'Interview'}</span>
           ${
-            interview.guestRole
+            !isVideo && interview.guestRole
               ? `<span class="ink-muted"> · ${escapeHtml(interview.guestRole)}</span>`
               : ''
           }
         </p>
 
         <h3 class="mt-2 font-headline text-lg leading-tight font-black">
-          ${escapeHtml(interview.guest || 'Unnamed guest')}
+          ${escapeHtml(heading)}
         </h3>
 
-        <p class="ink-muted mt-1 text-[0.6875rem]">
-          ${escapeHtml(interview.title)}
-          ${interview.interviewer ? ` · by ${escapeHtml(interview.interviewer)}` : ''}
-        </p>
+        ${
+          // Only when there IS a guest: with none, the title is already the
+          // headline above and printing it again says the same thing twice.
+          interview.guest
+            ? `<p class="ink-muted mt-1 text-[0.6875rem]">
+                 ${escapeHtml(interview.title)}
+                 ${
+                   interview.interviewer
+                     ? ` · by ${escapeHtml(interview.interviewer)}`
+                     : ''
+                 }
+               </p>`
+            : ''
+        }
 
         ${
           interview.summary
@@ -850,7 +868,7 @@ function interviewCard(interview) {
           interview.id
         )}">
           <i class="fa-solid fa-play" aria-hidden="true"></i>
-          Watch the interview
+          ${isVideo ? 'Watch the video' : 'Watch the interview'}
         </button>
       </div>
     </article>
@@ -1126,7 +1144,11 @@ export function openInterview(id) {
   // anything unparseable and caps the list, so a row written before the CHECK was
   // tightened still renders three or fewer embeds rather than anything it holds.
   const videos = store.readVideoIds(interview.videoIds);
-  const label = interview.guest || interview.title || 'Interview';
+  const isVideo = interview.category === 'video';
+  // Same fallback as the card, for the same reason: a video has no guest and the
+  // title is the headline.
+  const label = interview.guest || interview.title || (isVideo ? 'Untitled video' : 'Untitled interview');
+  const nounLower = isVideo ? 'video' : 'interview';
 
   /*
   published_at is a timestamptz, and the feed orders by it, so it is the date the
@@ -1161,7 +1183,7 @@ export function openInterview(id) {
 
       <div class="p-6 md:p-8">
         <div class="flex flex-wrap items-center gap-2 text-[0.625rem] font-semibold tracking-[0.14em] uppercase">
-          <span class="badge badge-gold">Interview</span>
+          <span class="badge badge-gold">${isVideo ? 'Video' : 'Interview'}</span>
           ${shown ? `<span class="ink-muted font-mono">${escapeHtml(shown)}</span>` : ''}
         </div>
 
@@ -1169,24 +1191,41 @@ export function openInterview(id) {
           ${escapeHtml(label)}
         </h2>
 
-        <p class="ink-muted mt-2 text-xs font-semibold tracking-wide uppercase">
-          ${interview.guestRole ? escapeHtml(interview.guestRole) : ''}${interview.guestRole && interview.interviewer ? ' &middot; ' : ''}${interview.interviewer ? `by ${escapeHtml(interview.interviewer)}` : ''}
-        </p>
+        ${
+          // Only with a guest to justify it. Without one the label above IS the
+          // title, and repeating it here would print the headline twice in the
+          // same column.
+          interview.guest && (interview.guestRole || interview.interviewer)
+            ? `<p class="ink-muted mt-2 text-xs font-semibold tracking-wide uppercase">
+                 ${interview.guestRole ? escapeHtml(interview.guestRole) : ''}${
+                   interview.guestRole && interview.interviewer ? ' &middot; ' : ''
+                 }${interview.interviewer ? `by ${escapeHtml(interview.interviewer)}` : ''}
+               </p>`
+            : ''
+        }
 
-        ${interview.title ? `<h3 class="mt-4 font-headline text-lg leading-snug font-bold">${escapeHtml(interview.title)}</h3>` : ''}
+        ${
+          interview.guest && interview.title
+            ? `<h3 class="mt-4 font-headline text-lg leading-snug font-bold">${escapeHtml(interview.title)}</h3>`
+            : ''
+        }
 
         ${interview.summary ? `<p class="mt-3 text-base leading-relaxed">${escapeHtml(interview.summary)}</p>` : ''}
 
         ${
           videos.length
             ? `<div class="mt-8 space-y-6">
-                 ${videos.map((videoId, index) => interviewEmbed(videoId, label, index + 1)).join('')}
+                 ${videos
+                   .map((videoId, index) =>
+                     interviewEmbed(videoId, label, index + 1, isVideo ? 'video' : 'interview')
+                   )
+                   .join('')}
                </div>`
-            : `<p class="ink-muted mt-8 text-sm">No recording has been attached to this interview yet.</p>`
+            : `<p class="ink-muted mt-8 text-sm">No recording has been attached to this ${nounLower} yet.</p>`
         }
 
         <div class="first-letter-cap mt-8">${
-          paragraphs || '<p class="mt-4">This interview has no written notes yet.</p>'
+          paragraphs || '<p class="mt-4">This ${nounLower} has no written notes yet.</p>'
         }</div>
       </div>
     </article>

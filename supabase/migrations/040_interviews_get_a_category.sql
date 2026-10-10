@@ -57,10 +57,41 @@
 --  and `for update` policies are separate and a Writer's legitimate status
 --  update must still work.
 --
---  SAFE TO RE-RUN. Idempotent.
+-- SAFE TO RE-RUN. Idempotent.
 -- =============================================================================
 
 begin;
+
+-- -----------------------------------------------------------------------------
+-- 1b. `guest` becomes NULLABLE -- and this is why the video form can be clean.
+--
+-- 022 declared `guest text not null`, correctly: an interview with no guest is a
+-- record nobody can identify in the Owner's queue. But the column is SHARED, so
+-- that same rule forces the field onto the video form, where it is a question
+-- with no correct answer -- a person filing a school match highlight is asked to
+-- name "the person who was interviewed" and there is no such person.
+--
+-- The alternative was to keep the constraint and ask anyway. That is the thing
+-- being removed: a field nobody can answer correctly trains people to type
+-- filler, and the filler ends up on a public page.
+--
+-- Safe in the only direction that matters -- it cannot change a row that
+-- already has a value, so no existing interview is affected. The requirement
+-- moves to where the question is asked: the editor still REQUIRES a guest for an
+-- INTERVIEW, so nothing stops being mandatory where it is meaningful.
+--
+-- `guest_role` and `interviewer` were ALREADY nullable, so the other two fields
+-- dropped from the video form cost nothing.
+--
+-- SAFE TO RE-RUN. Idempotent.
+-- -----------------------------------------------------------------------------
+
+alter table public.interviews
+  alter column guest drop not null;
+
+commit;
+
+-- =============================================================================
 
 -- -----------------------------------------------------------------------------
 -- 1. The column.
