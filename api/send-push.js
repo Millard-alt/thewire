@@ -137,6 +137,16 @@ async function isOwnerSession(req, db) {
       console.warn(`${TAG} owner session check failed`, error.message);
       return false;
     }
+    // The header travels on the client built above, so `token_seen` and
+    // `session_resolved` are real signals here rather than always-false. Logging
+    // them is what turns "401, signed in as the Owner, obviously" into a
+    // diagnosis: token_seen false means the header never arrived at PostgREST.
+    console.log(`${TAG} owner session`, {
+      tokenSeen: data?.token_seen ?? null,
+      resolved: data?.session_resolved ?? null,
+      isOwner: data?.is_owner ?? null,
+      status: data?.status ?? null
+    });
     return Boolean(data && data.session_resolved && data.is_owner);
   } catch (error) {
     console.warn(`${TAG} owner session check threw`, error.message);
@@ -267,8 +277,37 @@ export default async function handler(req, res) {
   }
 
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE);
-  const db = createClient(SUPABASE_URL, SUPABASE_KEY, {
+
+  /*
+   * THE OWNER-SESSION CLIENT IS SEPARATE, AND DELIBERATELY SO.
+   *
+   * `db` above runs as service_role and must NOT carry the caller's token:
+   * service_role bypasses RLS, so attaching `x-wire-token` would do nothing
+   * useful and only risk confusing the diagnostics.
+   *
+   * `isOwnerSession` is different. It asks "is THIS request the Owner?", and the
+   * answer is resolved by `wire_bearer_token()`, which reads the PostgREST GUC
+   * `request.headers` ->> 'x-wire-token'. If the header is not on the outgoing
+   * request, Postgres sees no session, `current_account_id()` is null, and
+   * `is_owner` is false -- so the Owner Panel was refused with 401 while signed
+   * in as the Owner. The browser client has always forwarded the header for this
+   * reason (`withSessionToken` in src/lib/supabase.js); the serverless function
+   * was reading the token off `req.headers` and then never sending it anywhere.
+   *
+   * Uses the ANON key deliberately: the question is "what does the RLS layer
+   * make of this session", and only the anon role gets an answer that reflects
+   * the policies rather than a service_role bypass.
+   */
+  const ownerCheck = createClient(SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY || '', {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      fetch: (input, init = {}) => {
+        const token = req.headers['x-wire-token'] || req.headers['X-Wire-Token'];
+        const headers = new Headers(init.headers || {});
+        if (token) headers.set('x-wire-token', token);
+        return fetch(input, { ...init, headers });
+      }
+    }
   });
 
   // Authenticate before doing any real work, so an unauthorised call costs one
@@ -280,7 +319,7 @@ export default async function handler(req, res) {
   // rather than silently degrading to in-app only.
   if (hasSharedSecret(req)) {
     // Authorised by PUSH_SEND_TOKEN.
-  } else if (!(await isOwnerSession(req, db))) {
+  } else if (!(await isOwnerSession(req, ownerCheck))) {
     return fail(
       res,
       PUSH_TOKEN ? 401 : 503,

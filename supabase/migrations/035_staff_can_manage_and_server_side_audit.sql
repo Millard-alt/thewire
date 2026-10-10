@@ -147,7 +147,16 @@ begin
     raise exception 'audit_action_required' using errcode = '22023';
   end if;
 
-  select coalesce(a.username, s.display_name, a.username)
+  -- `s.name`, NOT `s.display_name`. `public.staff` has a `name` column
+  -- (schema.sql:50); `display_name` is on `staff_accounts`. Reading the wrong
+  -- one made this function fail at RUNTIME with 42703 on every single audit
+  -- write, which is invisible until the panel is already in production and the
+  -- changelog quietly stops recording anything.
+  --
+  -- The profile name is preferred over the account username because it is what
+  -- readers see on a byline. `coalesce` keeps this working for an account with
+  -- no profile row at all.
+  select coalesce(nullif(trim(s.name), ''), a.username)
     into v_actor
     from public.staff_accounts a
     left join public.staff s
@@ -294,6 +303,47 @@ begin
       'to this database. Article writes remain open to every staff member. Run '
       '007 and 033, then re-run 035.';
   end if;
+
+  -- (f) THE FUNCTION MUST ACTUALLY RUN.
+  --
+  --     plpgsql does NOT validate a function body at CREATE time. A reference to
+  --     a missing column raises 42703 only when the function RUNS, so the
+  --     `s.display_name` bug applied cleanly, passed every check above, and then
+  --     failed on the first audit write in production -- leaving the changelog
+  --     silently empty.
+  --
+  --     Everything else in this block inspects POLICIES, and policies are rows in
+  --     pg_policies rather than a compiled body, so none of them could see a bad
+  --     column reference.
+  --
+  --     This CALLS the function, in a subtransaction so a failure is contained
+  --     here rather than aborting the migration and taking every later
+  --     statement with it. It is a raise-and-catch rather than a source scan
+  --     because the source scan has a false positive: `prosrc` holds the body
+  --     only, but a `raise exception` inside this very DO block would otherwise
+  --     make "the body mentions display_name" true for reasons that have nothing
+  --     to do with the function.
+  --
+  --     Called with no session, so it takes the `audit_not_permitted` path --
+  --     which still executes the actor SELECT, which is exactly the statement
+  --     that was wrong. A missing column raises before the permission check is
+  --     ever reached.
+  declare
+    ran text;
+  begin
+    begin
+      perform public.wire_log_audit('035 self-check');
+      ran := 'ran';
+    exception when others then
+      ran := sqlerrm;
+    end;
+
+    if ran like '%does not exist%' then
+      raise exception
+        'wire_log_audit does not run: % . A column it references is missing -- '
+        'every audit write will fail the same way.', ran;
+    end if;
+  end;
 
   raise notice '035 verified: policies re-scoped, audit writes server-side only.';
 end;

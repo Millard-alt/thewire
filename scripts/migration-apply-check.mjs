@@ -116,10 +116,16 @@ await stage('schemas, roles, tables', `
     is_owner boolean default false
   );
 
+  -- The column is 'name'. schema.sql:50 defines public.staff.name, and the live
+  -- database was found the hard way: 035's wire_log_audit joined public.staff on
+  -- s.display_name, which does not exist, so EVERY audit write failed at runtime
+  -- with 42703. This scaffold had invented a display_name column, so the migration
+  -- passed here and failed in production. A test fixture that does not match the
+  -- real schema certifies the wrong thing.
   create table public.staff (
     id           uuid primary key default gen_random_uuid(),
+    name         text,
     username     text,
-    display_name text,
     email        text,
     portrait_url text
   );
@@ -239,7 +245,7 @@ await db.query(
   [OWNER, MANAGER, WRITER, PENDING]
 );
 await db.query(
-  `insert into public.staff (username, display_name) values
+  `insert into public.staff (username, name) values
      ('owner','Melvin Jones'),('manager','Grace M'),('writer','Rita W'),('pending','Pat P')`
 );
 for (const [tok, acct] of [['tok-owner', OWNER], ['tok-manager', MANAGER],
@@ -564,8 +570,12 @@ await allowed('the Owner can still read the audit log', 'authenticated', 'tok-ow
     bad('wire_log_audit failed: ' + r.error);
   } else {
     const row = (await db.query(`select actor_name from public.audit_logs where action='probe action'`)).rows[0];
-    if (row && row.actor_name === 'writer') ok('wire_log_audit filled actor_name from the SESSION: "' + row.actor_name + '"');
-    else bad('wire_log_audit recorded actor "' + row?.actor_name + '", expected "writer"');
+    // "Rita W", NOT "writer". The actor is the PROFILE name from public.staff,
+    // because that is what appears on a byline; staff_accounts.username is the
+    // login. Asserting the username here is what let the s.display_name bug look
+    // harmless for as long as it did.
+    if (row && row.actor_name === 'Rita W') ok('wire_log_audit filled actor_name from the SESSION, as the profile name: "' + row.actor_name + '"');
+    else bad('wire_log_audit recorded actor "' + row?.actor_name + '", expected "Rita W"');
   }
 }
 
