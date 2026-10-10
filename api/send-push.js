@@ -297,18 +297,33 @@ export default async function handler(req, res) {
    * Uses the ANON key deliberately: the question is "what does the RLS layer
    * make of this session", and only the anon role gets an answer that reflects
    * the policies rather than a service_role bypass.
+   *
+   * GUARDED, because `createClient(url, '')` THROWS synchronously ("supabaseKey
+   * is required"). Left unguarded that throw escapes every try/catch in this
+   * file and Vercel reports a bare 500 with no code and no detail -- which is
+   * exactly what an unset VITE_SUPABASE_ANON_KEY produced. A missing setting
+   * should name itself.
    */
-  const ownerCheck = createClient(SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY || '', {
-    auth: { persistSession: false, autoRefreshToken: false },
-    global: {
-      fetch: (input, init = {}) => {
-        const token = req.headers['x-wire-token'] || req.headers['X-Wire-Token'];
-        const headers = new Headers(init.headers || {});
-        if (token) headers.set('x-wire-token', token);
-        return fetch(input, { ...init, headers });
+  const ownerAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
+  let ownerCheck = null;
+  if (ownerAnonKey) {
+    ownerCheck = createClient(SUPABASE_URL, ownerAnonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: {
+        fetch: (input, init = {}) => {
+          const token = req.headers['x-wire-token'] || req.headers['X-Wire-Token'];
+          const headers = new Headers(init.headers || {});
+          if (token) headers.set('x-wire-token', token);
+          return fetch(input, { ...init, headers });
+        }
       }
-    }
-  });
+    });
+  } else {
+    console.error(
+      `${TAG} VITE_SUPABASE_ANON_KEY is not set, so the Owner session cannot be ` +
+      'verified. The Owner Panel will be refused. Set it in Vercel.'
+    );
+  }
 
   // Authenticate before doing any real work, so an unauthorised call costs one
   // round-trip and never reaches the subscriber list.
@@ -319,6 +334,18 @@ export default async function handler(req, res) {
   // rather than silently degrading to in-app only.
   if (hasSharedSecret(req)) {
     // Authorised by PUSH_SEND_TOKEN.
+  } else if (!ownerCheck) {
+    // A misconfiguration, not an authentication failure. Say so with a 503 and
+    // name the variable, because "unauthorised" would send the Owner looking at
+    // their session when the problem is a missing Vercel setting.
+    return fail(
+      res,
+      503,
+      'owner_check_unavailable',
+      'VITE_SUPABASE_ANON_KEY is not set in this deployment, so the Owner ' +
+        'session cannot be verified. The Owner Panel cannot send broadcasts ' +
+        'until it is set. (PUSH_SEND_TOKEN and the cron are unaffected.)'
+    );
   } else if (!(await isOwnerSession(req, ownerCheck))) {
     return fail(
       res,

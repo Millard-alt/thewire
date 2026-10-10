@@ -6647,6 +6647,10 @@ export async function sendBroadcastFromForm(form) {
       unauthorised: 'The push sender refused the request — sign in as the Owner and try again.',
       push_send_token_unset:
         'PUSH_SEND_TOKEN is not set in Vercel and the panel could not authenticate.',
+      owner_check_unavailable:
+        'The server cannot verify an Owner session — VITE_SUPABASE_ANON_KEY is ' +
+        'missing from the Vercel deployment. This is a setting on the server, not ' +
+        'a problem with your sign-in; the Owner needs to add it and redeploy.',
       no_subscribers:
         'No device has a usable push subscription yet. Readers must turn on alerts first.',
       target_has_no_devices: targeted
