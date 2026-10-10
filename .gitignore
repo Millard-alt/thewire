@@ -57,3 +57,5 @@ vite-*.log
 # source, and regenerated on demand. Unlike `dist/` it was not ignored, so it
 # showed up as untracked noise in `git status`.
 .vite/
+.vercel
+.env*
