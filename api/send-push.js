@@ -279,20 +279,41 @@ export default async function handler(req, res) {
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE);
 
   /*
-   * THE OWNER-SESSION CLIENT IS SEPARATE, AND DELIBERATELY SO.
+   * TWO CLIENTS, DELIBERATELY.
    *
-   * `db` above runs as service_role and must NOT carry the caller's token:
-   * service_role bypasses RLS, so attaching `x-wire-token` would do nothing
-   * useful and only risk confusing the diagnostics.
+   * `db` runs as service_role and is the workhorse: the claim, the subscription
+   * read, the prune, the delivered_count write. It must NOT carry the caller's
+   * `x-wire-token` -- service_role bypasses RLS, so the header would do nothing
+   * useful and would only muddy the diagnostics.
    *
-   * `isOwnerSession` is different. It asks "is THIS request the Owner?", and the
-   * answer is resolved by `wire_bearer_token()`, which reads the PostgREST GUC
-   * `request.headers` ->> 'x-wire-token'. If the header is not on the outgoing
-   * request, Postgres sees no session, `current_account_id()` is null, and
-   * `is_owner` is false -- so the Owner Panel was refused with 401 while signed
-   * in as the Owner. The browser client has always forwarded the header for this
-   * reason (`withSessionToken` in src/lib/supabase.js); the serverless function
-   * was reading the token off `req.headers` and then never sending it anywhere.
+   * `ownerCheck` below is a separate anon client used for exactly one question:
+   * "is THIS request the Owner?". That answer has to come from the anon role,
+   * because only the anon role gets an answer that reflects what the RLS
+   * policies make of the session rather than a service_role bypass.
+   *
+   * Getting this wrong is not hypothetical. An earlier revision of this comment
+   * block REPLACED the `db` declaration instead of sitting beside it, so `db`
+   * stopped existing and every later use raised
+   `ReferenceError: db is not defined` -- after authentication had already
+   * succeeded, so the Owner saw an opaque 500 on a broadcast that had been
+   * accepted. Both clients are declared here, in order, and the workhorse is
+   * declared FIRST so it cannot be accidentally replaced by the second.
+   */
+  const db = createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+
+  /*
+   * THE OWNER-SESSION CLIENT. One question only: "is this the Owner?"
+   *
+   * The answer is resolved by `wire_bearer_token()`, which reads the PostgREST
+   * GUC `request.headers` ->> 'x-wire-token'. If the header is not on the
+   * outgoing request, Postgres sees no session, `current_account_id()` is null,
+   * and `is_owner` is false -- so the Owner Panel was refused with 401 while
+   * signed in as the Owner. The browser client has always forwarded the header
+   * for this reason (`withSessionToken` in src/lib/supabase.js); the serverless
+   * function was reading the token off `req.headers` and then never sending it
+   * anywhere.
    *
    * Uses the ANON key deliberately: the question is "what does the RLS layer
    * make of this session", and only the anon role gets an answer that reflects
