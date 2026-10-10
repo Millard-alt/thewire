@@ -329,6 +329,33 @@ await stage('pre-034 and pre-035 policies', `
   create policy podcasts_delete on storage.objects for delete
     using (bucket_id = 'podcasts' and public.is_owner());
 
+  -- The predicate interviews_delete_own is built on, and the row it needs to
+  -- match a writer's own row.
+  -- WITHOUT IT that policy can never match, and a Writer silently loses the
+  -- ability to withdraw their own pending submission -- exactly the failure this
+  -- section exists to catch, and exactly what happened the first time it ran:
+  -- the assertion failed with "0 rows" and the cause was a missing function in
+  -- the fixture, not a missing grant in the policy.
+  --
+  -- SECURITY DEFINER with a pinned search_path, same as the real one: it reads
+  -- staff_accounts, which anon cannot select.
+  -- The ownership arm is load-bearing and mirrors the real function:
+  -- 022 requires author_account_id to be non-null AND equal to the current
+  -- account. An earlier version of this fixture omitted the null check, which let
+  -- every seeded row be claimable by whoever asked -- and the "a Writer cannot
+  -- delete somebody else's row" assertions then failed for a reason that had
+  -- nothing to do with the policy under test.
+  create function public.wire_owns_interview(p_id uuid) returns boolean
+  language sql stable security definer set search_path = public, extensions as $fn$
+    select exists (
+      select 1 from public.interviews i
+       where i.id = p_id
+         and i.author_account_id is not null
+         and i.author_account_id = public.current_account_id()
+    )
+  $fn$;
+  grant execute on function public.wire_owns_interview(uuid) to anon, authenticated;
+
   -- 022 + 033 verbatim. 040 rebuilds interviews_staff_insert and adds the
   -- category guard, so the PRE-040 state has to be right or this tests a strawman.
   create policy interviews_public_read on public.interviews for select to anon, authenticated
@@ -343,11 +370,21 @@ await stage('pre-034 and pre-035 policies', `
     using (author_account_id = public.current_account_id()) with check (author_account_id = public.current_account_id());
   create policy interviews_approver_update on public.interviews for update to anon, authenticated
     using (public.can_approve()) with check (public.can_approve());
+  -- Needed because the fixture does NOT apply migration 022, which is where this
+  -- policy is really created. Without it a Writer has no delete path at all and
+  -- "can they withdraw their own pending submission?" fails for a reason that has
+  -- nothing to do with the answer.
+  create policy interviews_delete_own on public.interviews for delete to anon, authenticated
+    using (public.wire_owns_interview(id));
 `);
 
 // Two interviews that already exist, both PUBLISHED, both readers can see today.
 // If the backfill puts either on the wrong side of the split it silently
 // disappears from /interviews, which is the regression this test exists for.
+//
+// Filed BY the writer, which several later assertions depend on: "a Writer can
+// still edit their own row" and "the Owner can re-file" both act on these. The
+// reject assertions use their OWN seeded rows instead.
 await db.exec(`
   insert into public.interviews (title, guest, status, author_account_id, created_at) values
     ('Chair interview', 'Hon. Kari',  'published', '33333333-3333-3333-3333-333333333333', now() - interval '5 days'),
@@ -1176,6 +1213,84 @@ await denied('a Writer CANNOT file an already-published video', 'anon', 'tok-wri
   if (cons.rows.length) ok('a check constraint holds the vocabulary: ' + cons.rows[0].def);
   else bad('no check constraint: any string can be stored in category');
 }
+
+/**
+ * A pending row owned by somebody, for the reject-path assertions.
+ *
+ * `author` DEFAULTS TO A DIFFERENT ACCOUNT on purpose. defaulting it to the
+ * writer would make "another writer's submission" a misnomer -- the row would
+ * genuinely belong to the very account being tested against, and the assertion
+ * would fail for a reason that has nothing to do with the policy.
+ */
+const OTHER_AUTHOR = '44444444-4444-4444-4444-444444444444';
+const seedPendingSubmission = async (title, author = OTHER_AUTHOR) => {
+  await asRole('anon', 'tok-owner', () => db.query(
+    `insert into public.interviews (title, guest, status, category, author_account_id)
+     values ($1, 'X', 'pending', 'interview', $2)`, [title, author]));
+};
+
+// --- an approver can reject a PENDING submission ---------------------------
+// The Owner Panel always had Approve, and refusing one was the one thing a Board
+// Manager could not do: interviews_delete_own is wire_owns_interview(id) and
+// interviews_owner_all is the Owner seat, so a Manager's delete matched neither.
+// RLS FILTERS rather than raising, so it removed nothing and the panel reported
+// success. The queue could be approved from and never emptied.
+await seedPendingSubmission('approver-reject-me');
+
+// The writer withdraws their OWN pending submission -- still allowed. The new
+// approver policy is ADDITIVE, so it must not have displaced this one.
+await seedPendingSubmission('writer own pending', WRITER);
+{
+  const r = await asRole('anon', 'tok-writer',
+    () => db.query(`delete from public.interviews where title = 'writer own pending'`));
+  const gone = r.ok && (r.value.rowCount ?? 0) > 0;
+  if (gone) ok('a Writer can still withdraw their OWN pending submission');
+  else bad('a Writer cannot withdraw their own pending submission: ' + (r.error || '0 rows'));
+}
+
+// A Board Manager refuses somebody else's. This is the gap.
+await allowed('a Board Manager CAN reject a PENDING submission', 'authenticated', 'tok-manager',
+  `delete from public.interviews where title = 'approver-reject-me'`, 'delete');
+
+// ... but NOT a published one. That stays the Owner's decision, matching 038's
+// split for podcasts.
+await allowed('the Owner can still delete a published episode', 'authenticated', 'tok-owner', `select 1`, 'select');
+{
+  await asRole('anon', 'tok-owner', () => db.query(`
+    insert into public.interviews (title, guest, status, category, author_account_id)
+    values ('live item','X','published','interview',
+            '33333333-3333-3333-3333-333333333333')`));
+  await denied('a Board Manager CANNOT delete a PUBLISHED interview', 'authenticated', 'tok-manager',
+    `delete from public.interviews where title = 'live item'`, 'delete');
+// A Writer may delete their OWN interview at ANY status, published included.
+//
+// Asserted because it looks like a hole and is not. interviews_delete_own is
+// scoped by OWNERSHIP alone, not by status, and the panel offers Delete on a
+// writer's own row whatever its status -- so this is intended, and a test
+// asserting the opposite would fail against correct code.
+//
+// Which is what happened while writing these: the row under test was seeded as
+// the writer's own, so "a Writer cannot delete somebody else's row" failed on it.
+// The row WAS the writer's; the assertion was aimed at the wrong row.
+await allowed('a Writer CAN delete their OWN published interview (ownership gates it, not status)',
+  'authenticated', 'tok-writer', `delete from public.interviews where title = 'live item'`, 'delete');
+}
+
+// A Writer still cannot reach into somebody else's PENDING row either. The new
+// policy is additive, so this must still hold.
+await seedPendingSubmission('not-yours', OTHER_AUTHOR);
+await denied('a Writer CANNOT delete another writer\'s pending submission', 'authenticated', 'tok-writer',
+  `delete from public.interviews where title = 'not-yours'`, 'delete');
+{
+  const r = await asRole('anon', 'tok-manager',
+    () => db.query(`delete from public.interviews where title = 'not-yours'`));
+  const gone = r.ok && (r.value.rowCount ?? 0) > 0;
+  if (gone) ok('...but a Board Manager CAN, which is the point of the queue');
+  else bad('a Board Manager could not reject another writer\'s pending submission');
+}
+
+await denied('a SUSPENDED Board Manager cannot reject anything', 'authenticated', 'tok-pending',
+  `delete from public.interviews where title = 'live item'`, 'delete');
 
 // ===========================================================================
 await db.close();

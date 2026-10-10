@@ -798,6 +798,93 @@ function renderContent() {
 let mediaSubTab = 'interview';
 
 /**
+ * A Writer's Videos & Interviews tab is SUBMIT-ONLY.
+ *
+ * The same shape as `podcastSubmitPanel`, and for the same reasons: a writer who
+ * lands on a grid of other people's work has no obvious next action, and a queue
+ * they cannot act in is a dead end. It also keeps unpublished submissions out of
+ * the document of someone with no business reading them.
+ *
+ * YouTube-link only, deliberately. An interview is a recording hosted by whoever
+ * recorded it -- a phone, a camera, someone else's channel -- so there is no
+ * upload for the writer to make and no bucket to put a file in. The brief asks
+ * for a link, and that is also the only shape this feature can support without
+ * inventing a media pipeline that does not exist here.
+ */
+function mediaSubmitPanel() {
+  const isVideo = mediaSubTab === 'video';
+  const noun = isVideo ? 'video' : 'interview';
+
+  return `
+    <div class="space-y-5">
+      ${panelHeader(
+        isVideo ? 'Submit a video' : 'Submit an interview',
+        'Paste the YouTube link. The video id is taken from it, so you can paste the ' +
+          'page link, the short link, or the embed link and it does not matter which.',
+        ''
+      )}
+
+      <p class="panel-sunken p-4 text-xs ink-muted">
+        <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+        Everything you file here starts as <strong>pending</strong> and stays off the public
+        site until the Owner or a Board Manager approves it. You cannot approve your own
+        submission, and neither can anyone else without that seat &mdash; which is exactly
+        what stops an unreviewed recording going live by accident.
+      </p>
+
+      <form id="media-submit-form" class="panel-raised space-y-4 p-4" novalidate>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label class="field-label" for="media-sub-title">Title</label>
+            <input id="media-sub-title" class="field" type="text" maxlength="120" required />
+          </div>
+          <div>
+            <label class="field-label" for="media-sub-subject">${
+              isVideo ? 'Subject' : 'Guest'
+            }</label>
+            <input id="media-sub-subject" class="field" type="text" maxlength="80"
+              placeholder="${isVideo ? 'e.g. House athletics final' : 'Who was interviewed'}" required />
+          </div>
+        </div>
+
+        <div>
+          <label class="field-label" for="media-sub-url">YouTube link</label>
+          <input id="media-sub-url" class="field" type="url" required
+                 placeholder="https://www.youtube.com/watch?v=..." />
+          <p id="media-sub-url-help" class="mt-1 text-xs ink-muted">
+            The 11-character id is read out of the link, so you can paste any YouTube URL.
+          </p>
+        </div>
+
+        <div>
+          <label class="field-label" for="media-sub-summary">One-line summary</label>
+          <input id="media-sub-summary" class="field" type="text" maxlength="140" />
+        </div>
+
+        <div>
+          <label class="field-label" for="media-sub-description">Description</label>
+          <textarea id="media-sub-description" class="field min-h-24" rows="4"
+                    maxlength="2000"></textarea>
+        </div>
+
+        <div>
+          <label class="field-label" for="media-sub-poster">Thumbnail image URL</label>
+          <input id="media-sub-poster" class="field" type="url"
+                 placeholder="Optional. Falls back to a plain card." />
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2 pt-1">
+          <button type="submit" class="btn btn-accent" data-action="media-submit">
+            <i class="fa-solid fa-paper-plane" aria-hidden="true"></i>
+            Submit for approval
+          </button>
+        </div>
+      </form>
+    </div>
+  `;
+}
+
+/**
  * The combined Videos & Interviews tab.
  *
  * One sidebar entry, two full-width views. `store.listMediaByCategory` filters
@@ -808,6 +895,12 @@ function renderInterviewsTab() {
   const all = store.listInterviews();
   const isVideo = mediaSubTab === 'video';
   const noun = isVideo ? 'video' : 'interview';
+
+  // A Writer gets the submit form INSTEAD of the desk, exactly as the podcasts
+  // tab does. Re-checked here rather than relying on the tab's minRole, because
+  // minRole says who can OPEN a tab and this is about what they may DO in it.
+  if (!store.canApprove()) return mediaSubmitPanel();
+
   const inThisArchive = store.listMediaByCategory(mediaSubTab);
   const pending = inThisArchive.filter(
     (item) => String(item.status || '').toLowerCase() === 'pending'
@@ -949,8 +1042,12 @@ function interviewAdminCard(interview) {
               ? isPublished
                 ? `<button class="btn btn-ghost" data-action="interview-unpublish"
                     data-id="${escapeHtml(interview.id)}">Unpublish</button>`
-                : `<button class="btn btn-ghost" data-action="interview-publish"
-                    data-id="${escapeHtml(interview.id)}">Approve</button>`
+                : `<div class="flex gap-2">
+                     <button class="btn btn-accent" data-action="interview-publish"
+                       data-id="${escapeHtml(interview.id)}">Approve</button>
+                     <button class="btn btn-quiet" data-action="interview-reject"
+                       data-id="${escapeHtml(interview.id)}">Reject</button>
+                   </div>`
               : `<button class="btn btn-ghost" disabled
                   title="Only the Owner or a Board Manager can approve or unpublish.">
                   ${isPublished ? 'Unpublish' : 'Approve'}
@@ -4693,6 +4790,93 @@ async function submitPodcastFromWriterForm(form) {
   paintActiveTab();
 }
 
+/**
+ * A Writer files an interview or a video from a YouTube link.
+ *
+ * STATUS IS SET HERE AND IS NOT READ FROM THE FORM. There is no status input in
+ * `mediaSubmitPanel`, so there is nothing for a writer to tamper with, and the
+ * database refuses the insert anyway: `interviews_staff_insert` (040) requires
+ * `status = 'pending'` from anyone who is not the Owner, and
+ * `interviews_publish_guard` refuses a Writer moving a row into 'published'. Two
+ * independent refusals behind a client that does not even offer the option.
+ *
+ * The YouTube id comes from `store.normaliseYouTubeId`, the SAME function that
+ * builds the embed. Reusing it is the point: a second parser here would be a
+ * second opinion on what a valid id is, and the two would eventually disagree --
+ * and the embed interpolates its result straight into an iframe src.
+ *
+ * @param {HTMLFormElement} form
+ */
+async function submitMediaFromWriterForm(form) {
+  const title = byId('media-sub-title')?.value.trim() || '';
+  if (!title) {
+    showToast('Give it a title.', { type: 'error' });
+    byId('media-sub-title')?.focus();
+    return;
+  }
+
+  const subject = byId('media-sub-subject')?.value.trim() || '';
+  if (!subject) {
+    showToast(
+      mediaSubTab === 'video'
+        ? 'Name what this video covers.'
+        : 'Name the person who was interviewed.',
+      { type: 'error' }
+    );
+    byId('media-sub-subject')?.focus();
+    return;
+  }
+
+  const pasted = byId('media-sub-url')?.value.trim() || '';
+  if (!pasted) {
+    showToast('Paste the YouTube link.', { type: 'error' });
+    byId('media-sub-url')?.focus();
+    return;
+  }
+
+  // The extraction, and the only extraction. Returns '' for a channel or a
+  // playlist link, which have no embeddable video -- so the message names the
+  // link rather than failing later with a broken player on a live page.
+  const videoId = store.normaliseYouTubeId(pasted);
+  if (!videoId) {
+    showToast(
+      'That does not look like a link to a single YouTube video. Paste the link ' +
+        'from the video page, not the channel or a playlist.',
+      { type: 'error', duration: 8000 }
+    );
+    byId('media-sub-url')?.focus();
+    return;
+  }
+
+  const created = await store.createInterview({
+    title,
+    guest: subject,
+    summary: byId('media-sub-summary')?.value.trim() || '',
+    description: byId('media-sub-description')?.value.trim() || '',
+    image: byId('media-sub-poster')?.value.trim() || '',
+    videoIds: [videoId],
+    // The two facts this form exists to record. `status` is not taken from the
+    // form; `category` is the sub-tab the writer was on when they opened it.
+    status: 'pending',
+    category: mediaSubTab
+  });
+
+  if (!created) {
+    showToast('That submission could not be saved. Please try again.', { type: 'error' });
+    return;
+  }
+
+  form.reset();
+  // Names who has to act and what happens next, because "submitted successfully"
+  // alone leaves a writer wondering whether it is live. It is not.
+  showToast(
+    'Submitted. It is pending until the Owner or a Board Manager approves it, and ' +
+      'nothing appears on the site until then.',
+    { type: 'success', duration: 9000 }
+  );
+  paintActiveTab();
+}
+
 async function savePodcastUploadFromForm() {
   const title = byId('podcast-up-title')?.value.trim() || '';
   const description = byId('podcast-up-description')?.value.trim() || '';
@@ -5395,6 +5579,13 @@ function attachAdminListeners() {
       // must not be widenable by adding a parameter to a shared handler.
       event.preventDefault();
       guard(() => submitPodcastFromWriterForm(form));
+    } else if (form.id === 'media-submit-form') {
+      // Same reasoning, same reason. The status is set INSIDE
+      // submitMediaFromWriterForm and is not read from the form at all, so a
+      // writer who hand-edits the DOM to add a hidden status field cannot
+      // publish their own recording.
+      event.preventDefault();
+      guard(() => submitMediaFromWriterForm(form));
     } else if (form.dataset.podcastEditForm) {
       event.preventDefault();
       guard(() => savePodcastEditFromForm(form));
@@ -7396,6 +7587,44 @@ function handleClick(event) {
           showToast('Interview deleted.', { type: 'success' });
         });
       }
+      break;
+    }
+
+    case 'interview-reject': {
+      // REFUSING A SUBMISSION, which is not deleting one.
+      //
+      // Delete is ownership-gated: only the author or the Owner can remove a row,
+      // so a Board Manager reviewing the queue had Approve and no way to say no.
+      // They could leave a submission pending forever, and the queue would grow.
+      //
+      // Distinct from `interview-delete` on purpose. Delete removes a published
+      // record and asks for confirmation; Reject clears something that is not yet
+      // on the site, so it is reversible in the only way that matters -- the
+      // writer can file again.
+      if (!store.canApprove()) {
+        showToast('Only the Owner or a Board Manager can reject a submission.', {
+          type: 'error'
+        });
+        break;
+      }
+      const target = store.listInterviews().find((item) => item.id === id);
+      if (!target) {
+        showToast('That submission is no longer in the queue.', { type: 'error' });
+        break;
+      }
+      if (
+        !window.confirm(
+          `Reject "${title}"?\n\nIt has not been published, so nothing on the site ` +
+            'changes. The writer can file again once they know why.'
+        )
+      ) {
+        break;
+      }
+      guard(async () => {
+        await store.deleteInterview(id);
+        showToast('Submission rejected. Nothing was published.', { type: 'success' });
+        paintActiveTab();
+      });
       break;
     }
 

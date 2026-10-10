@@ -181,6 +181,34 @@ create trigger interviews_category_immutable_trg
   for each row execute function public.interviews_category_is_immutable();
 
 -- -----------------------------------------------------------------------------
+-- 4b. AN APPROVER CAN REJECT A PENDING SUBMISSION.
+--
+--     The Owner Panel has always offered Approve, and refusing a submission was
+--     the one thing a Board Manager could not do: `interviews_delete_own` is
+--     scoped to `wire_owns_interview(id)` and `interviews_owner_all` is the
+--     Owner seat, so deleting somebody else's submission matched neither policy.
+--     RLS FILTERS rather than raising, so the delete silently removed nothing and
+--     the panel reported success -- the same failure mode as 038.
+--
+--     The consequence was a queue nobody could empty: a Manager could approve or
+--     leave pending, and a pending submission stays pending forever.
+--
+--     SCOPED TO status = 'pending' DELIBERATELY. Approve and Reject are the two
+--     halves of the same decision, and a Manager is trusted with one, so they are
+--     trusted with the other -- on work that is not live. Unpublishing or
+--     deleting a PUBLISHED episode stays the Owner's, exactly as 038 left it:
+--     that is a decision about something readers are currently watching.
+--
+--     Permissive policies are OR'd, so this ADDS to `interviews_delete_own`
+--     rather than replacing it. A writer can still delete their own pending
+--     submission, and still cannot touch anybody else's.
+-- -----------------------------------------------------------------------------
+drop policy if exists interviews_approver_reject on public.interviews;
+create policy interviews_approver_reject on public.interviews
+  for delete to anon, authenticated
+  using (public.can_approve() and status = 'pending');
+
+-- -----------------------------------------------------------------------------
 -- 5. Verification.
 -- -----------------------------------------------------------------------------
 do $$
@@ -258,6 +286,33 @@ begin
        and not t.tgisinternal
   ) then
     raise exception 'the interviews_category_immutable trigger is not installed.';
+  end if;
+
+  -- (e) the approver reject policy must exist AND be pending-scoped. Without the
+  --     scope it would be a second `interviews_owner_all` for every Board Manager,
+  --     and the migration's own header says that is not the intent.
+  if not exists (
+    select 1 from pg_policies
+     where schemaname = 'public'
+       and tablename  = 'interviews'
+       and policyname = 'interviews_approver_reject'
+       and coalesce(qual, '') ~* 'can_approve'
+  ) then
+    raise exception
+      'interviews_approver_reject is missing: a Board Manager cannot reject a '
+      'submission, so the queue cannot be emptied.';
+  end if;
+
+  if not exists (
+    select 1 from pg_policies
+     where schemaname = 'public'
+       and tablename  = 'interviews'
+       and policyname = 'interviews_approver_reject'
+       and coalesce(qual, '') ~* 'status\s*=\s*.pending'
+  ) then
+    raise exception
+      'interviews_approver_reject is not scoped to pending rows, which would let '
+      'an approver delete something that is already published.';
   end if;
 
   raise notice
