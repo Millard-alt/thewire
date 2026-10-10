@@ -29,7 +29,27 @@ import { captionText } from './dom.js';
 
 const STORAGE_KEY = 'wire.state.v1';
 
-/** State slice -> Supabase table name. */
+/**
+ * Row ceilings for `hydrate()`.
+ *
+ * These tables were read in full, with no limit, on every page load for every
+ * reader including anonymous ones. That cost grows without bound: the five
+ * hundredth article costs exactly as much as the first, and `body` carries the
+ * full text of every one of them.
+ *
+ * DELIBERATELY NOT applied to `articles`, `media_assets` or `staff`. The panel
+ * filters those client-side over the complete set, so a cap would silently hide
+ * content from the Owner -- a worse failure than the egress it saves. They need
+ * a paginated panel query, which is a larger change than this.
+ */
+const HYDRATE_LIMITS = {
+  // Archival. The UI shows the newest; the panel queries the rest itself.
+  interviews: 50
+};
+
+/**
+ * State slice -> Supabase table name.
+ */
 const TABLES = {
   articles: 'articles',
   assignments: 'assignments',
@@ -596,10 +616,18 @@ export async function hydrate() {
     let interviews = [];
     if (!config.demoMode && client && (await hasInterviewsTable())) {
       try {
+        // Bounded, unlike the tables in the Promise.all above.
+        //
+        // `body` is the full text of the interview, so an unbounded read ships
+        // every transcript to every reader on every page load -- including the
+        // anonymous front page, which renders at most a handful. These are
+        // archival interviews, so the newest slice is what the UI shows and the
+        // rest is reachable through the panel's own queries.
         const { data, error } = await client
           .from(TABLES.interviews)
           .select('*')
-          .order('created_at', { ascending: false });
+          .order('created_at', { ascending: false })
+          .limit(HYDRATE_LIMITS.interviews);
         if (!error) interviews = data || [];
         else console.warn('[store] could not load interviews', error.message);
       } catch (error) {

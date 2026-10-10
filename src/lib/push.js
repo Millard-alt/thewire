@@ -41,11 +41,43 @@ import { showToast } from './dom.js';
 const SW_URL = '/sw.js';
 const SUBSCRIPTION_KEY = 'wire.pushSubscription';
 const SEEN_KEY = 'wire.seenBroadcasts';
-/** Poll cadence. One minute is a sensible balance for a news site. */
+/**
+ * Poll cadence, and the ceiling on it.
+ *
+ * The one-minute figure is a floor on responsiveness, not a fixed cost. A
+ * newsroom broadcast is rare -- perhaps a few a day -- and this poller is the
+ * largest recurring source of database egress in the project: one query per open
+ * tab per minute, forever, for every reader. At 500 concurrent readers that is
+ * 21.6 million requests a month returning the same handful of rows.
+ *
+ * So the interval backs off when nothing is happening and snaps back to
+ * POLL_MS the moment a new broadcast appears. A reader sitting on the site
+ * through an emergency still hears about it within a minute; a reader idling
+ * costs a fraction as much.
+ */
 const POLL_MS = 60_000;
+
+/** Idle multiplier. After this many empty passes the interval doubles. */
+const IDLE_BACKOFF_MAX = 16;
+
+/**
+ * Do not even ask while the tab is in the background.
+ *
+ * A hidden tab cannot display a notification, so every poll it runs is pure
+ * waste -- and background tabs are exactly where tabs spend most of their life.
+ * The Page Visibility API reports this for free.
+ */
+function isTabHidden() {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+}
 
 let pollTimer = null;
 let onBroadcast = null;
+/**
+ * Consecutive passes that found nothing. Drives the idle backoff; reset by any
+ * pass that actually raised an alert.
+ */
+let idlePasses = 0;
 
 /* -------------------------------------------------------------------------- */
 /* Capability + blocker detection                                              */
@@ -988,6 +1020,19 @@ export async function listDevices() {
 /* Broadcast polling — how an owner's broadcast reaches an open reader         */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * How many rows to fetch on a normal pass, and on the very first one.
+ *
+ * SEED_LIMIT is the head of the feed shown to a reader who has never polled --
+ * recorded as seen, never fired. NEW_BROADCAST_LIMIT is what a real alert burst
+ * looks like: the Owner sends one, and occasionally an Emergency plus a
+ * follow-up. Five is far more than a pass can actually raise.
+ */
+const NEW_BROADCAST_LIMIT = 5;
+const SEED_LIMIT = 5;
+
+const WATERMARK_KEY = 'wire.broadcastWatermark';
+
 function readSeen() {
   try {
     const raw = localStorage.getItem(SEEN_KEY);
@@ -995,6 +1040,40 @@ function readSeen() {
   } catch {
     return new Set();
   }
+}
+
+/**
+ * The newest `created_at` this device has already handled.
+ *
+ * Stored separately from the seen-id set because that set is TRIMMED to 50
+ * entries and a reader who fires 50 broadcasts would lose the high-water mark,
+ * at which point the filter silently stops narrowing and egress returns to the
+ * old behaviour. One scalar, never trimmed.
+ *
+ * Returns null when there is no watermark, which means "fetch the head of the
+ * feed" -- the first-ever-poll path.
+ *
+ * @returns {string|null} ISO timestamp
+ */
+function readWatermark() {
+  try {
+    return localStorage.getItem(WATERMARK_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeWatermark(value) {
+  try {
+    if (value) localStorage.setItem(WATERMARK_KEY, value);
+  } catch {
+    /* private browsing: the seen-id set still prevents duplicate alerts */
+  }
+}
+
+/** The watermark, or null when the device has no record of one yet. */
+function newestSeenAt() {
+  return readWatermark();
 }
 
 function markSeen(id) {
@@ -1018,9 +1097,17 @@ function markSeen(id) {
  *
  * @param {string|number} id
  */
-export function markBroadcastSeen(id) {
+export function markBroadcastSeen(id, createdAt) {
   if (id === undefined || id === null) return;
   markSeen(String(id));
+  // Advance the watermark when the caller knows the timestamp. The panel has the
+  // broadcast it just sent, and without this the next poll re-fetches that row
+  // and discards it as already-seen -- the exact transfer this was changed to
+  // avoid. Guarded on a real value: a watermark must never move backwards.
+  if (createdAt) {
+    const current = readWatermark();
+    if (!current || createdAt > current) writeWatermark(createdAt);
+  }
 }
 
 /**
@@ -1045,11 +1132,39 @@ export async function pollOnce() {
 
   let rows = [];
   try {
-    const { data, error } = await client
+    /*
+     * ASK ONLY FOR WHAT WE HAVE NOT SEEN.
+     *
+     * This used to fetch the five newest broadcasts on every pass and discard
+     * the ones already recorded in `seen`. The transfer was therefore the same
+     * whether the reader had seen 0 broadcasts or 500, and it never shrank --
+     * it was pure overhead, once a minute, per open tab.
+     *
+     * `seen` already holds every id this device has handled, so the newest one
+     * it contains is a reliable high-water mark: anything created after it is
+     * genuinely new. Filtering on created_at lets PostgREST return an EMPTY
+     * result instead of re-sending rows we will throw away, and an empty
+     * result is the overwhelmingly common case -- hours or days between
+     * broadcasts.
+     *
+     * The first-ever poll still needs the head of the feed, so it skips the
+     * filter and takes the current behaviour: record what is already there
+     * without firing a backlog at a reader who has just arrived.
+     */
+    const seen = readSeen();
+    const newestSeen = newestSeenAt(seen);
+
+    let query = client
       .from('broadcasts')
       .select('id,title,message,audience,created_at')
       .order('created_at', { ascending: false })
-      .limit(5);
+      .limit(newestSeen ? NEW_BROADCAST_LIMIT : SEED_LIMIT);
+
+    // `gt` rather than `gte`: a broadcast created in the same millisecond as one
+    // already seen would be skipped by `gte` and lost until the next page load.
+    if (newestSeen) query = query.gt('created_at', newestSeen);
+
+    const { data, error } = await query;
     if (error) throw error;
     rows = data || [];
   } catch (error) {
@@ -1070,6 +1185,12 @@ export async function pollOnce() {
     alreadySeen: seen.size,
     newest: rows[0] ? { id: rows[0].id, title: rows[0].title, at: rows[0].created_at } : null
   });
+
+  // Rows are newest-first, so the FIRST one is the newest thing on the server.
+  // That is the new high-water mark regardless of whether it was raised: a row
+  // skipped as already-seen still has to advance the watermark, or the `gt`
+  // filter would keep re-fetching it forever and the saving would evaporate.
+  if (rows.length) writeWatermark(rows[0].created_at);
 
   for (const row of rows) {
     const key = String(row.id);
@@ -1109,19 +1230,67 @@ export function startBroadcastPolling(handler) {
   // Only worth polling once this device can actually display an alert.
   if (getPermission() !== 'granted') return false;
 
-  // Do the first pass immediately, then settle into the cadence.
-  pollOnce().catch(() => {});
-  pollTimer = setInterval(() => {
-    pollOnce().catch(() => {});
-  }, POLL_MS);
+  scheduleNextPoll(0);
   return true;
+}
+
+/**
+ * One poll, then decide when the next one happens.
+ *
+ * Replaces a fixed `setInterval`. Two things are wrong with a fixed interval:
+ *
+ *   1. It cannot respond to what it found. A pass that raised an alert means
+ *      something is happening right now, so poll again at full speed; a pass
+ *      that found nothing means the reader is idle, so back off. Broadcasting is
+ *      rare, so the common case is the one worth making cheap.
+ *   2. A fixed interval keeps firing for hidden tabs, which cannot display a
+ *      notification. Background tabs are where tabs spend most of their
+ *      lifetime, so this is most of the traffic.
+ *
+ * `scheduleNextPoll(0)` rather than a bare call so the first pass happens on the
+ * same code path as every later one.
+ *
+ * @param {number} [delayMs] override the computed delay
+ */
+function scheduleNextPoll(delayMs) {
+  clearTimeout(pollTimer);
+
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    // Coming back to the tab is the moment a poll is most valuable: the reader
+    // was away, so there is the most likely to be waiting.
+    document.addEventListener('visibilitychange', onVisibilityChange);
+  }
+
+  const wait = Number.isFinite(delayMs) ? delayMs : POLL_MS * Math.min(2 ** idlePasses, IDLE_BACKOFF_MAX);
+
+  pollTimer = setTimeout(async () => {
+    if (isTabHidden()) {
+      // Hidden: do not poll, and do not schedule a fixed cadence either. The
+      // visibilitychange listener will resume as soon as the tab is looked at.
+      pollTimer = null;
+      return;
+    }
+    const raised = await pollOnce().catch(() => []);
+    // A pass that raised something means something is happening: reset the
+    // backoff so the next alert is not missed.
+    idlePasses = raised && raised.length ? 0 : idlePasses + 1;
+    scheduleNextPoll();
+  }, wait);
+}
+
+/** A hidden tab came back. Poll immediately rather than waiting out the timer. */
+function onVisibilityChange() {
+  if (!isTabHidden()) scheduleNextPoll(0);
 }
 
 /** Stop polling. Safe to call when polling was never started. */
 export function stopBroadcastPolling() {
   if (pollTimer) {
-    clearInterval(pollTimer);
+    clearTimeout(pollTimer);
     pollTimer = null;
+  }
+  if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+    document.removeEventListener('visibilitychange', onVisibilityChange);
   }
 }
 
