@@ -28,6 +28,14 @@
       "destination": "/index.html"
     },
     {
+      "source": "/videos",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/videos-feed",
+      "destination": "/index.html"
+    },
+    {
       "source": "/assignments",
       "destination": "/index.html"
     }

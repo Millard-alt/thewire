@@ -43,6 +43,8 @@ import {
   renderGalleryPage,
   renderInterviewsPage,
   renderPodcastsPage,
+  renderVideosHub,
+  renderVideosFeedPage,
   initPublicInteractions
 } from './views/public.js';
 
@@ -100,7 +102,13 @@ const READER_VIEWS = [
   'gallery',
   'interviews',
   'about',
-  'podcasts'
+  'podcasts',
+  // The Media & Video hub, and the videos archive it links to. Both are
+  // READER_VIEWS so the delegated [data-nav] handler claims them; a view missing
+  // from this list renders but is not navigable, which is the failure mode
+  // READER_VIEWS exists to prevent.
+  'videos',
+  'videos-feed'
 ];
 
 /**
@@ -117,7 +125,9 @@ const VIEW_TITLES = {
   gallery: 'Photo Gallery | The Pulse',
   interviews: 'Interviews | The Pulse',
   about: 'About Us | The Pulse',
-  podcasts: 'Podcasts | The Pulse'
+  podcasts: 'Podcasts | The Pulse',
+  videos: 'Media & Video | The Pulse',
+  'videos-feed': 'Videos | The Pulse'
 };
 
 /**
@@ -154,6 +164,9 @@ const PATH_ROUTES = {
   '/gallery': 'gallery',
   '/interviews': 'interviews',
   '/podcasts': 'podcasts',
+  // The Media & Video hub and the videos archive it links to.
+  '/videos': 'videos',
+  '/videos-feed': 'videos-feed',
   // Resolves to the publication; the caller scrolls to the board afterwards.
   [ASSIGNMENTS_PATH]: 'publication'
 };
@@ -245,6 +258,12 @@ function showReaderView(name) {
   // And the podcast feed, for the same reason: an approval lands the moment the
   // Owner presses the button.
   if (target === 'podcasts') renderPodcastsPage();
+
+  // The Media & Video hub and the videos archive. Both are cheap -- they filter
+  // rows hydrate() has already loaded -- but the videos archive still re-renders
+  // on reveal so an approval made in the panel appears without a reload.
+  if (target === 'videos') renderVideosHub();
+  if (target === 'videos-feed') renderVideosFeedPage();
 
   // The browser tab follows the route, so six open tabs are six distinguishable
   // tabs. Falls back to the publication title rather than to undefined.

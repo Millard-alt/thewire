@@ -720,7 +720,15 @@ export function renderGalleryPage() {
  * reason (see renderGalleryPage); the feed is short enough that a bookmark to
  * page 3 is not something anybody wants.
  */
-let interviewPage = 1;
+/**
+ * Page number per archive, NOT one shared counter.
+ *
+ * /interviews and /videos-feed are separate pages over one table, so they need
+ * separate positions: a reader who pages to 3 on the interviews archive and then
+ * opens the videos archive should land on page 1 of a different list, not on
+ * page 3 of a shorter one.
+ */
+const mediaPages = { interview: 1, video: 1 };
 
 /**
  * Render one responsive YouTube embed.
@@ -893,28 +901,53 @@ function interviewPager({ page, pageCount, hasPrev, hasNext, total }) {
  * the element is repainted wholesale on every store change, so the click
  * delegation is (re)assigned here rather than bound once per card.
  */
-export function renderInterviewsPage() {
-  const view = byId('interviews-view');
+/**
+ * The archive behind /interviews and /videos-feed.
+ *
+ * ONE renderer, parameterised by category, rather than a second near-identical
+ * function. Both pages show the same cards, the same pager and the same modal;
+ * the only difference is which archive they draw from and what they call it. A
+ * copy would drift, and the drift would be invisible because each page would
+ * still look right on its own.
+ *
+ * The pager is scoped PER ARCHIVE, in `mediaPages`. A reader who pages to 3 on
+ * /interviews and then opens /videos-feed should land on page 1 of a different
+ * list rather than on whatever page number the other archive happened to be at.
+ *
+ * @param {'interview'|'video'} category
+ */
+function renderMediaArchive(category) {
+  const isVideo = category === 'video';
+  const mountId = isVideo ? 'videos-feed-view' : 'interviews-view';
+  const pageKey = isVideo ? 'video' : 'interview';
+  const headingId = isVideo ? 'videos-feed-heading' : 'interviews-page-heading';
+  const eyebrow = isVideo ? 'Watch' : 'On the record';
+  const heading = isVideo ? 'Videos' : 'Interviews';
+  const emptyCopy = isVideo
+    ? 'No videos have been published yet. Match reports, event highlights and press club video reports appear here once the Owner has approved them.'
+    : 'No interviews have been published yet. The Pulse interviews commissioners, archivists and organisers on the record; recordings appear here once the Owner has approved them.';
+
+  const view = byId(mountId);
   if (!view) return;
 
-  const published = store.listPublishedInterviews();
-  const result = store.listPublishedInterviewsPage(interviewPage);
+  const published = store.listPublishedMedia(category);
+  const result = store.listPublishedMediaPage(category, mediaPages[pageKey]);
 
   /*
-  Everything below reads `result.*`, NOT the raw `interviewPage`. The store
-  clamps a stale or out-of-range page number (an Owner who deletes an interview
-  from the panel while a reader sits on the last page would otherwise strand that
+  Everything below reads `result.*`, NOT the raw page counter. The store
+  clamps a stale or out-of-range page number (an Owner who deletes an entry from
+  the panel while a reader sits on the last page would otherwise strand that
   reader on an empty grid), and hasPrev/hasNext come from the clamped value so
   the pager cannot disagree with the grid it sits under.
   */
 
   view.innerHTML = `
-    ${sectionHeading('interviews-page-heading', 'On the record', 'Interviews')}
+    ${sectionHeading(headingId, eyebrow, heading)}
 
     ${
       published.length
         ? `<p class="ink-muted mb-6 text-sm">
-             ${published.length} published interview${published.length === 1 ? '' : 's'},
+             ${published.length} published ${isVideo ? 'video' : 'interview'}${published.length === 1 ? '' : 's'},
              ${result.pageCount} page${result.pageCount === 1 ? '' : 's'}.
            </p>`
         : ''
@@ -933,12 +966,8 @@ export function renderInterviewsPage() {
              total: result.total
            })}`
         : published.length
-          ? `<p class="panel p-6 text-sm ink-muted">No interviews on this page.</p>`
-          : `<p class="panel p-6 text-sm ink-muted">
-               No interviews have been published yet. The Pulse interviews
-               commissioners, archivists and organisers on the record; recordings
-               appear here once the Owner has approved them.
-             </p>`
+          ? `<p class="panel p-6 text-sm ink-muted">Nothing on this page.</p>`
+          : `<p class="panel p-6 text-sm ink-muted">${escapeHtml(emptyCopy)}</p>`
     }
   `;
 
@@ -955,12 +984,111 @@ export function renderInterviewsPage() {
       // A disabled button is still clickable in some browsers, and a NaN here
       // would silently reset the reader to page 1 without them asking for it.
       if (!Number.isInteger(next) || next < 1 || next > result.pageCount) return;
-      interviewPage = next;
-      renderInterviewsPage();
+      mediaPages[pageKey] = next;
+      renderMediaArchive(category);
       view.focus?.();
       window.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
     }
   };
+}
+
+/** The interviews page: the 'interview' archive. */
+export function renderInterviewsPage() {
+  renderMediaArchive('interview');
+}
+
+/** The videos archive: the 'video' side of the same table. */
+export function renderVideosFeedPage() {
+  renderMediaArchive('video');
+}
+
+/**
+ * The Media & Video hub: two cards, one per archive.
+ *
+ * Deliberately a HUB rather than a redirect to either archive. The nav entry
+ * says "Videos", and a reader who lands on it having meant "interviews" would
+ * be dropped into the wrong list with no way to tell they had been. Two
+ * destinations, both one click away, is the honest answer to a page called
+ * "Media & Video Coverage".
+ *
+ * The whole card is the control, not just its button. A 2-card grid is mostly
+ * padding, and a reader aiming at the card would reasonably expect it to work --
+ * so the card carries `data-nav` itself and the delegated handler in app.js does
+ * the rest. The button inside is a visible affordance, not the only way in.
+ */
+export function renderVideosHub() {
+  const view = byId('videos-view');
+  if (!view) return;
+
+  const counts = store.countMediaByCategory();
+  const interviews = counts.interview;
+  const videos = counts.video;
+
+  const card = ({ emoji, label, blurb, target, count, noun, tone }) => `
+    <button
+      type="button"
+      class="group panel-raised flex w-full cursor-pointer flex-col items-start gap-3 p-8 text-left
+             transition-all duration-300 transform hover:-translate-y-2 hover:shadow-2xl
+             focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      data-nav="${target}"
+    >
+      <span class="text-5xl leading-none" aria-hidden="true">${emoji}</span>
+      <span class="text-2xl font-black tracking-tight">${escapeHtml(label)}</span>
+      <span class="text-sm leading-relaxed ink-muted">${escapeHtml(blurb)}</span>
+      <span class="mt-2 inline-flex items-center gap-2 text-sm font-bold text-accent">
+        <span>Explore Section</span>
+        <span aria-hidden="true"
+              class="inline-block transition-transform duration-300 group-hover:translate-x-1.5">&rarr;</span>
+      </span>
+      <span class="text-xs ink-muted">
+        ${count} published ${noun}${count === 1 ? '' : 's'}
+      </span>
+    </button>
+  `;
+
+  view.innerHTML = `
+    <div class="mx-auto max-w-5xl px-4 py-10 md:py-14">
+      <header class="mb-10 text-center">
+        <h1 class="text-4xl font-black tracking-tight md:text-5xl">Media &amp; Video Coverage</h1>
+        <p class="mx-auto mt-4 max-w-2xl text-ink-muted">
+          Sit-down conversations with the people shaping the county, and everything else we
+          film &mdash; match coverage, event highlights and press club video reports. Pick an
+          archive below.
+        </p>
+      </header>
+
+      <div class="grid gap-6 md:grid-cols-2">
+        ${card({
+          emoji: '&#127897;&#65039;',
+          label: 'Interviews',
+          blurb:
+            'Exclusive sit-down Q&As, staff spotlights, and in-depth conversations hosted by our press club team.',
+          target: 'interviews',
+          count: interviews,
+          noun: 'interview',
+          tone: 'accent'
+        })}
+        ${card({
+          emoji: '&#127916;&#65039;',
+          label: 'Videos',
+          blurb:
+            'School event highlights, campus vlogs, match coverage, and press club video reports.',
+          target: 'videos-feed',
+          count: videos,
+          noun: 'video',
+          tone: 'gold'
+        })}
+      </div>
+
+      <p class="mt-10 text-center text-xs ink-muted">
+        <a class="underline underline-offset-4 hover:text-accent" href="#gallery">Photo Gallery</a>
+        &middot;
+        <a class="underline underline-offset-4 hover:text-accent" href="#podcasts">Podcasts</a>
+        &middot;
+        <a class="underline underline-offset-4 hover:text-accent" href="#interviews">Interviews</a>
+      </p>
+    </div>
+  `;
 }
 
 /**
@@ -1753,7 +1881,10 @@ const NAV_LINKS = [
    */
   { label: 'Latest', anchor: '#latest' },
   { label: 'Assignments', anchor: '#assignments' },
-  { label: 'Interviews', page: 'interviews' },
+  // 'Videos' is the Media & Video HUB, not the interviews archive: it offers
+  // both, and /interviews is one click away from it. Podcasts stays -- the
+  // brief asked for Videos to be added, not for Podcasts to be removed.
+  { label: 'Videos', page: 'videos' },
   { label: 'Podcasts', page: 'podcasts' },
   { label: 'Photo Gallery', page: 'gallery' },
   { label: 'Credits', page: 'credits' },

@@ -1457,6 +1457,27 @@ function interviewField(row, snake, camel) {
  * @param {object} row
  * @returns {object}
  */
+/**
+ * Which archive a row belongs to. Migration 040.
+ *
+ * DEFAULTED TO 'interview' RATHER THAN READ AS-IS, and that is the whole point.
+ * A client can be deployed before 040 is pasted into the database, and this
+ * build would then read `undefined` for every row -- putting every published
+ * interview into neither feed. The archives are reached from the site nav, so
+ * that failure is a silently empty page rather than an error.
+ *
+ * Anything unrecognised also falls to 'interview', for the same reason: the
+ * column has a CHECK constraint, so an unexpected value can only come from a
+ * database older than that constraint, and hiding those rows would be worse
+ * than showing them in the wrong feed.
+ */
+export const MEDIA_CATEGORIES = ['interview', 'video'];
+
+function mediaCategory(row) {
+  const raw = String(interviewField(row, 'category', 'category') || '').toLowerCase();
+  return MEDIA_CATEGORIES.includes(raw) ? raw : 'interview';
+}
+
 function mapInterviewRow(row) {
   return {
     id: row.id,
@@ -1471,6 +1492,7 @@ function mapInterviewRow(row) {
     // Lower-cased here so a row pasted by hand in title case is not stranded
     // behind a comparison that will never match.
     status: String(interviewField(row, 'status', 'status') || 'pending').toLowerCase(),
+    category: mediaCategory(row),
     authorAccountId: interviewField(row, 'author_account_id', 'authorAccountId') ?? null,
     publishedAt: interviewField(row, 'published_at', 'publishedAt') || null,
     createdAt: interviewField(row, 'created_at', 'createdAt') || null
@@ -1483,6 +1505,25 @@ export function listInterviews() {
 }
 
 /**
+ * Every row in ONE archive, regardless of status.
+ *
+ * Backs the Owner Panel's Videos & Interviews sub-tabs. Filtered in the client
+ * rather than in the query, because `hydrate()` has already loaded the table and
+ * the panel needs both halves at once to render the switcher with real counts.
+ */
+export function listMediaByCategory(category) {
+  const want = MEDIA_CATEGORIES.includes(category) ? category : 'interview';
+  return getState().interviews.filter((item) => mediaCategory(item) === want);
+}
+
+/** How many rows each archive holds, for the sub-tab badges. */
+export function countMediaByCategory() {
+  const counts = { interview: 0, video: 0 };
+  for (const item of getState().interviews) counts[mediaCategory(item)] += 1;
+  return counts;
+}
+
+/**
  * Only what a reader is allowed to see.
  *
  * The status filter here is a UI courtesy, not the security boundary -- that is
@@ -1492,6 +1533,18 @@ export function listInterviews() {
  */
 export function listPublishedInterviews() {
   return getState().interviews.filter((item) => isStatus(item.status, 'published'));
+}
+
+/**
+ * Published rows in ONE archive. Backs /interviews and /videos-feed.
+ *
+ * Same two-layer reasoning as listPublishedInterviews(): the status filter is a
+ * UI courtesy for rows already in memory, and the category filter is the split
+ * 040 introduced. Neither is the security boundary -- that is the RLS policy.
+ */
+export function listPublishedMedia(category) {
+  const want = MEDIA_CATEGORIES.includes(category) ? category : 'interview';
+  return listPublishedInterviews().filter((item) => mediaCategory(item) === want);
 }
 
 /** @param {string} id */
@@ -1596,7 +1649,16 @@ function interviewRowFrom(input = {}, existing = {}) {
     // written verbatim. A status the CHECK constraint rejects fails the whole
     // INSERT and takes the writer's interview with it, and 'pending' is the safe
     // direction to fail: it asks for review instead of publishing.
-    status: INTERVIEW_STATUSES.includes(status) ? status : 'pending'
+    status: INTERVIEW_STATUSES.includes(status) ? status : 'pending',
+    // Migration 040. Same rule as status, for the same reason: an unrecognised
+    // category would fail the CHECK constraint and take the whole insert with it,
+    // and 'interview' is the safe direction because it is what every row already
+    // in the table is.
+    category: MEDIA_CATEGORIES.includes(
+      String(input.category ?? existing.category ?? 'interview').toLowerCase()
+    )
+      ? String(input.category ?? existing.category ?? 'interview').toLowerCase()
+      : 'interview'
   };
 }
 
@@ -1627,6 +1689,7 @@ export async function createInterview(input) {
     image: row.image_url,
     videoIds: row.video_ids,
     status: row.status,
+    category: row.category,
     authorAccountId: null,
     publishedAt: null,
     createdAt: nowStamp()
@@ -1704,6 +1767,27 @@ export async function updateInterview(id, patch) {
   if (patch.description !== undefined) payload.description = row.description;
   if (patch.image !== undefined) payload.image_url = row.image_url;
 
+  /*
+   * category IS DELIBERATELY NOT SENT.
+   *
+   * Migration 040 makes it immutable below the Owner seat, because re-tagging a
+   * row moves it between two public archives and that is an editorial decision.
+   * Sending it unconditionally would therefore make EVERY save by a Writer fail
+   * with 42501 -- the payload would carry a category, the trigger would see a
+   * change, and the trigger is right that nothing changed at all.
+   *
+   * So an ordinary edit leaves the column out of the statement entirely and
+   * Postgres never evaluates it. `setMediaCategory` below is the one deliberate
+   * way to move a row, and it is Owner-gated on both sides.
+   */
+  if (patch.category !== undefined) {
+    const want = String(patch.category).toLowerCase();
+    if (!MEDIA_CATEGORIES.includes(want)) {
+      return null;
+    }
+    payload.category = want;
+  }
+
   if (!config.demoMode && db() && isPersistedId(id) && (await hasInterviewsTable())) {
     // Re-map from the returned row: the published_at trigger has just fired (or
     // deliberately not, when the status did not change) and that is the only
@@ -1728,6 +1812,7 @@ export async function updateInterview(id, patch) {
     interview.image = payload.image_url;
     interview.videoIds = payload.video_ids;
     interview.status = payload.status;
+    if (payload.category) interview.category = payload.category;
     // Mirror the published_at trigger in the demo store too, INCLUDING the
     // clearing arm, so pulling an interview back to pending takes it off the
     // ordered feed here exactly as it does in production.
@@ -1738,6 +1823,58 @@ export async function updateInterview(id, patch) {
   await addAuditLog(`Updated interview "${interview.title}"`);
   commit();
   return interview;
+}
+
+/**
+ * Move a row between the Interviews and Videos archives.
+ *
+ * The ONE deliberate category write, and deliberately separate from
+ * `updateInterview`. Two reasons it cannot just be another field on that patch:
+ *
+ *   1. Migration 040 refuses a category change below the Owner seat. So this
+ *      needs its own error surface -- a Writer gets told plainly that re-filing
+ *      is not theirs to do, rather than a bare 42501 from the trigger.
+ *   2. It is the only operation here that changes which PUBLIC page a row is on,
+ *      so it gets its own audit line. An audit trail that records "Updated
+ *      interview" for a move between archives is a trail that cannot answer the
+ *      only question anybody would ask of it.
+ *
+ * @returns {Promise<{ok: boolean, message?: string, interview?: object}>}
+ */
+export async function setMediaCategory(id, category) {
+  const want = String(category || '').toLowerCase();
+  if (!MEDIA_CATEGORIES.includes(want)) {
+    return { ok: false, message: 'That is not a kind of media The Pulse publishes.' };
+  }
+
+  const interview = getState().interviews.find((item) => item.id === id);
+  if (!interview) return { ok: false, message: 'That entry no longer exists.' };
+  if (mediaCategory(interview) === want) return { ok: true, interview };
+
+  // Checked here as well as by the trigger, so a Writer gets a sentence instead
+  // of a database error. The trigger remains the authority.
+  if (!isOwner()) {
+    return { ok: false, message: 'Only the Owner can move an entry between archives.' };
+  }
+
+  if (!config.demoMode && db() && isPersistedId(id) && (await hasInterviewsTable())) {
+    const updated = await db()
+      .from(TABLES.interviews)
+      .update({ category: want })
+      .eq('id', id)
+      .select()
+      .single();
+    if (updated.error) {
+      return { ok: false, message: `That entry could not be moved: ${updated.error.message}` };
+    }
+    Object.assign(interview, mapInterviewRow(updated.data));
+  } else {
+    interview.category = want;
+  }
+
+  await addAuditLog(`Moved "${interview.title}" to the ${want} archive`);
+  commit();
+  return { ok: true, interview };
 }
 
 /**
@@ -1831,10 +1968,29 @@ export const INTERVIEWS_PER_PAGE = 3;
  * @returns {{items: object[], page: number, pageCount: number, total: number,
  *            hasPrev: boolean, hasNext: boolean}}
  */
+/**
+ * One page of ONE archive.
+ *
+ * The category filter happens BEFORE the sort and the slice, which is what
+ * makes the two archives independent: each paginates over its own rows, so a
+ * long interview archive does not push videos onto page 4.
+ *
+ * @param {'interview'|'video'} category
+ * @param {number} page
+ */
+export function listPublishedMediaPage(category, page = 1) {
+  return paginateMedia(listPublishedMedia(category), page);
+}
+
 export function listPublishedInterviewsPage(page = 1) {
+  return paginateMedia(listPublishedInterviews(), page);
+}
+
+/** Shared paging maths, so both archives clamp and count identically. */
+function paginateMedia(rows, page) {
   // Newest first. Falls back through publishedAt to createdAt so a row that was
   // published without a stamp still sorts sensibly rather than jumping to 1970.
-  const ordered = [...listPublishedInterviews()].sort((a, b) => {
+  const ordered = [...rows].sort((a, b) => {
     const at = String(a.publishedAt || a.createdAt || '');
     const bt = String(b.publishedAt || b.createdAt || '');
     return bt.localeCompare(at);
@@ -1844,7 +2000,7 @@ export function listPublishedInterviewsPage(page = 1) {
   const pageCount = Math.max(1, Math.ceil(total / INTERVIEWS_PER_PAGE));
   // Clamp rather than reject. A stale bookmark pointing at page 9 of a feed that
   // now has two pages should land on the last page, not on an empty grid with no
-  // way back — the reader would be stuck with no control to press.
+  // way back - the reader would be stuck with no control to press.
   const current = Math.min(Math.max(1, Math.floor(Number(page) || 1)), pageCount);
   const start = (current - 1) * INTERVIEWS_PER_PAGE;
 

@@ -357,7 +357,7 @@
             <li><a class="nav-link" href="#latest">Latest</a></li>
             <li><a class="nav-link" href="#assignments">Assignments</a></li>
             <li data-nav-overflow>
-              <button class="nav-link" type="button" data-nav="interviews">Interviews</button>
+              <button class="nav-link" type="button" data-nav="videos">Videos</button>
             </li>
             <li data-nav-overflow>
               <button class="nav-link" type="button" data-nav="podcasts">Podcasts</button>
@@ -504,6 +504,24 @@
         tabindex="-1"
       ></section>
 
+      <!-- Media & Video hub: two archive cards (src/views/public.js renderVideosHub) -->
+      <section
+        id="videos-view"
+        data-reader-view
+        class="hidden"
+        aria-label="Media and Video Coverage"
+        tabindex="-1"
+      ></section>
+
+      <!-- Videos archive: the 'video' side of the same table as /interviews -->
+      <section
+        id="videos-feed-view"
+        data-reader-view
+        class="hidden"
+        aria-label="Videos"
+        tabindex="-1"
+      ></section>
+
       <!-- Credits roster (rendered by src/lib/credits.js) -->
       <section
         id="credits-view"
@@ -573,8 +591,8 @@
                 </button>
               </li>
               <li>
-                <button class="nav-link" type="button" data-nav="interviews">
-                  Interviews
+                <button class="nav-link" type="button" data-nav="videos">
+                  Media &amp; Videos
                 </button>
               </li>
               <li>
