@@ -168,6 +168,25 @@ await stage('schemas, roles, tables', `
     author_account_id uuid references public.staff_accounts (id) on delete set null
   );
 
+  -- The real 022 shape, because 040 adds a column to it. A fixture that
+  -- invents its own table certifies nothing: the 'guest text not null' and
+  -- 'video_ids jsonb' below are what a 'video' row has to live alongside.
+  create table public.interviews (
+    id                uuid primary key default gen_random_uuid(),
+    title             text not null,
+    guest             text not null,
+    guest_role        text,
+    interviewer       text,
+    summary           text,
+    description       text,
+    image_url         text,
+    video_ids         jsonb not null default '[]'::jsonb,
+    status            text not null default 'pending',
+    author_account_id uuid references public.staff_accounts (id) on delete set null,
+    created_at        timestamptz not null default now()
+  );
+  alter table public.interviews enable row level security;
+
   create table public.audit_logs (
     id         uuid primary key default gen_random_uuid(),
     actor_id   uuid references auth.users(id) on delete set null,
@@ -309,6 +328,30 @@ await stage('pre-034 and pre-035 policies', `
     with check (bucket_id = 'podcasts' and public.is_staff() and coalesce((storage.foldername(name))[1], '') = 'episodes');
   create policy podcasts_delete on storage.objects for delete
     using (bucket_id = 'podcasts' and public.is_owner());
+
+  -- 022 + 033 verbatim. 040 rebuilds interviews_staff_insert and adds the
+  -- category guard, so the PRE-040 state has to be right or this tests a strawman.
+  create policy interviews_public_read on public.interviews for select to anon, authenticated
+    using (lower(status) = 'published' or public.is_staff());
+  create policy interviews_staff_insert on public.interviews for insert to anon, authenticated
+    with check (public.is_staff() and (public.is_owner()
+      or (status = 'pending' and (author_account_id is null
+                                  or author_account_id = public.current_account_id()))));
+  create policy interviews_owner_all on public.interviews for all to anon, authenticated
+    using (public.is_owner()) with check (public.is_owner());
+  create policy interviews_update_own on public.interviews for update to anon, authenticated
+    using (author_account_id = public.current_account_id()) with check (author_account_id = public.current_account_id());
+  create policy interviews_approver_update on public.interviews for update to anon, authenticated
+    using (public.can_approve()) with check (public.can_approve());
+`);
+
+// Two interviews that already exist, both PUBLISHED, both readers can see today.
+// If the backfill puts either on the wrong side of the split it silently
+// disappears from /interviews, which is the regression this test exists for.
+await db.exec(`
+  insert into public.interviews (title, guest, status, author_account_id, created_at) values
+    ('Chair interview', 'Hon. Kari',  'published', '33333333-3333-3333-3333-333333333333', now() - interval '5 days'),
+    ('Coach interview', 'Mr. Otieno', 'published', '33333333-3333-3333-3333-333333333333', now() - interval '2 days');
 `);
 
 // ---------------------------------------------------------------------------
@@ -333,6 +376,7 @@ await stage('table grants + row level security', `
   grant select, insert, update, delete on public.top_performers    to anon, authenticated;
   grant select, insert, update, delete on public.articles          to anon, authenticated;
   grant select, insert, update, delete on public.podcasts          to anon, authenticated;
+  grant select, insert, update, delete on public.interviews       to anon, authenticated;
 
   -- RLS MUST be enabled or the policies below are inert text. Leaving this out
   -- is not a subtle mistake: every assertion passes for the wrong reason --
@@ -348,6 +392,7 @@ await stage('table grants + row level security', `
   alter table public.top_performers enable row level security;
   alter table public.articles       enable row level security;
   alter table public.podcasts       enable row level security;
+  alter table public.interviews    enable row level security;
 `);
 
 // Two photos that already exist BEFORE 037 runs.
@@ -369,7 +414,8 @@ for (const f of [
   'supabase/migrations/036_edition_line_drop_invented_volume_number.sql',
   'supabase/migrations/037_media_requires_approval.sql',
   'supabase/migrations/038_approver_can_refuse_a_pending_episode.sql',
-  'supabase/migrations/039_claim_next_broadcast.sql'
+  'supabase/migrations/039_claim_next_broadcast.sql',
+  'supabase/migrations/040_interviews_get_a_category.sql'
 ]) {
   const name = f.split('/').pop();
   try {
@@ -1001,6 +1047,134 @@ await refused('a Writer CANNOT claim a broadcast', 'authenticated', 'tok-writer'
   } else {
     bad('privileges are anon=' + priv.rows[0]?.anon_ok + ' service_role=' + priv.rows[0]?.svc_ok);
   }
+}
+
+// --- 040: interviews split into two feeds ----------------------------------
+//
+// THE POINT OF THE MIGRATION. /videos offers Interviews and Videos as two equal
+// archives, which is only possible if a row can say which kind it is.
+//
+// The risk being tested is not "does the column exist" -- it is that adding a
+// column with a default to a table that already holds PUBLIC content quietly
+// re-files it. 037 documents the same trap, where a wrong default blanked a live
+// gallery. Here a wrong backfill would hide every existing interview.
+console.log('\n-- 040 interviews get a category --');
+
+{
+  const rows = (await db.query(
+    `select title, category, status from public.interviews order by title`)).rows;
+  const allInterview = rows.length === 2 && rows.every((r) => r.category === 'interview');
+  if (allInterview) ok('both pre-existing interviews backfilled to category=interview');
+  else bad('backfill put existing interviews somewhere wrong: ' + JSON.stringify(rows));
+}
+
+// The regression that matters: a published interview must still be readable.
+{
+  const r = await asRole('anon', null,
+    () => db.query(`select title from public.interviews order by title`));
+  const visible = (r.value?.rows ?? []).map((x) => x.title);
+  if (visible.length === 2) ok('both published interviews are still visible to readers');
+  else bad('a published interview vanished: readers see ' + JSON.stringify(visible));
+}
+
+// Each feed returns its own rows.
+{
+  // As the OWNER, not anon. The Owner is the only role the insert policy exempts
+  // from status='pending', and an anon caller has no session at all -- so this
+  // insert was being refused by RLS and the video feed correctly came back
+  // empty. Testing a row that was never created proves nothing.
+  const seeded = await asRole('anon', 'tok-owner', () => db.query(`
+    insert into public.interviews (title, guest, status, category, author_account_id)
+    values ('Match highlights','Nakuru vs Nyeri','published','video',
+            '33333333-3333-3333-3333-333333333333')`));
+  if (!seeded.ok) {
+    bad('could not seed a video row as the Owner: ' + (seeded.error || ''));
+  }
+
+  const iv = await asRole('anon', null, () => db.query(
+    `select title from public.interviews where category='interview' order by title`));
+  const vd = await asRole('anon', null, () => db.query(
+    `select title from public.interviews where category='video' order by title`));
+
+  const interviewTitles = (iv.value?.rows ?? []).map((x) => x.title);
+  const videoTitles = (vd.value?.rows ?? []).map((x) => x.title);
+
+  if (interviewTitles.length === 2) ok('the interview feed returns exactly the 2 interviews: ' + interviewTitles.join(', '));
+  else bad('interview feed returned ' + JSON.stringify(interviewTitles));
+
+  if (videoTitles.length === 1 && videoTitles[0] === 'Match highlights') {
+    ok('the video feed returns exactly the 1 video: ' + videoTitles.join(', '));
+  } else {
+    bad('video feed returned ' + JSON.stringify(videoTitles));
+  }
+}
+
+// A Writer files a video and lands pending, like any other submission.
+{
+  const r = await asRole('anon', 'tok-writer', () => db.query(
+    `insert into public.interviews (title, guest, status, category, author_account_id)
+     values ('Writer video','Event','pending','video','33333333-3333-3333-3333-333333333333')
+     returning category, status`));
+  if (r.ok && r.value.rows[0]?.status === 'pending' && r.value.rows[0]?.category === 'video') {
+    ok("a Writer's video submission lands as pending/video, automatically");
+  } else {
+    bad("a Writer's video came back " + JSON.stringify(r.value?.rows?.[0] ?? r.error));
+  }
+}
+
+// The vocabulary is closed. Without this a typo creates a row in neither feed,
+// invisible everywhere -- the worst possible failure for published content.
+await denied('a Writer CANNOT invent a category', 'anon', 'tok-writer',
+  `insert into public.interviews (title, guest, status, category, author_account_id)
+   values ('Typo row','X','pending','interveiw','33333333-3333-3333-3333-333333333333')`, 'insert');
+
+// A Writer must not self-publish a video, exactly as they cannot publish an
+// interview. Otherwise the new feed is an unguarded publishing surface.
+await denied('a Writer CANNOT file an already-published video', 'anon', 'tok-writer',
+  `insert into public.interviews (title, guest, status, category, author_account_id)
+   values ('Sneaky','X','published','video','33333333-3333-3333-3333-333333333333')`, 'insert');
+
+// THE EDITORIAL INVARIANT: a Writer may edit their row but not re-file it.
+// Re-tagging an approved interview as a video would move a published row between
+// the two public archives, which is an editorial decision.
+{
+  const r = await asRole('anon', 'tok-writer',
+    () => db.query(`update public.interviews set category='video' where title='Coach interview'`));
+  const touched = r.ok && (r.value.rowCount ?? 0) > 0;
+  if (!touched) ok('a Writer CANNOT re-tag their interview as a video');
+  else bad('a Writer moved a published interview into the videos feed');
+}
+
+// ... but ordinary editing of their own row must still work, or the lockdown
+// above would have quietly broken the interview editor.
+{
+  const r = await asRole('anon', 'tok-writer',
+    () => db.query(`update public.interviews set title='Coach interview (revised)' where title='Coach interview' returning title`));
+  if (r.ok && (r.value.rowCount ?? 0) > 0) ok('a Writer can still edit their own row (category unchanged)');
+  else bad('a Writer cannot edit their own interview: ' + (r.error || '0 rows'));
+}
+
+// The Owner can re-file, because that IS an editorial act.
+{
+  const r = await asRole('anon', 'tok-owner',
+    () => db.query(`update public.interviews set category='video' where title='Coach interview (revised)' returning category`));
+  if (r.ok && r.value.rows[0]?.category === 'video') ok('the Owner CAN re-file an entry between feeds');
+  else bad('the Owner cannot re-file: ' + (r.error || JSON.stringify(r.value?.rows)));
+}
+
+// The column really is NOT NULL and constrained, not merely defaulted.
+{
+  const col = (await db.query(`
+    select is_nullable from information_schema.columns
+     where table_schema='public' and table_name='interviews' and column_name='category'`)).rows[0];
+  if (col?.is_nullable === 'NO') ok('category is NOT NULL');
+  else bad('category is nullable; a null row appears in neither feed');
+
+  const cons = await db.query(`
+    select pg_get_constraintdef(oid) as def from pg_constraint
+     where conrelid='public.interviews'::regclass and conname='interviews_category_check'`);
+  if (cons.rows.length) ok('a check constraint holds the vocabulary: ' + cons.rows[0].def);
+  else bad('no check constraint: any string can be stored in category');
 }
 
 // ===========================================================================
