@@ -1040,6 +1040,11 @@ function interviewAdminCard(interview) {
   const videos = store.readVideoIds(interview.videoIds);
   const isPublished =
     String(interview.status || '').toLowerCase() === 'published';
+  // From the ROW, not from mediaSubTab. This card is also used for the count and
+  // by any caller rendering a row directly, and reading the module's current tab
+  // would label a video "Untitled interview" because the Owner happens to be
+  // looking at the interviews archive.
+  const isVideo = interview.category === 'video';
 
   return `
     <article class="panel-raised flex flex-col overflow-hidden">
@@ -1056,12 +1061,24 @@ function interviewAdminCard(interview) {
           ${videos.length ? `<span class="badge badge-neutral">${videos.length} video${videos.length === 1 ? '' : 's'}</span>` : ''}
         </div>
         <h3 class="font-headline text-base leading-snug font-bold">
-          ${escapeHtml(interview.guest || 'Unnamed guest')}
+          ${escapeHtml(
+            interview.guest || interview.title || (isVideo ? 'Untitled video' : 'Untitled interview')
+          )}
         </h3>
-        <p class="ink-muted text-[0.7rem]">
-          ${escapeHtml(interview.title || '')}
-          ${interview.interviewer ? ` - by ${escapeHtml(interview.interviewer)}` : ''}
-        </p>
+        ${
+          // Only when there IS a guest. A video has none, so the title is already
+          // the heading above and printing it again repeats itself.
+          interview.guest
+            ? `<p class="ink-muted text-[0.7rem]">
+                 ${escapeHtml(interview.title || '')}
+                 ${
+                   interview.interviewer
+                     ? ` - by ${escapeHtml(interview.interviewer)}`
+                     : ''
+                 }
+               </p>`
+            : ''
+        }
         <div class="mt-auto flex flex-wrap gap-2 pt-3">
           ${
             store.canEditInterview(interview)
