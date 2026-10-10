@@ -323,6 +323,25 @@ async function fillPodcastStrip() {
       }
     </section>
   `;
+
+  /*
+   * WIRE THE PLAYERS. Without this the strip rendered a dead play button.
+   *
+   * `podcastCard` emits the full custom transport -- the <audio> element, the
+   * toggle, the scrubber, the speed control -- but none of that is interactive
+   * until `wirePodcastPlayer` attaches the listeners. The homepage was the only
+   * place that emitted those cards and skipped the wiring, so the button was
+   * there, the audio source was correct, and clicking did nothing at all. The
+   * same cards on /podcasts worked because `renderPodcastsPage` has always called
+   * it.
+   *
+   * Reached through the NEW section, not `mount`: `outerHTML` has already
+   * replaced the mount node, so `mount` is detached and querying it would find
+   * nothing. `document.getElementById` finds the replacement that took its place.
+   */
+  byId('latest-podcasts')
+    ?.querySelectorAll('[data-podcast-player]')
+    .forEach(wirePodcastPlayer);
 }
 
 /** Map a workflow status onto one of the badge variants. */
