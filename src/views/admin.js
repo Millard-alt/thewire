@@ -98,6 +98,15 @@ let interviewFilter = 'all';
 // Ids being edited, and the video rows staged in the editor.
 let editingInterviewId = null;
 let interviewVideoDraft = [];
+/**
+ * Which archive a save will file into. Migration 040.
+ *
+ * Module state rather than a hidden form field: a hidden input can be reset,
+ * lost on re-render, or disagree with the button that opened the dialog, and any
+ * of those files a video into the interviews archive with no visible symptom
+ * until a reader cannot find it.
+ */
+let editingMediaCategory = 'interview';
 /** Which tab is showing. Not persisted — the workspace always opens on Overview. */
 let activeTab = 'overview';
 
@@ -773,15 +782,43 @@ function renderContent() {
  * to a different thing. Mixing the two vocabularies into one list is how you get
  * a filter that hides everything.
  */
+/**
+ * The Interviews / Videos sub-tab.
+ *
+ * SWAPS THE WHOLE VIEW rather than splitting the screen. The brief asked for
+ * one full-width dashboard per kind, not a 50/50 split, and that is also the
+ * right call here: the grids are three-across at desktop, so two of them side by
+ * side would be unreadable at every width this site supports.
+ *
+ * Module state rather than a DOM read, because the panel repaints wholesale on
+ * every store change and on every action -- a switcher that stored its choice in
+ * a class attribute would snap back to Interviews every time the Owner approved
+ * something.
+ */
+let mediaSubTab = 'interview';
+
+/**
+ * The combined Videos & Interviews tab.
+ *
+ * One sidebar entry, two full-width views. `store.listMediaByCategory` filters
+ * client-side over the rows hydrate() already loaded, which is why the counts in
+ * both tabs are real numbers rather than placeholders.
+ */
 function renderInterviewsTab() {
   const all = store.listInterviews();
-  const pending = store.getPendingInterviews();
+  const isVideo = mediaSubTab === 'video';
+  const noun = isVideo ? 'video' : 'interview';
+  const inThisArchive = store.listMediaByCategory(mediaSubTab);
+  const pending = inThisArchive.filter(
+    (item) => String(item.status || '').toLowerCase() === 'pending'
+  );
   const filtered =
     interviewFilter === 'all'
-      ? all
-      : all.filter((item) =>
-          String(item.status || '').toLowerCase() ===
-          String(interviewFilter).toLowerCase()
+      ? inThisArchive
+      : inThisArchive.filter(
+          (item) =>
+            String(item.status || '').toLowerCase() ===
+            String(interviewFilter).toLowerCase()
         );
 
   const filters = ['all', ...store.INTERVIEW_STATUSES];
@@ -789,16 +826,47 @@ function renderInterviewsTab() {
   return `
     <div class="space-y-5">
     ${panelHeader(
-      'Interviews desk',
-      `${all.length} interview${all.length === 1 ? '' : 's'} on file - ${
-        pending.length
-      } awaiting approval`,
-      `<button class="btn btn-accent" data-action="interview-new">
-         <i class="fa-solid fa-plus" aria-hidden="true"></i> New interview
+      isVideo ? 'Videos desk' : 'Interviews desk',
+      `${inThisArchive.length} ${noun}${inThisArchive.length === 1 ? '' : 's'} on file${
+        pending.length ? ` - ${pending.length} awaiting approval` : ''
+      }`,
+      `<button class="btn btn-accent" data-action="interview-new"
+               data-media-category="${mediaSubTab}">
+         <i class="fa-solid fa-plus" aria-hidden="true"></i>
+         ${isVideo ? 'Add New Video' : 'Add New Interview'}
        </button>`
     )}
 
-      <div class="flex flex-wrap gap-2" role="group" aria-label="Filter interviews by status">
+      <div
+        class="inline-flex rounded-lg border border-[color:var(--rule)] p-1"
+        role="tablist"
+        aria-label="Choose between the interviews and videos archives"
+      >
+        ${[
+          { key: 'interview', emoji: '&#127897;&#65039;', label: 'Interviews' },
+          { key: 'video', emoji: '&#127916;&#65039;', label: 'Videos' }
+        ]
+          .map(
+            (tab) => `
+          <button
+            type="button"
+            role="tab"
+            class="btn ${mediaSubTab === tab.key ? 'btn-accent' : 'btn-ghost'}"
+            data-action="media-subtab"
+            data-media-category="${tab.key}"
+            aria-selected="${mediaSubTab === tab.key}"
+          >
+            <span aria-hidden="true">${tab.emoji}</span>
+            ${tab.label}
+            <span class="ml-1 opacity-70">(${
+              store.countMediaByCategory()[tab.key]
+            })</span>
+          </button>`
+          )
+          .join('')}
+      </div>
+
+      <div class="flex flex-wrap gap-2" role="group" aria-label="Filter ${noun}s by status">
         ${filters
           .map(
             (filter) => `
@@ -819,7 +887,12 @@ function renderInterviewsTab() {
           ? `<div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         ${filtered.map(interviewAdminCard).join('')}
       </div>`
-          : emptyState('No interviews match this filter.', 'fa-circle-play')
+          : emptyState(
+              isVideo
+                ? 'No videos match this filter.'
+                : 'No interviews match this filter.',
+              isVideo ? 'fa-clapperboard' : 'fa-circle-play'
+            )
       }
     </div>
   `;
@@ -2356,7 +2429,7 @@ function interviewEditorDialog() {
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
             <div>
-              <label class="field-label" for="interview-guest">Guest</label>
+              <label class="field-label" id="interview-guest-label" for="interview-guest">Guest</label>
               <input id="interview-guest" class="field" type="text" required />
             </div>
             <div>
@@ -4872,7 +4945,7 @@ import {
 const TABS = [
   { id: 'overview', label: 'Overview', icon: 'fa-gauge-high', render: renderOverview, minRole: 'Writer' },
   { id: 'content', label: 'Content', icon: 'fa-newspaper', render: renderContent, minRole: 'Writer' },
-  { id: 'interviews', label: 'Interviews', icon: 'fa-circle-play', render: renderInterviewsTab, minRole: 'Writer' },
+  { id: 'interviews', label: 'Videos & Interviews', icon: 'fa-circle-play', render: renderInterviewsTab, minRole: 'Writer' },
   // The submission queue is open to any staffer, but the DECISION is not: a tab a
   // writer can open but not act in is a dead end, so the gate is the Owner seat
   // and not a role ranking.
@@ -6812,18 +6885,46 @@ function stageInterviewVideo(rawValue) {
 }
 
 /** Open the interview editor, either blank or pre-filled. */
-function openInterviewEditor(interviewId) {
+/**
+ * Open the interview editor.
+ *
+ * @param {string|null} interviewId null to create
+ * @param {'interview'|'video'} [category] for a NEW entry: which archive the
+ *   "+ Add New Video" button is filing into. Ignored when editing, because
+ *   migration 040 makes category immutable below the Owner seat -- an edit may
+ *   not quietly re-file an entry. Use store.setMediaCategory for that.
+ */
+function openInterviewEditor(interviewId, category = 'interview') {
   const interview = interviewId ? store.getInterview(interviewId) : null;
   editingInterviewId = interview?.id ?? null;
 
+  // What a save will write. Module state rather than a hidden field, so there is
+  // no DOM element that can be lost between the button and the submit.
+  editingMediaCategory = interview
+    ? interview.category
+    : category === 'video'
+      ? 'video'
+      : 'interview';
+
+  const isVideo = editingMediaCategory === 'video';
   byId('interview-editor-title').textContent = interview
-    ? 'Edit Interview'
-    : 'Create Interview';
+    ? isVideo
+      ? 'Edit Video'
+      : 'Edit Interview'
+    : isVideo
+      ? 'Add New Video'
+      : 'Create Interview';
   byId('interview-title').value = interview?.title ?? '';
   byId('interview-guest').value = interview?.guest ?? '';
   byId('interview-guest-role').value = interview?.guestRole ?? '';
   byId('interview-interviewer').value = interview?.interviewer ?? '';
   byId('interview-status').value = interview?.status ?? 'pending';
+  // The label follows the archive. The column is `guest` for both kinds because
+  // it is NOT NULL and renaming it would rewrite the interview editor and the
+  // byline logic for every existing entry -- but a video form asking for a
+  // "Guest" is a question the person filing a match report cannot answer.
+  const guestLabel = byId('interview-guest-label');
+  if (guestLabel) guestLabel.textContent = isVideo ? 'Subject' : 'Guest';
   byId('interview-summary').value = interview?.summary ?? '';
   byId('interview-description').value = interview?.description ?? '';
   byId('interview-image').value = interview?.image ?? '';
@@ -6849,8 +6950,16 @@ async function saveInterviewFromForm() {
     summary: byId('interview-summary').value,
     description: byId('interview-description').value,
     image: byId('interview-image').value.trim(),
-    videoIds: interviewVideoDraft
+    videoIds: interviewVideoDraft,
+    // Only ever sent for a CREATE. On edit, store.updateInterview deliberately
+    // omits it -- 040 refuses a category change below the Owner seat, so sending
+    // it would make every save by a Writer fail with 42501 on a value that had
+    // not changed at all.
+    category: editingMediaCategory
   };
+
+  const isVideo = editingMediaCategory === 'video';
+  const noun = isVideo ? 'video' : 'interview';
 
   if (!payload.title.trim()) {
     showToast('Every interview needs a headline.', { type: 'error' });
@@ -6860,26 +6969,44 @@ async function saveInterviewFromForm() {
 
   // The guest is the subject of the interview, so a record without one is a
   // record nobody can identify in the Owner's queue. Title alone is not enough.
+  //
+  // `interviews.guest` is NOT NULL, so a video needs a value here too -- but
+  // "the person who was interviewed" is the wrong instruction for a match
+  // report, and the label on the field says "Guest". So for a video the prompt
+  // names what the column actually holds: the subject of the coverage.
   if (!payload.guest.trim()) {
-    showToast('Name the person who was interviewed.', { type: 'error' });
+    showToast(
+      isVideo
+        ? 'Name what this video covers, e.g. the teams or the event.'
+        : 'Name the person who was interviewed.',
+      { type: 'error' }
+    );
     byId('interview-guest').focus();
     return;
   }
 
   if (editingInterviewId) {
     await store.updateInterview(editingInterviewId, payload);
-    showToast('Interview updated.', { type: 'success' });
+    showToast(isVideo ? 'Video updated.' : 'Interview updated.', { type: 'success' });
   } else {
     await store.createInterview(payload);
     showToast(
       payload.status === 'published'
-        ? 'Interview created and published.'
-        : 'Interview filed for approval.',
+        ? isVideo
+          ? 'Video created and published.'
+          : 'Interview created and published.'
+        : isVideo
+          ? 'Video filed for approval.'
+          : 'Interview filed for approval.',
       { type: 'success' }
     );
+    // Switch to the archive the new entry just landed in, so the Owner sees it.
+    // Otherwise a video created from the Videos sub-tab would appear to vanish.
+    mediaSubTab = editingMediaCategory;
   }
 
   editingInterviewId = null;
+  editingMediaCategory = 'interview';
   interviewVideoDraft = [];
   closeDialog('interview-editor');
   paintActiveTab();
@@ -7201,7 +7328,11 @@ function handleClick(event) {
 
     /* --- interviews --- */
     case 'interview-new':
-      openInterviewEditor(null);
+      // The category comes from the ACTIVE SUB-TAB, not from a second control.
+      // That is what makes "+ Add New Video" reliable: whichever of the two is on
+      // screen is the one the button will file into, so the button and the grid it
+      // files into can never disagree.
+      openInterviewEditor(null, trigger.dataset.mediaCategory === 'video' ? 'video' : 'interview');
       break;
 
     // The writer's door into the podcast feature. On the Content tab, which every
@@ -7276,6 +7407,20 @@ function handleClick(event) {
       interviewFilter = filter;
       paintActiveTab();
       break;
+
+    case 'media-subtab': {
+      // Swaps the WHOLE view. Resetting the status filter alongside it is
+      // deliberate: carrying a filter across the switch would show an empty grid
+      // on the far side whenever the two archives happen not to share a status,
+      // which reads as "this archive is empty" rather than "this filter hides
+      // everything".
+      const want = trigger.dataset.mediaCategory;
+      if (want !== 'interview' && want !== 'video') break;
+      mediaSubTab = want;
+      interviewFilter = 'all';
+      paintActiveTab();
+      break;
+    }
 
     case 'interview-video-add': {
       // The Add button in the YouTube section. Without this case the button was

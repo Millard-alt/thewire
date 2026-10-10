@@ -1288,12 +1288,16 @@ console.log('\nSECTION 11a — the header offers seven destinations, not ten\n')
     `html=${JSON.stringify(staticLabels)} js=${JSON.stringify(jsLabels)}`
   );
   report(
+    // 'Interviews' became 'Videos', which is the Media & Video HUB. It offers
+    // both archives, and /interviews is one click from it. Seven destinations
+    // still: the brief asked for Videos to be ADDED to the nav, not for Podcasts
+    // to be removed, so the count is unchanged and only the label moved.
     'the header offers exactly the seven intended destinations',
     JSON.stringify(jsLabels) ===
       JSON.stringify([
         'Latest',
         'Assignments',
-        'Interviews',
+        'Videos',
         'Podcasts',
         'Photo Gallery',
         'Credits',

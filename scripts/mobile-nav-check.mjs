@@ -28,6 +28,27 @@ import { chromium } from 'playwright';
 
 const BASE = process.env.BASE_URL || 'http://localhost:5201/';
 
+/**
+ * Destinations the DRAWER can reach.
+ *
+ * NOT the same as every reader view. The nav entry says "Videos", which is the
+ * hub, and the hub is what links onward to /interviews and /videos-feed. So those
+ * two archives are one click deeper than the drawer -- deliberate, since the hub
+ * exists to offer both -- and a test that insists the drawer reach them directly
+ * would be demanding the nav go back to listing Interviews.
+ *
+ * The archives are still covered: the last check in this file walks the hub's
+ * own cards to both of them.
+ */
+const DRAWER_VIEWS = [
+  'publication',
+  'assignments',
+  'videos',
+  'gallery',
+  'credits',
+  'about'
+];
+
 const problems = [];
 const ok = (m) => console.log('PASS  ' + m);
 const bad = (m) => { problems.push(m); console.log('FAIL  ' + m); };
@@ -43,7 +64,8 @@ const VIEWS = {
   publication: '#publication-view',
   assignments: null, // a section of publication, reached by anchor
   interviews: '#interviews-view',
-  podcasts: '#podcasts-view',
+  videos: '#videos-view',
+  'videos-feed': '#videos-feed-view',
   gallery: '#gallery-view',
   credits: '#credits-view',
   about: '#about-view'
@@ -113,8 +135,8 @@ for (const width of [360, 390]) {
   await page.goto(BASE, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1500);
 
-  for (const from of Object.keys(VIEWS)) {
-    for (const to of Object.keys(VIEWS)) {
+  for (const from of DRAWER_VIEWS) {
+    for (const to of DRAWER_VIEWS) {
       if (from === to) continue;
 
       // Reset to a known place.
@@ -175,6 +197,68 @@ for (const width of [360, 390]) {
         `a.nav-link[href^="#"], so it would be ignored. classes=${JSON.stringify(classes)}`
       );
     }
+  }
+
+  await page.close();
+}
+
+// --- the hub reaches both archives, since the drawer no longer lists them ---
+//
+// The nav says "Videos", which is the hub, and the hub is what offers both
+// archives. If either card were dead the archive would be unreachable from a
+// phone entirely, which is the whole regression this file would miss now that
+// the drawer walk no longer covers it.
+for (const width of [390]) {
+  const page = await browser.newPage({ viewport: { width, height: 844 } });
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1500);
+
+  await page.locator('#mobile-nav-toggle').click();
+  await page.waitForTimeout(400);
+  await page.locator('#nav-drawer [data-nav="videos"]').first().click();
+  await page.waitForTimeout(700);
+
+  const hubVisible = await page.locator('#videos-view').isVisible().catch(() => false);
+  if (!hubVisible) {
+    bad(`${width}px: the drawer's Videos entry did not open the Media & Video hub`);
+  } else {
+    ok(`${width}px: the drawer opens the Media & Video hub`);
+
+    // Both cards, in order, each opening its own archive.
+    const cards = page.locator('#videos-view [data-nav]');
+    if ((await cards.count()) !== 2) {
+      bad(`${width}px: the hub has ${await cards.count()} card(s), expected 2`);
+    } else {
+      const targets = [await cards.nth(0).getAttribute('data-nav'), await cards.nth(1).getAttribute('data-nav')];
+      if (targets[0] === 'interviews' && targets[1] === 'videos-feed') {
+        ok(`${width}px: the hub offers Interviews then Videos, in that order`);
+      } else {
+        bad(`${width}px: hub cards point at ${JSON.stringify(targets)}, expected interviews then videos-feed`);
+      }
+    }
+
+    // Click the FIRST card and confirm it lands on the interviews archive.
+    await page.locator('#videos-view [data-nav="interviews"]').first().click();
+    await page.waitForTimeout(700);
+    const interviewsShown = await page.locator('#interviews-view').isVisible().catch(() => false);
+    if (interviewsShown) ok(`${width}px: the Interviews card opens the interviews archive`);
+    else bad(`${width}px: the Interviews card did not open the interviews archive`);
+
+    // Back to the hub, then the second card.
+    //
+    // Through the DRAWER, not page.goto('#videos'). This is a single-page app:
+    // the drawer click below has already rewritten the hash, so navigating to the
+    // same URL is a no-op the router never sees -- the hub is left hidden and the
+    // next click times out waiting for a card that is in the DOM but not shown.
+    await page.locator('#mobile-nav-toggle').click();
+    await page.waitForTimeout(400);
+    await page.locator('#nav-drawer [data-nav="videos"]').first().click();
+    await page.waitForTimeout(700);
+    await page.locator('#videos-view [data-nav="videos-feed"]').first().click();
+    await page.waitForTimeout(700);
+    const videosShown = await page.locator('#videos-feed-view').isVisible().catch(() => false);
+    if (videosShown) ok(`${width}px: the Videos card opens the videos archive`);
+    else bad(`${width}px: the Videos card did not open the videos archive`);
   }
 
   await page.close();

@@ -813,8 +813,22 @@ report(
   /youtubeEmbedUrl/.test(publicSrc)
 );
 report(
+  // `listPublishedMediaPage` is the same helper, now parameterised by archive.
+  // The point of the assertion is that paging arithmetic lives in the store and
+  // not in the renderer -- the renderer must not slice a list itself. Both the
+  // old interviews-only name and the new archive-aware one satisfy that.
   'public.js pages the feed through the store helper',
-  /listPublishedInterviewsPage/.test(publicSrc)
+  /listPublishedMediaPage|listPublishedInterviewsPage/.test(publicSrc)
+);
+report(
+  'public.js still pages the INTERVIEWS archive through the store',
+  // `category` is the renderer's parameter, not a literal, because ONE renderer
+  // now serves both archives. Asserting a string literal here would force the two
+  // pages back into separate functions -- which is exactly what the refactor
+  // removed.
+  /listPublishedMediaPage\(\s*category/.test(publicSrc) &&
+    /renderMediaArchive\(\s*'interview'\s*\)/.test(publicSrc) &&
+    /renderMediaArchive\(\s*'video'\s*\)/.test(publicSrc)
 );
 report('the admin panel has an Interviews tab', /id: 'interviews'/.test(adminSrc));
 report(
