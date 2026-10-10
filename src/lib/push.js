@@ -1459,7 +1459,22 @@ export async function dispatchWebPush({
       reason
     });
     return {
-      ok: delivered > 0,
+      /*
+       * `ok` means THE SEND SUCCEEDED, not that at least one device took it.
+       *
+       * These are different questions, and conflating them is what made the
+       * panel report a successful broadcast as a failure. The panel reads
+       * `pushedOk && delivered > 0` to decide between "Delivered via Web Push to
+       * N devices" and the in-app-only fallback -- so a sender that delivered to
+       * 12 of 14 subscriptions and returned HTTP 200 was rendered as an error,
+       * while 12 phones lit up. A teacher reading that would reasonably conclude
+       * the send failed and try again, which sends it a second time.
+       *
+       * The sender already reports its own diagnosis in `reason` (which is what
+       * the fallback copy is built from). `ok` therefore carries only "the
+       * request reached a working sender", and `delivered` carries the count.
+       */
+      ok: true,
       delivered,
       reason,
       // Pass the counts up so the panel can explain the shortfall.

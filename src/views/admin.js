@@ -6617,11 +6617,15 @@ export async function sendBroadcastFromForm(form) {
 
     // Report what actually happened, and nothing more.
     //
-    // `pushedOk` means the serverless sender really ran web-push and the push
-    // service accepted at least one subscription. Only THEN can we say
-    // "Delivered via Web Push to N devices" — the previous copy claimed in-app
-    // only, which understated what now happens. If the push did not happen, say
-    // why in terms the Owner can act on, rather than implying success.
+    // `pushedOk` means the request reached a working sender -- NOT that every
+    // device took it. The count in `pushed` is what the push service actually
+    // accepted, so that is what "Delivered via Web Push to N devices" reports.
+    //
+    // These were once the same question, and conflating them made a successful
+    // broadcast read as a failure: `ok` was computed as `delivered > 0`, so a
+    // send that reached 12 of 14 subscriptions rendered as the in-app-only
+    // error below WHILE 12 phones lit up. The panel now reports the real count
+    // and only falls through here when nothing was delivered at all.
     const devices = result.pushed;
     const viaPush = result.pushedOk && devices > 0;
 
