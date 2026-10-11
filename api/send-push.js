@@ -548,14 +548,38 @@ export default async function handler(req, res) {
   // delivered_count is still recorded, and only when at least one device
   // accepted, so the panel reports a real number rather than a hopeful one.
   //
-  // The inline path has no row to update: a custom broadcast posted straight
-  // from the panel was never a queue entry.
-  if (broadcast.id && !request.inline && sent > 0) {
+  // THE INLINE PATH DOES HAVE A ROW. An earlier revision of this comment claimed
+  // it did not -- "a custom broadcast posted straight from the panel was never a
+  // queue entry" -- and that assumption is what made every Owner broadcast
+  // arrive twice.
+  //
+  // `sendBroadcastToDevices` calls `store.createBroadcast()` and THEN
+  // `dispatchWebPush()`, so the inline POST is made moments after a row was
+  // inserted with `pushed_at` still null. Nothing stamped it, so the row stayed
+  // on the queue: the once-a-minute cron claimed it and pushed it a second time,
+  // and an INSERT webhook would do the same. Two notifications per broadcast,
+  // for every subscriber, every time.
+  //
+  // Stamping on a successful send closes both paths at once, because they both
+  // find work by `pushed_at is null`: the cron's claim returns nothing, and the
+  // webhook's claim-by-id returns nothing. No coordination between the two
+  // triggers is needed, because they no longer both find the row.
+  //
+  // Only when `sent > 0`, deliberately. A send that reached no device leaves the
+  // row undelivered so it is retried, which is the recovery path when a reader
+  // has not yet allowed alerts. That is why delivered_count is gated the same way.
+  if (broadcast.id && sent > 0) {
     const { error: markError } = await db
       .from('broadcasts')
-      .update({ delivered_count: sent })
+      .update({ delivered_count: sent, pushed_at: new Date().toISOString() })
       .eq('id', broadcast.id);
-    if (markError) console.error(`${TAG} could not record delivered_count`, markError.message);
+    if (markError) {
+      console.error(`${TAG} could not record delivery`, markError.message);
+    } else {
+      // The panel reports this, and it is the difference between "sent" and
+      // "sent and will not be sent again".
+      console.log(`${TAG} broadcast marked delivered`, { id: broadcast.id, sent });
+    }
   }
 
   console.log(`${TAG} done`, { sent, pruned, failed: failed.length, skipped });

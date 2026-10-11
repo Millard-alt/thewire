@@ -157,6 +157,58 @@ for (const c of cases) {
   }
 }
 
+// --- ONE SEND MUST MEAN ONE NOTIFICATION ------------------------------------
+//
+// The other direction, and the one that bit: a successful broadcast arrived
+// TWICE.
+//
+// `sendBroadcastToDevices` inserts the row and THEN calls the inline sender.
+// Nothing stamped `pushed_at`, so the row stayed on the queue and the
+// once-a-minute cron claimed it and pushed it again -- two notifications, every
+// subscriber, every send.
+//
+// All three links in the chain are asserted. Dropping any one of them restores
+// the duplicate, and none of the other assertions here would notice: the panel
+// would still report success, truthfully, both times.
+
+{
+  const sender = code(readFileSync('api/send-push.js', 'utf8'));
+
+  // The gate that caused it: `!request.inline` skipped the bookkeeping for the
+  // one path that most definitely had a row.
+  if (/broadcast\.id\s*&&\s*!request\.inline/.test(sender)) {
+    bad(
+      'the inline send still skips the delivery write: the row it created stays ' +
+        'undelivered and the cron sends the broadcast a second time'
+    );
+  } else {
+    ok('the inline send also marks its row delivered');
+  }
+
+  if (/update\(\{\s*delivered_count:\s*sent,\s*pushed_at:/.test(sender)) {
+    ok('the delivery write stamps pushed_at, so the cron and any INSERT webhook both find nothing');
+  } else {
+    bad(
+      'the delivery write no longer stamps pushed_at: the cron will re-send every ' +
+        'broadcast once a minute until it happens to deliver'
+    );
+  }
+
+  const client = code(push);
+  if (/broadcastId\s*\?\s*\{\s*broadcastId\s*\}/.test(client)) {
+    ok('dispatchWebPush forwards the row id so the sender can find the row it created');
+  } else {
+    bad('dispatchWebPush does not send broadcastId, so the sender has no row to mark delivered');
+  }
+
+  const caller = code(alerts);
+  if (/dispatchWebPush\(\{[\s\S]{0,400}?broadcastId:\s*broadcast\??\.id/.test(caller)) {
+    ok('alerts.js passes the created row id to the sender');
+  } else {
+    bad('alerts.js does not pass the created row id, so nothing can be marked delivered');
+  }
+}
+
 // --- plumbing ---------------------------------------------------------------
 
 for (const [file, label, needle] of [
@@ -173,4 +225,4 @@ if (problems.length) {
   for (const p of problems) console.log('  - ' + p);
   process.exit(1);
 }
-console.log('RESULT: PASS — a delivered broadcast is never reported as a failure.');
+console.log('RESULT: PASS — a delivered broadcast is reported as sent, and sent only once.');

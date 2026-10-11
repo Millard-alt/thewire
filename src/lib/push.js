@@ -1396,7 +1396,8 @@ export async function dispatchWebPush({
   body = '',
   audience = 'Everyone',
   url = '',
-  targetStaffId = null
+  targetStaffId = null,
+  broadcastId = null
 } = {}) {
   const text = String(title || '').trim();
   if (!text) return { ok: false, delivered: 0, reason: 'empty_title' };
@@ -1426,6 +1427,15 @@ export async function dispatchWebPush({
         body: String(body || ''),
         audience,
         url: url || config.notificationTargetUrl || '/',
+        /*
+        The id of the row this broadcast already created in `broadcasts`.
+        `sendBroadcastToDevices` inserts it a moment before calling this, with
+        pushed_at still null. Without the id the sender has no way to find that
+        row, so it cannot mark it delivered -- and the once-a-minute cron keeps
+        finding it undelivered and pushes the broadcast a second time. Two
+        notifications, every subscriber, every send.
+        */
+        ...(broadcastId ? { broadcastId } : {}),
         // Only present for a "Specific User" broadcast; the server treats an
         // absent or malformed id as "everyone", which is the safe fallback.
         ...(targetStaffId ? { targetStaffId } : {})

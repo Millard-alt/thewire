@@ -499,6 +499,10 @@ export async function sendBroadcastToDevices({
     title: title || 'The Pulse',
     body: message || '',
     audience,
+    // The row created just above. Passed so the sender can mark it delivered
+    // after a successful push -- otherwise it stays in the queue and the cron
+    // sends the same broadcast a second time.
+    broadcastId: broadcast?.id ?? null,
     // null for a broadcast to everyone; a staff_accounts uuid for a targeted
     // send, which the sender turns into `where staff_id = ...`.
     targetStaffId,
