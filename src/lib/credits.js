@@ -612,11 +612,15 @@ function aboutTemplate(sections) {
 
   return `
     <div class="mx-auto max-w-5xl px-4 py-10 md:py-14">
-      <header class="about-hero">
-        <p class="accent-text text-[0.625rem] font-bold tracking-[0.2em] uppercase">
-          About us
-        </p>
-        <h1 class="about-hero__title">Stories that matter. Voices that count.</h1>
+      <header class="about-hero flex flex-col items-center gap-4 md:flex-row md:items-center md:gap-6">
+        <img src="/logo.png" alt="The Pulse crest" class="h-16 w-16 shrink-0 rounded-full object-contain md:h-20 md:w-20" />
+        <div class="text-center md:text-left">
+          <p class="accent-text text-[0.625rem] font-bold tracking-[0.2em] uppercase">
+            About Us | The Pulse
+          </p>
+          <h1 class="about-hero__title">Stories that matter. Voices that count.</h1>
+          <p class="about-standfirst mt-1">Behind every story is a team.</p>
+        </div>
       </header>
 
       <section class="about-mission" aria-labelledby="about-mission-heading">
