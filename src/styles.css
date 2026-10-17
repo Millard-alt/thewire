@@ -2404,6 +2404,7 @@ class because the ratio is the whole point.
 /* --- the card ---------------------------------------------------------------- */
 
 .about-card {
+  height: 100%;
   display: flex;
   align-items: center;
   gap: 0.85rem;
@@ -2428,6 +2429,8 @@ class because the ratio is the whole point.
   */
   width: 56px;
   height: 56px;
+  min-width: 56px;
+  min-height: 56px;
   flex-shrink: 0;
   border-radius: 10px;
   object-fit: cover;
