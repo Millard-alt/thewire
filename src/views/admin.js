@@ -4364,6 +4364,7 @@ function podcastSubmitPanel() {
           <div>
             <label class="field-label" for="podcast-sub-host">Speaker / host name</label>
             <input id="podcast-sub-host" class="field" type="text" maxlength="80"
+              list="podcast-author-options"
               placeholder="Defaults to your name" />
           </div>
         </div>
@@ -4754,6 +4755,7 @@ function podcastUploadDialog() {
           <div>
             <label class="field-label" for="podcast-up-host">Speaker / host name</label>
             <input id="podcast-up-host" class="field" type="text" maxlength="80"
+              list="podcast-author-options"
               placeholder="Defaults to your name" />
             <p class="mt-1 text-[0.6875rem] ink-muted">
               Whoever the episode is about. This is the byline readers see, so use a
@@ -5290,6 +5292,19 @@ function workspaceTitle() {
 }
 
 /** Repaint the active tab and sync the tab buttons. */
+function syncPodcastAuthorDatalist() {
+  let list = document.getElementById('podcast-author-options');
+  if (!list) {
+    list = document.createElement('datalist');
+    list.id = 'podcast-author-options';
+    document.body.appendChild(list);
+  }
+  const names = Array.from(
+    new Set((store.getState().staff || []).map((s) => String(s.name || '').trim()).filter(Boolean))
+  );
+  list.innerHTML = names.map((name) => `<option value="${escapeHtml(name)}"></option>`).join('');
+}
+
 function paintActiveTab() {
   const body = byId('admin-tab-body');
   if (!body) return;
@@ -5315,7 +5330,7 @@ function paintActiveTab() {
   // elements and their listeners must be re-attached on every paint. Guarded
   // by `dataset.bound` so a re-render of the same node cannot double-bind.
   bindFilePickers();
-
+  syncPodcastAuthorDatalist();
   // Same story for the layout list's drag handlers. `wireLayoutDrag` guards
   // itself, and it is safe to call on every tab: it finds nothing outside the
   // Content desk.
