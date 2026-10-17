@@ -1543,7 +1543,10 @@ export function listMediaByCategory(category) {
 /** How many rows each archive holds, for the sub-tab badges. */
 export function countMediaByCategory() {
   const counts = { interview: 0, video: 0 };
-  for (const item of getState().interviews) counts[mediaCategory(item)] += 1;
+  for (const item of getState().interviews) {
+    if (!isStatus(item.status, 'published')) continue;
+    counts[mediaCategory(item)] += 1;
+  }
   return counts;
 }
 
