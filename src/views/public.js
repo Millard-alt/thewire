@@ -1690,6 +1690,12 @@ function podcastCard(episode) {
   // an `src`, and `imageFallbackAttr` so an episode whose art 404s loses the
   // picture rather than the episode.
   const cover = safeUrl(episode.cover_url);
+  const authorName = episode.author_name || 'The Pulse Staff';
+  const staffMember = (store.getState().staff || []).find(
+    (person) => String(person?.name || '').trim().toLowerCase() === authorName.trim().toLowerCase()
+  );
+  const authorAvatar =
+    safeUrl(staffMember?.portrait_url) || DEFAULT_AVATAR;
 
   return `
     <article class="podcast-card" data-podcast-player>
@@ -1702,7 +1708,10 @@ function podcastCard(episode) {
 
       <div class="podcast-card__head">
         <h3 class="podcast-card__title">${escapeHtml(episode.title || 'Untitled episode')}</h3>
-        <p class="podcast-card__byline">${escapeHtml(episode.author_name || 'The Pulse Staff')}</p>
+        <p class="podcast-card__byline">
+          <img class="w-7 h-7 rounded-full object-cover inline-block mr-2 align-middle" src="${escapeHtml(authorAvatar)}" ${imageFallbackAttr(DEFAULT_AVATAR)} alt="" loading="lazy" decoding="async" />
+          ${escapeHtml(authorName)}
+        </p>
       </div>
 
       ${
