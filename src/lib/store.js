@@ -555,8 +555,22 @@ export async function hydrate() {
 
   const client = db();
   try {
+    // Fetch articles with a relational join to the author profile so avatar/name
+    // changes propagate. Fall back to a plain select if the relation is unavailable.
+    let articlesRes;
+    try {
+      articlesRes = await client
+        .from(TABLES.articles)
+        .select('*, author:profiles(id, full_name, avatar_url)')
+        .order('created_at', { ascending: false });
+      if (articlesRes.error) throw articlesRes.error;
+    } catch {
+      articlesRes = await client
+        .from(TABLES.articles)
+        .select('*')
+        .order('created_at', { ascending: false });
+    }
     const [
-      articles,
       assignments,
       staff,
       performers,
@@ -566,7 +580,6 @@ export async function hydrate() {
       broadcasts,
       settings
     ] = await Promise.all([
-      client.from(TABLES.articles).select('*').order('created_at', { ascending: false }),
       client.from(TABLES.assignments).select('*').order('created_at', { ascending: false }),
       client.from(TABLES.staff).select('*').order('created_at', { ascending: false }),
       client.from(TABLES.topPerformers).select('*').order('articles_count', { ascending: false }),
@@ -587,6 +600,7 @@ export async function hydrate() {
         .limit(50),
       client.from('site_settings').select('*').limit(1).maybeSingle()
     ]);
+    const articles = articlesRes;
 
     assertOk({ data: articles.data, error: articles.error }, 'load articles');
 
@@ -651,7 +665,23 @@ export async function hydrate() {
       articles: (articles.data || []).map((row) => ({
         id: row.id,
         title: row.title,
-        author: row.author,
+        author:
+          row.author && typeof row.author === 'object'
+            ? row.author.full_name || row.author.name || 'The Pulse Staff'
+            : row.author || 'The Pulse Staff',
+        authorProfile: (() => {
+          if (row.author && typeof row.author === 'object') return row.author;
+          const match = (staff.data || []).find(
+            (person) =>
+              String(person?.name || '').trim().toLowerCase() ===
+              String(row.author || '').trim().toLowerCase()
+          );
+          return {
+            id: match?.id ?? null,
+            full_name: match?.name || row.author || 'The Pulse Staff',
+            avatar_url: match?.portrait_url || null
+          };
+        })(),
         category: row.category,
         date: row.published_at || '',
         image: row.image_url || '',

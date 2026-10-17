@@ -42,7 +42,17 @@ import { listPodcasts } from '../lib/podcasts.js';
  * @param {{tag?: string, cls?: string, suffix?: string}} [opts]
  */
 function renderByline(article, opts = {}) {
-  return bylineSticker(article?.author || 'The Pulse staff', opts);
+  return bylineSticker(
+    article?.author?.full_name || article?.author || 'The Pulse staff',
+    {
+      ...opts,
+      portrait:
+        opts.portrait ||
+        article?.author?.avatar_url ||
+        article?.authorProfile?.avatar_url ||
+        null
+    }
+  );
 }
 
 /** A neutral placeholder for stories with no lead image. */
@@ -53,6 +63,16 @@ const BLANK_IMAGE =
       '<rect width="800" height="450" fill="#e7e1d3"/>' +
       '<text x="50%" y="50%" font-family="Georgia,serif" font-size="42" ' +
       'fill="#8c1d11" text-anchor="middle">The Pulse</text></svg>'
+   );
+
+/** Default avatar placeholder for authors without a profile picture. */
+const DEFAULT_AVATAR =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+      '<rect width="64" height="64" fill="#e7e1d3"/>' +
+      '<circle cx="32" cy="24" r="12" fill="#8c1d11"/>' +
+      '<path d="M12 56c0-11 9-18 20-18s20 7 20 18" fill="#8c1d11"/></svg>'
   );
 
 /* -------------------------------------------------------------------------- */
@@ -183,6 +203,9 @@ function articleCard(article, { showBody = false, size = 'md' } = {}) {
   if (!article) return '';
   const href = `#article-${escapeHtml(article.id)}`;
   const image = safeUrl(article.image) || BLANK_IMAGE;
+  const authorAvatar =
+    safeUrl(article?.author?.avatar_url || article?.authorProfile?.avatar_url) ||
+    DEFAULT_AVATAR;
 
   return `
     <article
