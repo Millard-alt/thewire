@@ -898,7 +898,10 @@ export async function updatePodcastText(id, patch) {
             ...(description === undefined ? {} : { description: description || null }),
             ...(patch.authorName === undefined
               ? {}
-              : { author_name: String(patch.authorName).trim() || row.author_name })
+              : { author_name: String(patch.authorName).trim() || row.author_name }),
+    ...(patch.coverUrl === undefined
+              ? {}
+              : { cover_url: safeUrl(patch.coverUrl) || null })
           }
         : row
     );
@@ -918,6 +921,13 @@ export async function updatePodcastText(id, patch) {
   if (patch.authorName !== undefined) {
     row.author_name = String(patch.authorName).trim() || 'The Pulse Staff';
   }
+  if (patch.coverUrl !== undefined) {
+    const cleanCoverUrl = safeUrl(patch.coverUrl);
+    if (patch.coverUrl && !cleanCoverUrl) {
+      return { ok: false, message: 'That cover image link is not a usable http(s) URL.' };
+    }
+    row.cover_url = cleanCoverUrl || null;
+  }
   if (!Object.keys(row).length) return { ok: true, message: 'Nothing to change.' };
 
   const { data, error } = await client
@@ -925,7 +935,7 @@ export async function updatePodcastText(id, patch) {
     .update(row)
     .eq('id', id)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) return { ok: false, message: `The episode could not be updated: ${error.message}` };
   return { ok: true, message: 'Episode updated.', podcast: data };

@@ -4660,6 +4660,14 @@ function podcastLiveRow(episode) {
             data-podcast-edit-desc>${description}</textarea>
         </div>
 
+        <div>
+          <label class="field-label" for="podcast-edit-cover-${id}">Cover image URL</label>
+          <input id="podcast-edit-cover-${id}" class="field" type="url"
+            placeholder="https://example.com/cover.jpg"
+            data-podcast-edit-cover
+            value="${escapeHtml(episode.cover_url || '')}" />
+        </div>
+
         <p class="ink-muted text-xs">
           ${escapeHtml(episode.author_name || 'The Pulse Staff')} &#8226;
           published ${escapeHtml(published)}
@@ -4993,7 +5001,8 @@ async function savePodcastEditFromForm(form) {
   const result = await updatePodcastText(id, {
     title: form.querySelector('[data-podcast-edit-title]')?.value.trim() ?? '',
     authorName: form.querySelector('[data-podcast-edit-author]')?.value.trim() ?? '',
-    description: form.querySelector('[data-podcast-edit-desc]')?.value.trim() ?? ''
+    description: form.querySelector('[data-podcast-edit-desc]')?.value.trim() ?? '',
+    coverUrl: form.querySelector('[data-podcast-edit-cover]')?.value.trim() ?? ''
   });
 
   if (!result.ok) {
