@@ -5295,8 +5295,8 @@ function workspaceTitle() {
 function podcastAuthorOptionTags(selected) {
   const names = Array.from(
     new Set(
-      ((store.getState().staff || []).map((s) => String(s.name || '').trim()).filter(Boolean))
-        .concat(['The Pulse Staff', 'Grace Wanjiku', 'David Kiprop', 'Amina Mohamed', 'Samuel Ochieng'])
+      ['The Pulse Staff']
+        .concat((store.getState().staff || []).map((s) => String(s.name || '').trim()).filter(Boolean))
     )
   );
   const wanted = String(selected || '').trim();
