@@ -3477,3 +3477,18 @@ class because the ratio is the whole point.
     display: none;
   }
 }
+
+
+/* --- desktop polish: hover scale + empty-state card ------------------------- */
+@media (width >= 48rem) {
+  .about-card:hover .about-card__photo {
+    transform: scale(1.05);
+    transition: transform 0.2s ease;
+  }
+  .about-roster--empty {
+    background: var(--surface-card, #18181b);
+    border: 1px dashed var(--surface-card-edge, #27272a);
+    border-radius: 10px;
+    padding: 1.5rem;
+  }
+}
