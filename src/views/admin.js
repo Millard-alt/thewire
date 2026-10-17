@@ -4648,9 +4648,9 @@ function podcastLiveRow(episode) {
           </div>
           <div class="min-w-0 flex-1">
             <label class="field-label" for="podcast-edit-author-${id}">Author</label>
-            <input id="podcast-edit-author-${id}" class="field" type="text"
-              maxlength="80" data-podcast-edit-author
-              value="${escapeHtml(episode.author_name || 'The Pulse Staff')}" />
+            <select id="podcast-edit-author-${id}" class="field" data-podcast-edit-author>
+              ${podcastAuthorOptionTags(episode.author_name || 'The Pulse Staff')}
+            </select>
           </div>
         </div>
 
@@ -4753,13 +4753,13 @@ function podcastUploadDialog() {
           </div>
 
           <div>
-            <label class="field-label" for="podcast-up-host">Speaker / host name</label>
-            <input id="podcast-up-host" class="field" type="text" maxlength="80"
-              list="podcast-author-options"
-              placeholder="Defaults to your name" />
+            <label class="field-label" for="podcast-up-host">Author</label>
+            <select id="podcast-up-host" class="field" data-podcast-edit-author>
+              ${podcastAuthorOptionTags('')}
+            </select>
             <p class="mt-1 text-[0.6875rem] ink-muted">
               Whoever the episode is about. This is the byline readers see, so use a
-              guest's name when they are not you.
+              name you want published.
             </p>
           </div>
 
@@ -5292,6 +5292,22 @@ function workspaceTitle() {
 }
 
 /** Repaint the active tab and sync the tab buttons. */
+function podcastAuthorOptionTags(selected) {
+  const names = Array.from(
+    new Set(
+      ((store.getState().staff || []).map((s) => String(s.name || '').trim()).filter(Boolean))
+        .concat(['The Pulse Staff', 'Grace Wanjiku', 'David Kiprop', 'Amina Mohamed', 'Samuel Ochieng'])
+    )
+  );
+  const wanted = String(selected || '').trim();
+  return names
+    .map(
+      (name) =>
+        `<option value="${escapeHtml(name)}"${name === wanted ? ' selected' : ''}>${escapeHtml(name)}</option>`
+    )
+    .join('');
+}
+
 function syncPodcastAuthorDatalist() {
   let list = document.getElementById('podcast-author-options');
   if (!list) {
