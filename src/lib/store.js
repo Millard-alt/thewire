@@ -1832,10 +1832,25 @@ export async function updateInterview(id, patch) {
         .update(payload)
         .eq('id', id)
         .select()
-        .single(),
+        .maybeSingle(),
       'update interview'
     );
-    Object.assign(interview, mapInterviewRow(updated));
+    if (updated) {
+      Object.assign(interview, mapInterviewRow(updated));
+    } else {
+      interview.title = payload.title;
+      interview.guest = payload.guest;
+      interview.guestRole = payload.guest_role;
+      interview.interviewer = payload.interviewer;
+      interview.summary = payload.summary;
+      interview.description = payload.description;
+      interview.image = payload.image_url;
+      interview.videoIds = payload.video_ids;
+      interview.status = payload.status;
+      if (payload.category) interview.category = payload.category;
+      interview.publishedAt =
+        interview.status === 'published' ? interview.publishedAt || nowStamp() : null;
+    }
   } else {
     interview.title = payload.title;
     interview.guest = payload.guest;
