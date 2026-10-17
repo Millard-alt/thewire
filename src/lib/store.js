@@ -555,21 +555,15 @@ export async function hydrate() {
 
   const client = db();
   try {
-    // Fetch articles with a relational join to the author profile so avatar/name
-    // changes propagate. Fall back to a plain select if the relation is unavailable.
-    let articlesRes;
-    try {
-      articlesRes = await client
-        .from(TABLES.articles)
-        .select('*, author:profiles(id, full_name, avatar_url)')
-        .order('created_at', { ascending: false });
-      if (articlesRes.error) throw articlesRes.error;
-    } catch {
-      articlesRes = await client
-        .from(TABLES.articles)
-        .select('*')
-        .order('created_at', { ascending: false });
-    }
+    // Author profile data is resolved dynamically from the staff roster below rather
+    // than via a (possibly unavailable) relational join, which avoids 400s when the
+    // `profiles` relation is not present in the database schema.
+    // Reference join (for deployments that expose `profiles`):
+    //   client.from(TABLES.articles).select('*, author:profiles(id, full_name, avatar_url)')
+    let articlesRes = await client
+      .from(TABLES.articles)
+      .select('*')
+      .order('created_at', { ascending: false });
     const [
       assignments,
       staff,
