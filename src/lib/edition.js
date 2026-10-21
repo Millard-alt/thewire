@@ -82,11 +82,37 @@ export function applyEdition(themeId, options, { updateCache = false } = {}) {
   Object.keys(clean).forEach((key) => {
     root.dataset[`edition${key.charAt(0).toUpperCase()}${key.slice(1)}`] = String(clean[key]);
   });
+  // Christmas snow (utility bar + masthead only).
+  if (typeof document !== 'undefined') {
+    requestAnimationFrame(() => renderSnow());
+  }
   if (updateCache) cacheEdition(theme, clean);
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(EDITION_CHANGE_EVENT, { detail: { theme, options: clean } }));
   }
   return { theme, options: clean };
+}
+
+function renderSnow() {
+  if (typeof document === 'undefined') return;
+  const snow = document.getElementById('snow');
+  if (!snow) return;
+  snow.innerHTML = '';
+  const root = document.documentElement;
+  if (root.dataset.theme !== 'christmas') return;
+  if (String(root.dataset.off || '').includes('fx')) return;
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const mast = document.querySelector('.masthead-bar');
+  const h = mast ? mast.offsetTop + mast.offsetHeight : 300;
+  snow.style.height = h + 'px';
+  snow.style.setProperty('--h', h + 'px');
+  const n = window.innerWidth < 700 ? 22 : 40;
+  for (let i = 0; i < n; i++) {
+    const f = document.createElement('i');
+    const s = 2 + Math.random() * 2.5;
+    f.style.cssText = `left:${Math.random() * 100}%;width:${s}px;height:${s}px;opacity:${0.5 + Math.random() * 0.4};animation-duration:${9 + Math.random() * 9}s;animation-delay:-${Math.random() * 18}s;--dx:${Math.random() * 50 - 25}px`;
+    snow.appendChild(f);
+  }
 }
 
 export function applyCachedEdition() {
@@ -142,4 +168,8 @@ export async function publishEdition(themeId, options) {
 
 export async function restoreDefault() {
   return publishEdition('default', {});
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', () => requestAnimationFrame(renderSnow));
 }

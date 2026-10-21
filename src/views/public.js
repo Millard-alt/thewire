@@ -258,12 +258,13 @@ captionText(article.caption)
 /** A section heading with the newspaper double rule beneath it. */
 function sectionHeading(id, kicker, title) {
     return `
-      <div class="mb-5 rule border-b-2 border-double pb-3">
-        ${kicker ? `<p class="accent-text text-[0.625rem] font-bold tracking-[0.24em] uppercase">${escapeHtml(kicker)}</p>` : ''}
-        <h2 id="${escapeHtml(id)}" class="font-headline text-2xl font-black tracking-wide uppercase md:text-3xl">
-          ${escapeHtml(title)}
-        </h2>
-      </div>
+       <div class="mb-5 rule border-b-2 border-double pb-3">
+         ${kicker ? `<p class="accent-text text-[0.625rem] font-bold tracking-[0.24em] uppercase"><svg class="orn sp mr-1 inline-block" width="14" height="10" viewBox="0 0 14 10" aria-hidden="true"><path d="M1 1l4 4-4 4M7 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2"/></svg>${escapeHtml(kicker)}</p>` : ''}
+         <h2 id="${escapeHtml(id)}" class="font-headline text-2xl font-black tracking-wide uppercase md:text-3xl">
+           ${escapeHtml(title)}
+         </h2>
+         <svg class="holly orn xm" aria-hidden="true"><use href="#holly"/></svg>
+       </div>
     `;
   }
 

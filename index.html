@@ -235,11 +235,18 @@
     </script>
   </head>
 
-  <body class="min-h-screen surface-paper antialiased">
+   <body class="min-h-screen surface-paper antialiased">
+     <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+       <defs>
+         <symbol id="sprig" viewBox="0 0 120 40"><path d="M4 20H112M16 20l8-12M16 20l8 12M30 20l8-12M30 20l8 12M44 20l8-12M44 20l8 12M58 20l8-12M58 20l8 12M72 20l8-12M72 20l8 12M86 20l8-12M86 20l8 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><g fill="var(--berry)"><circle cx="102" cy="20" r="3.6"/><circle cx="110" cy="14" r="3.6"/><circle cx="110" cy="26" r="3.6"/></g></symbol>
+         <symbol id="holly" viewBox="0 0 64 24"><g fill="currentColor"><path d="M32 12C28 3 18 2 8 8c4 1 4 5 0 6 5 1 6 4 4 8 8-1 16-3 20-10z"/><path d="M32 12C36 3 46 2 56 8c-4 1-4 5 0 6-5 1-6 4-4 8-8-1-16-3-20-10z"/></g><g fill="var(--berry)"><circle cx="28" cy="13" r="3"/><circle cx="36" cy="13" r="3"/><circle cx="32" cy="18" r="3"/></g></symbol>
+       </defs>
+     </svg>
     <a class="skip-link no-print" href="#main-content">Skip to main content</a>
 
     <!-- ======================= HEADER ======================= -->
-    <header class="no-print">
+     <header class="no-print">
+       <div class="snow xm" id="snow" aria-hidden="true"></div>
        <!-- Top utility strip -->
        <div class="util-strip surface-sunken rule-soft border-b">
          <div
@@ -255,9 +262,11 @@
        </div>
 
        <!-- Masthead -->
-       <div class="masthead-bar surface-paper rule-soft border-b">
-         <div class="mx-auto max-w-7xl px-4 py-6 md:py-8">
-           <div class="flex items-center justify-center gap-4 md:gap-6">
+         <div class="masthead-bar surface-paper rule-soft border-b">
+           <div class="mx-auto max-w-7xl px-4 py-6 md:py-8">
+             <div class="flex items-center justify-center gap-4 md:gap-6">
+               <svg class="spr l orn xm" aria-hidden="true"><use href="#sprig"/></svg>
+               <svg class="spr r orn xm" aria-hidden="true"><use href="#sprig"/></svg>
             <!--
               The crest, as a SIBLING of the heading and never inside it.
               renderMasthead() in src/views/public.js:67 assigns
@@ -471,6 +480,19 @@
 
       <!-- Breaking news ticker (rendered from the store) -->
       <div id="breaking-banner-slot"></div>
+
+      <!-- Edition hero (homepage only; toggled by JS reader view) -->
+      <div id="edition-hero" class="no-print">
+        <section class="hero x xm" aria-hidden="true">
+          <svg class="bg" viewBox="0 0 1200 140" preserveAspectRatio="xMidYMid slice"><rect x="10" y="10" width="1180" height="120" fill="none" stroke="var(--gold)" stroke-width="1"/><rect x="16" y="16" width="1168" height="108" fill="none" stroke="var(--gold)" stroke-width=".5"/></svg>
+          <div class="t"><div class="k">The holiday edition</div><div class="h">Stories from Nakuru this season</div><div class="s">Reported by the club, December 2026</div></div>
+        </section>
+        <section class="hero s sp" aria-hidden="true">
+          <svg class="bg d" viewBox="0 0 1200 140" preserveAspectRatio="xMidYMid slice"></svg>
+          <svg class="bg m" viewBox="0 0 400 84" preserveAspectRatio="xMidYMid slice"></svg>
+          <div class="t"><div class="h"><span>On the final straight</span></div></div>
+        </section>
+      </div>
 
       <!-- Notification opt-in / ad-blocker warning (rendered by src/views/alerts.js) -->
       <div
