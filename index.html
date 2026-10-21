@@ -216,6 +216,11 @@
           root.classList.toggle('dark', theme === 'dark');
           root.classList.toggle('light', theme === 'light');
           root.style.colorScheme = theme;
+          var edition = null;
+          try { edition = localStorage.getItem('wire.edition'); } catch (e) {}
+          if (edition !== 'christmas' && edition !== 'sports') edition = 'default';
+          root.dataset.theme = edition;
+          root.dataset.edition = edition;
           var meta = document.querySelector('meta[name="theme-color"]');
           if (meta) {
             meta.setAttribute(

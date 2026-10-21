@@ -421,7 +421,9 @@ function mergeState(next = {}, { remote = false } = {}) {
     branding: pickObject(next.branding, seed.branding),
     breakingNews: pickObject(next.breakingNews, seed.breakingNews),
     notifications: pickObject(next.notifications, seed.notifications),
-    weeklySlots: pickObject(next.weeklySlots, seed.weeklySlots)
+    weeklySlots: pickObject(next.weeklySlots, seed.weeklySlots),
+    publishedTheme: typeof next.publishedTheme === 'string' ? next.publishedTheme : 'default',
+    publishedOptions: next.publishedOptions && typeof next.publishedOptions === 'object' ? next.publishedOptions : {}
   };
 }
 
@@ -643,6 +645,20 @@ export async function hydrate() {
       }
     }
 
+    let themeRow = null;
+    if (!config.demoMode && db()) {
+      try {
+        const { data, error } = await db()
+          .from('site_theme_public')
+          .select('published_theme,published_options')
+          .limit(1)
+          .maybeSingle();
+        if (!error) themeRow = data || null;
+      } catch (error) {
+        console.warn('[store] could not load site theme', error?.message || error);
+      }
+    }
+
     const local = readLocalState();
     const settingsRow = settings.data || {};
 
@@ -817,7 +833,11 @@ export async function hydrate() {
         // the key entirely. Default to enabled rather than to undefined: an
         // undefined flag is falsy and would hide the band for every reader on
         // a database that never asked for it.
-        showThisWeek: settingsRow.show_this_week ?? true
+        showThisWeek: settingsRow.show_this_week ?? true,
+        publishedTheme: themeRow?.published_theme ?? (config.demoMode ? (local.publishedTheme || 'default') : 'default'),
+        publishedOptions: themeRow?.published_options && typeof themeRow.published_options === 'object'
+          ? themeRow.published_options
+          : (config.demoMode ? (local.publishedOptions || {}) : {})
       },
       { remote: true }
     );
@@ -2796,7 +2816,32 @@ async function persistSettings(overrides = {}) {
   );
 }
 
-/** UPDATE the publication's masthead branding. */
+/** UPDATE the published editorial edition (owner-only via RLS). */
+export async function savePublishedTheme({ theme, options } = {}) {
+  const allowed = ['default', 'christmas', 'sports'];
+  const nextTheme = allowed.includes(String(theme || '').trim().toLowerCase())
+    ? String(theme).trim().toLowerCase()
+    : 'default';
+  const nextOptions = options && typeof options === 'object' ? options : {};
+
+  const current = getState();
+  current.publishedTheme = nextTheme;
+  current.publishedOptions = nextOptions;
+
+  if (!(config.demoMode || !db())) {
+    assertOk(
+      await db()
+        .from('site_theme')
+        .upsert({ id: 1, published_theme: nextTheme, published_options: nextOptions }, { onConflict: 'id' })
+        .select()
+        .maybeSingle(),
+      'save published theme'
+    );
+  }
+  await addAuditLog(`Published website theme: ${nextTheme}`);
+  commit();
+  return { theme: nextTheme, options: nextOptions };
+}
 export async function saveBranding({ title, subtitle, edition }) {
   const current = getState();
   current.branding = { ...current.branding, title, subtitle, edition };

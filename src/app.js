@@ -29,6 +29,12 @@ import { linkSubscriptionToSession } from './lib/push.js';
 import * as store from './lib/store.js';
 import { initThemeControls, getActiveTheme } from './lib/theme.js';
 import {
+  applyCachedEdition,
+  applyEdition,
+  fetchPublishedEdition,
+  cacheEdition
+} from './lib/edition.js';
+import {
   initDialogBehaviour,
   byId,
   isOpen,
@@ -553,10 +559,23 @@ function enforcePortraitGate() {
  */
 export async function boot() {
   /* --- 1. Theme ---------------------------------------------------------- */
-  // The inline <head> script already set the class before first paint; this
-  // attaches the toggle's behaviour and syncs the switch to the active theme.
+  // Dark/light is handled by the inline head script + initThemeControls.
+  // Editorial edition: apply cached value first (no flash), then try an early
+  // fetch before first render so first-time visitors do not see a Default swap.
+  applyCachedEdition();
   initThemeControls();
   syncThemeIcon();
+
+  let publishedEdition = null;
+  try {
+    publishedEdition = await fetchPublishedEdition(800);
+  } catch {
+    publishedEdition = null;
+  }
+  if (publishedEdition) {
+    cacheEdition(publishedEdition.theme, publishedEdition.options);
+    applyEdition(publishedEdition.theme, publishedEdition.options, { updateCache: false });
+  }
 
   /* --- 2. Global dialog behaviour ---------------------------------------- */
   initDialogBehaviour();
@@ -567,6 +586,17 @@ export async function boot() {
   } catch (error) {
     console.error('[app] could not load publication data', error);
     showToast('Some publication data could not be loaded.', { type: 'error' });
+  }
+
+  // Reconcile edition with the hydrated store (authoritative when fetch succeeded).
+  try {
+    const state = store.getState();
+    if (state?.publishedTheme) {
+      cacheEdition(state.publishedTheme, state.publishedOptions || {});
+      applyEdition(state.publishedTheme, state.publishedOptions || {}, { updateCache: false });
+    }
+  } catch (error) {
+    console.warn('[app] edition reconcile failed', error);
   }
 
   /* --- 3b. Portrait cache ------------------------------------------------- */

@@ -335,7 +335,9 @@ export function createSeedState() {
         action: 'Initialised the publication workspace',
         time: 'Just now'
       }
-    ]
+    ],
+    publishedTheme: 'default',
+    publishedOptions: {}
   };
 }
 
