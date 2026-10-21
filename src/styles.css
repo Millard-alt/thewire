@@ -3625,3 +3625,6 @@ class because the ratio is the whole point.
 [data-theme="christmas"] .sp { display: none !important; }
 [data-theme="sports"] .xm { display: none !important; }
 [data-theme="default"] .xm, [data-theme="default"] .sp { display: none !important; }
+[data-theme="sports"] .rule { border-top: 4px solid var(--rule); position: relative; }
+[data-theme="sports"] .rule::before { content: ""; position: absolute; left: 0; top: -4px; width: 64px; height: 4px; background: var(--accent); }
+[data-off~='orn'][data-theme='sports'] .rule::before { display: none !important; }
