@@ -19,15 +19,15 @@ export function normaliseThemeId(value) {
 /** Default option values per theme. Unknown keys are dropped on sanitize. */
 export const DEFAULT_THEME_OPTIONS = {
   default: {},
-  christmas: { ornaments: true, banner: true },
-  sports: { trackLanes: true, finishLine: true }
+  christmas: { hero: true, ornaments: true, label: true, motion: true },
+  sports: { hero: true, ornaments: true, label: true, motion: true }
 };
 
 /** Schema: allowed option keys and their types. */
 export const THEME_OPTION_SCHEMAS = {
   default: {},
-  christmas: { ornaments: 'boolean', banner: 'boolean' },
-  sports: { trackLanes: 'boolean', finishLine: 'boolean' }
+  christmas: { hero: 'boolean', ornaments: 'boolean', label: 'boolean', motion: 'boolean' },
+  sports: { hero: 'boolean', ornaments: 'boolean', label: 'boolean', motion: 'boolean' }
 };
 
 /** Sanitize an options object against the schema, falling back to defaults. */
@@ -59,8 +59,8 @@ export const THEMES = {
     id: 'christmas',
     label: 'Christmas',
     editionLabel: 'Christmas Edition',
-    optionsSchema: { ornaments: 'boolean', banner: 'boolean' },
-    defaultOptions: { ornaments: true, banner: true },
+    optionsSchema: { hero: 'boolean', ornaments: 'boolean', label: 'boolean', motion: 'boolean' },
+    defaultOptions: { hero: true, ornaments: true, label: true, motion: true },
     tokens: {},
     assets: { hero: 'christmas-hero', ornament: 'christmas-ornament' }
   },
@@ -68,8 +68,8 @@ export const THEMES = {
     id: 'sports',
     label: 'Sports',
     editionLabel: 'Sports Edition',
-    optionsSchema: { trackLanes: 'boolean', finishLine: 'boolean' },
-    defaultOptions: { trackLanes: true, finishLine: true },
+    optionsSchema: { hero: 'boolean', ornaments: 'boolean', label: 'boolean', motion: 'boolean' },
+    defaultOptions: { hero: true, ornaments: true, label: true, motion: true },
     tokens: {},
     assets: { hero: 'sports-hero', track: 'sports-track' }
   }

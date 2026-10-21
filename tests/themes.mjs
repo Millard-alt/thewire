@@ -30,8 +30,8 @@ report('invalid theme falls back to default', normaliseThemeId('nope') === 'defa
 report('valid theme preserved', normaliseThemeId('Sports') === 'sports');
 report('theme config valid', validateAllThemes().ok === true);
 
-const sanitized = sanitizeThemeOptions('christmas', { ornaments: false, banner: 'x', evil: true });
-report('sanitize drops unknown/wrong types', sanitized.ornaments === false && sanitized.banner === true && !('evil' in sanitized));
+const sanitized = sanitizeThemeOptions('christmas', { ornaments: false, hero: 'x', evil: true });
+report('sanitize drops unknown/wrong types', sanitized.ornaments === false && sanitized.hero === true && !('evil' in sanitized));
 
 const cached = cacheEdition('christmas', { ornaments: false });
 report('cache returns normalized', cached.theme === 'christmas' && cached.options.ornaments === false);
@@ -39,7 +39,7 @@ report('cached readback', getCachedEdition().theme === 'christmas');
 
 // applyEdition sets data-theme
 if (!globalThis.document) {
-  globalThis.document = { documentElement: { dataset: {}, classList: { toggle() {} } } };
+  globalThis.document = { documentElement: { dataset: {}, classList: { toggle() {} } }, getElementById: () => null, createElement: () => ({}) , head: { appendChild() {} } };
 }
 applyEdition('sports', { trackLanes: false });
 report('apply sets dataset.theme', document.documentElement.dataset.theme === 'sports');

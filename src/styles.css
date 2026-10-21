@@ -96,90 +96,38 @@
   }
 
   /* Editorial edition token overrides (layered over light/dark). */
+  /* Christmas */
   [data-theme='christmas'] {
-    --color-paper: #f4f1e6;
-    --color-paper-dark: #e9e4d6;
-    --color-ink: #1f3a2a;
-    --color-ink-muted: #4a5e4a;
-    --color-newsred: #7a1f2b;
-    --color-newsgold: #b8860b;
-    --color-newsblue: #1c3f60;
-    --surface: #f4f1e6;
-    --surface-raised: #ffffff;
-    --surface-sunken: #e9e4d6;
-    --surface-card: #faf7ef;
-    --surface-card-edge: color-mix(in srgb, #1f3a2a 14%, transparent);
-    --rule: color-mix(in srgb, #1f3a2a 78%, transparent);
-    --rule-soft: color-mix(in srgb, #1f3a2a 16%, transparent);
-    --text: #1f3a2a;
-    --text-muted: #4a5e4a;
-    --accent: #7a1f2b;
-    --accent-contrast: #ffffff;
-    --nav-underline: #7a1f2b;
+    --bg: #F6F7F3; --surface: #FFFFFF; --ink: #14261C; --muted: #46564C; --accent: #9B1B30; --accent2: #14261C; --rule: #17382A; --line: #DDE2DA; --nav-bg: #FFFFFF; --nav-ink: #14261C; --brk-bg: #9B1B30; --brk-ink: #FFFFFF; --btn-bg: #9B1B30; --btn-ink: #FFFFFF; --link: #9B1B30; --hero-bg: #17382A; --hero-ink: #F7F3E6; --orn: #17382A; --berry: #9B1B30; --gold: #C9A24D;
+    --mast-bg: #17382A; --mast-ink: #F7F3E6; --mast-muted: #B9C9BE; --mast-accent: #E2C27A; --mast-stamp: #E2C27A; --mast-line: #2D5240; --mast-orn: #C9A24D; --mast-berry: #E0707F;
+    /* mapped real tokens */
+    --color-paper: #F6F7F3; --color-paper-dark: #DDE2DA; --color-ink: #14261C; --color-ink-muted: #46564C; --color-newsred: #9B1B30; --color-newsgold: #C9A24D; --color-newsblue: #1c3f60;
+    --surface-raised: #FFFFFF; --surface-sunken: #DDE2DA; --surface-card: #FFFFFF; --surface-card-edge: #DDE2DA;
+    --text: #14261C; --text-muted: #46564C; --accent-contrast: #FFFFFF; --nav-underline: #9B1B30;
   }
   [data-theme='christmas'].dark {
-    --color-paper: #0f1a14;
-    --color-paper-dark: #0a120e;
-    --color-ink: #e8e2d2;
-    --color-ink-muted: #a9b3a3;
-    --color-newsred: #d9a03a;
-    --color-newsgold: #d9a03a;
-    --color-newsblue: #8faec9;
-    --surface: #0f1a14;
-    --surface-raised: #17231c;
-    --surface-sunken: #0a120e;
-    --surface-card: #1a2a20;
-    --surface-card-edge: #2a3d30;
-    --rule: color-mix(in srgb, #e8e2d2 80%, transparent);
-    --rule-soft: color-mix(in srgb, #e8e2d2 16%, transparent);
-    --text: #e8e2d2;
-    --text-muted: #a9b3a3;
-    --accent: #d9a03a;
-    --accent-contrast: #1a1208;
-    --nav-underline: #d9a03a;
+    --bg: #101A15; --surface: #17241D; --ink: #EFE8D6; --muted: #A9B3A8; --accent: #D9B25C; --accent2: #D9B25C; --rule: #C9A24D; --line: #2A3A30; --nav-bg: #0B120E; --nav-ink: #EFE8D6; --brk-bg: #8E2A38; --brk-ink: #FBF8F0; --btn-bg: #D9B25C; --btn-ink: #101A15; --link: #D9B25C; --hero-bg: #1B3A2B; --hero-ink: #EFE8D6; --orn: #C9A24D; --berry: #C65A68; --gold: #C9A24D;
+    --color-paper: #101A15; --color-paper-dark: #2A3A30; --color-ink: #EFE8D6; --color-ink-muted: #A9B3A8; --color-newsred: #D9B25C; --color-newsgold: #D9B25C; --color-newsblue: #8faec9;
+    --surface-raised: #17241D; --surface-sunken: #0B120E; --surface-card: #17241D; --surface-card-edge: #2A3A30;
+    --text: #EFE8D6; --text-muted: #A9B3A8; --accent-contrast: #101A15; --nav-underline: #D9B25C;
   }
+  /* Sports */
   [data-theme='sports'] {
-    --color-paper: #f5f5f0;
-    --color-paper-dark: #e8e8e0;
-    --color-ink: #111827;
-    --color-ink-muted: #4b5563;
-    --color-newsred: #b3261a;
-    --color-newsgold: #b8860b;
-    --color-newsblue: #1c3f60;
-    --surface: #f5f5f0;
-    --surface-raised: #ffffff;
-    --surface-sunken: #e8e8e0;
-    --surface-card: #fafaf6;
-    --surface-card-edge: color-mix(in srgb, #111827 14%, transparent);
-    --rule: color-mix(in srgb, #111827 82%, transparent);
-    --rule-soft: color-mix(in srgb, #111827 16%, transparent);
-    --text: #111827;
-    --text-muted: #4b5563;
-    --accent: #b3261a;
-    --accent-contrast: #ffffff;
-    --nav-underline: #b3261a;
+    --bg: #EEF1F5; --surface: #FFFFFF; --ink: #0B1626; --muted: #44536A; --accent: #BE3C08; --accent2: #0B1626; --rule: #0B1626; --line: #D3D9E2; --nav-bg: #FFFFFF; --nav-ink: #0B1626; --brk-bg: #0B1626; --brk-ink: #FFFFFF; --btn-bg: #BE3C08; --btn-ink: #FFFFFF; --link: #BE3C08; --hero-bg: #C8420A; --hero-ink: #FFFFFF; --orn: #BE3C08; --berry: #BE3C08; --gold: #BE3C08;
+    --mast-bg: #0B1E3A; --mast-ink: #FFFFFF; --mast-muted: #A9B8D0; --mast-accent: #FF8A4C; --mast-stamp: #FFFFFF; --mast-line: #1E3558; --mast-orn: #BE3C08; --mast-berry: #BE3C08;
+    --color-paper: #EEF1F5; --color-paper-dark: #D3D9E2; --color-ink: #0B1626; --color-ink-muted: #44536A; --color-newsred: #BE3C08; --color-newsgold: #BE3C08; --color-newsblue: #1c3f60;
+    --surface-raised: #FFFFFF; --surface-sunken: #D3D9E2; --surface-card: #FFFFFF; --surface-card-edge: #D3D9E2;
+    --text: #0B1626; --text-muted: #44536A; --accent-contrast: #FFFFFF; --nav-underline: #BE3C08;
   }
   [data-theme='sports'].dark {
-    --color-paper: #0e1014;
-    --color-paper-dark: #08090c;
-    --color-ink: #f2f2f2;
-    --color-ink-muted: #a0a7b4;
-    --color-newsred: #ff5a3d;
-    --color-newsgold: #fbbf24;
-    --color-newsblue: #8faec9;
-    --surface: #0e1014;
-    --surface-raised: #17191f;
-    --surface-sunken: #08090c;
-    --surface-card: #1c1f26;
-    --surface-card-edge: #2a2f3a;
-    --rule: color-mix(in srgb, #f2f2f2 82%, transparent);
-    --rule-soft: color-mix(in srgb, #f2f2f2 16%, transparent);
-    --text: #f2f2f2;
-    --text-muted: #a0a7b4;
-    --accent: #ff5a3d;
-    --accent-contrast: #1a0d0b;
-    --nav-underline: #ff5a3d;
+    --bg: #0A1220; --surface: #121C2E; --ink: #F2F4F7; --muted: #9FB0C8; --accent: #FF7A3D; --accent2: #F2F4F7; --rule: #F2F4F7; --line: #2A3A55; --nav-bg: #060C17; --nav-ink: #F2F4F7; --brk-bg: #E8590C; --brk-ink: #0A1220; --btn-bg: #FF7A3D; --btn-ink: #0A1220; --link: #FF7A3D; --hero-bg: #B93A0E; --hero-ink: #FFFFFF; --orn: #FF7A3D; --berry: #FF7A3D; --gold: #FF7A3D;
+    --color-paper: #0A1220; --color-paper-dark: #2A3A55; --color-ink: #F2F4F7; --color-ink-muted: #9FB0C8; --color-newsred: #FF7A3D; --color-newsgold: #FF7A3D; --color-newsblue: #8faec9;
+    --surface-raised: #121C2E; --surface-sunken: #060C17; --surface-card: #121C2E; --surface-card-edge: #2A3A55;
+    --text: #F2F4F7; --text-muted: #9FB0C8; --accent-contrast: #0A1220; --nav-underline: #FF7A3D;
   }
+
+  /* Base masthead tokens default to page tokens. */
+  :root { --mast-bg: var(--surface); --mast-ink: var(--text); --mast-muted: var(--text-muted); --mast-accent: var(--accent); --mast-stamp: var(--accent); --mast-line: var(--rule-soft); --mast-orn: var(--accent); --mast-berry: var(--accent); }
 
   * {
     border-color: var(--rule-soft);
@@ -3581,3 +3529,69 @@ class because the ratio is the whole point.
     padding: 1.5rem;
   }
 }
+/* =====================================================================
+   EDITION LAYER (Stage B+) — per-edition component rules
+   ===================================================================== */
+[data-theme] .util-strip { background: var(--mast-bg); color: var(--mast-muted); border-color: var(--mast-line); }
+[data-theme] .util-strip .ink-muted { color: var(--mast-muted); }
+[data-theme] .masthead-bar { background: var(--mast-bg); color: var(--mast-ink); border-color: var(--mast-line); }
+[data-theme] .masthead-bar .ink-muted { color: var(--mast-muted); }
+[data-theme] .masthead-bar .text-newsred { color: var(--mast-accent); }
+
+[data-theme="christmas"] nav { background: var(--nav-bg); color: var(--nav-ink); border-bottom: 2px solid var(--gold); }
+[data-theme="sports"] nav { background: var(--nav-bg); color: var(--nav-ink); border-bottom: 4px solid var(--accent); }
+
+[data-theme="christmas"] .edition-card,
+[data-theme="christmas"] .about-card,
+[data-theme="christmas"] .credits-card,
+[data-theme="christmas"] .podcast-card,
+[data-theme="christmas"] .gallery-card {
+  border-radius: 2px;
+  border-top: 4px double var(--rule);
+}
+[data-theme="sports"] .edition-card,
+[data-theme="sports"] .about-card,
+[data-theme="sports"] .credits-card,
+[data-theme="sports"] .podcast-card,
+[data-theme="sports"] .gallery-card {
+  border-radius: 0;
+  border-left: 4px solid var(--accent);
+}
+
+.edition-stamp, .edition-bib { display: none; }
+[data-theme="christmas"] .edition-stamp {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 5px 12px;
+  border: 3px double var(--mast-stamp);
+  color: var(--mast-stamp);
+  font: 700 11px/1.2 var(--font-headline);
+  letter-spacing: .22em;
+  text-transform: uppercase;
+}
+[data-theme="sports"] .edition-bib {
+  display: inline-block;
+  margin-top: 12px;
+  position: relative;
+  background: #fff;
+  color: #0E1A2B;
+  border: 2px solid #0E1A2B;
+  padding: 3px 12px;
+  font: 800 italic 14px/1.2 'Barlow Condensed', 'Arial Narrow', Impact, sans-serif;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+[data-theme="sports"] .edition-bib::before,
+[data-theme="sports"] .edition-bib::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #0E1A2B;
+}
+[data-theme="sports"] .edition-bib::before { left: 3px; }
+[data-theme="sports"] .edition-bib::after { right: 3px; }
+[data-off~='label'] .edition-stamp, [data-off~='label'] .edition-bib { display: none !important; }
+[data-off~='orn'][data-theme='christmas'] .masthead-bar { /* sprigs handled in Stage C */ }

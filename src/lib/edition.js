@@ -60,6 +60,24 @@ export function applyEdition(themeId, options, { updateCache = false } = {}) {
   const root = document.documentElement;
   root.dataset.theme = theme;
   root.dataset.edition = theme;
+  // Load Sports-only font on demand.
+  if (typeof document !== 'undefined') {
+    const existing = document.getElementById('sports-font');
+    if (theme === 'sports' && !existing) {
+      const link = document.createElement('link');
+      link.id = 'sports-font';
+      link.rel = 'stylesheet';
+      link.href = 'https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@1,800&display=swap';
+      document.head.appendChild(link);
+    }
+    if (theme !== 'sports' && existing) existing.remove();
+  }
+  const off = [];
+  if (clean.hero === false) off.push('hero');
+  if (clean.ornaments === false) off.push('orn');
+  if (clean.label === false) off.push('label');
+  if (clean.motion === false) off.push('fx');
+  root.dataset.off = off.join(' ');
   // Keep option flags available to scoped CSS/decorations.
   Object.keys(clean).forEach((key) => {
     root.dataset[`edition${key.charAt(0).toUpperCase()}${key.slice(1)}`] = String(clean[key]);

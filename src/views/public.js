@@ -210,7 +210,7 @@ function articleCard(article, { showBody = false, size = 'md' } = {}) {
   return `
     <article
       id="article-${escapeHtml(article.id)}"
-      class="panel-raised group flex h-full flex-col overflow-hidden"
+       class="panel-raised edition-card group flex h-full flex-col overflow-hidden"
     >
       <a href="${href}" class="block overflow-hidden" tabindex="-1" aria-hidden="true">
         <img
