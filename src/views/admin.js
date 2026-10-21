@@ -18,6 +18,8 @@
    ========================================================================== */
 
 import * as store from '../lib/store.js';
+import { publishEdition, restoreDefault as restoreEditionDefault, applyEdition, cacheEdition } from '../lib/edition.js';
+import { normaliseThemeId, sanitizeThemeOptions, THEME_IDS } from '../lib/themes.js';
 import {
   signOut,
   isAdmin,
@@ -2393,6 +2395,75 @@ function renderBrandingTab() {
           <button type="submit" class="btn btn-accent">Save branding</button>
         </div>
       </form>
+    </div>
+  `;
+}
+
+function renderThemesTab() {
+  const state = store.getState();
+  const published = state.publishedTheme || 'default';
+  const options = state.publishedOptions || {};
+  const draftTheme = published;
+  const draftOptions = options;
+  const themeCards = ['default', 'christmas', 'sports']
+    .map((id) => {
+      const selected = id === draftTheme ? 'checked' : '';
+      return `
+        <label class="panel-raised flex cursor-pointer items-center gap-3 p-4">
+          <input type="radio" name="draft-theme" value="${id}" ${selected} />
+          <span class="font-semibold uppercase">${id}</span>
+        </label>
+      `;
+    })
+    .join('');
+  const opts = ['hero', 'ornaments', 'label', 'motion']
+    .map((key) => {
+      const checked = draftOptions[key] !== false ? 'checked' : '';
+      return `<label class="flex items-center gap-2 text-xs"><input type="checkbox" data-theme-option="${key}" ${checked} /> ${key}</label>`;
+    })
+    .join('');
+  const optsJson = encodeURIComponent(JSON.stringify(draftOptions));
+  const previewSrc = `/?preview=1&theme=${draftTheme}&options=${optsJson}`;
+  return `
+    <div class="space-y-5">
+      ${panelHeader('Website Themes', 'Preview, publish and restore editorial editions')}
+
+      <div class="panel-raised p-4">
+        <p class="text-xs ink-muted">Currently published: <strong>${escapeHtml(published)}</strong></p>
+      </div>
+
+      <div class="grid gap-3 sm:grid-cols-3">${themeCards}</div>
+
+      <div class="panel-raised space-y-2 p-4">
+        <p class="text-xs font-semibold uppercase">Options</p>
+        <div class="flex flex-wrap gap-4">${opts}</div>
+      </div>
+
+      <div class="panel-raised space-y-3 p-4">
+        <p class="text-xs font-semibold uppercase">Preview</p>
+        <div class="flex flex-wrap gap-2">
+          <select id="theme-preview-route" class="field">
+            <option value="/">Home</option>
+            <option value="/about">About</option>
+          </select>
+          <select id="theme-preview-mode" class="field">
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+          <select id="theme-preview-width" class="field">
+            <option value="360">Mobile (360)</option>
+            <option value="768">Tablet (768)</option>
+            <option value="1280">Desktop (1280)</option>
+          </select>
+          <button type="button" class="btn btn-ghost" data-action="theme-preview-refresh">Refresh preview</button>
+        </div>
+        <iframe id="theme-preview-frame" src="${previewSrc}" style="width:100%;height:600px;border:1px solid var(--rule-soft)"></iframe>
+      </div>
+
+      <div class="flex flex-wrap gap-2">
+        <button type="button" class="btn btn-accent" data-action="theme-publish">Publish selected theme</button>
+        <button type="button" class="btn btn-ghost" data-action="theme-restore-default">Restore Default</button>
+      </div>
     </div>
   `;
 }
@@ -5261,6 +5332,7 @@ const TABS = [
   { id: 'credits', label: 'Credits', icon: 'fa-id-badge', render: renderCreditsTab, ownerOnly: true },
   { id: 'changelog', label: 'Changelog', icon: 'fa-clock-rotate-left', render: renderChangelogTab, ownerOnly: true },
   { id: 'branding', label: 'Branding', icon: 'fa-font', render: renderBrandingTab, ownerOnly: true },
+  { id: 'themes', label: 'Website Themes', icon: 'fa-palette', render: renderThemesTab, ownerOnly: true },
   { id: 'media', label: 'Media', icon: 'fa-images', render: renderMediaTab, minRole: 'Writer' },
   { id: 'security', label: 'Security', icon: 'fa-shield-halved', render: renderSecurityTab, ownerOnly: true }
 ];
@@ -8347,8 +8419,54 @@ case 'gallery-category-delete': {
       });
       break;
 
-    /* --- account approvals --- */
-    case 'accounts-refresh':
+    case 'theme-preview-refresh': {
+      const frame = byId('theme-preview-frame');
+      if (!frame) break;
+      const theme = document.querySelector('input[name="draft-theme"]:checked')?.value || 'default';
+      const opts = {};
+      document.querySelectorAll('[data-theme-option]').forEach((cb) => {
+        opts[cb.dataset.themeOption] = cb.checked;
+      });
+      const clean = sanitizeThemeOptions(theme, opts);
+      const route = byId('theme-preview-route')?.value || '/';
+      const mode = byId('theme-preview-mode')?.value || 'light';
+      const width = byId('theme-preview-width')?.value || '1280';
+      const src = `${route}?preview=1&theme=${theme}&options=${encodeURIComponent(JSON.stringify(clean))}&mode=${mode}`;
+      frame.src = src;
+      frame.style.width = width + 'px';
+      break;
+    }
+
+    case 'theme-publish': {
+      const theme = document.querySelector('input[name="draft-theme"]:checked')?.value || 'default';
+      const opts = {};
+      document.querySelectorAll('[data-theme-option]').forEach((cb) => {
+        opts[cb.dataset.themeOption] = cb.checked;
+      });
+      const clean = sanitizeThemeOptions(theme, opts);
+      const current = store.getState().publishedTheme || 'default';
+      if (!window.confirm(`Publish theme "${theme}" (replacing "${current}")?`)) break;
+      guard(async () => {
+        await store.savePublishedTheme({ theme, options: clean });
+        await publishEdition(theme, clean);
+        window.dispatchEvent(new Event('wire:settings-changed'));
+        paintActiveTab();
+        showToast(`Published theme: ${theme}`, { type: 'success' });
+      });
+      break;
+    }
+
+    case 'theme-restore-default': {
+      if (!window.confirm('Restore Default theme now?')) break;
+      guard(async () => {
+        await store.savePublishedTheme({ theme: 'default', options: {} });
+        await restoreEditionDefault();
+        window.dispatchEvent(new Event('wire:settings-changed'));
+        paintActiveTab();
+        showToast('Restored Default theme.', { type: 'success' });
+      });
+      break;
+    }
       guard(async () => {
         await reloadAccounts();
         showToast('Account list refreshed.', { type: 'success' });

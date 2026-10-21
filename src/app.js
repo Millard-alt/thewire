@@ -27,13 +27,14 @@ import { config, describeBackend } from './lib/config.js';
 import { initAuth, onAuthChange, getSession } from './lib/auth.js';
 import { linkSubscriptionToSession } from './lib/push.js';
 import * as store from './lib/store.js';
-import { initThemeControls, getActiveTheme } from './lib/theme.js';
+import { initThemeControls, getActiveTheme, applyTheme } from './lib/theme.js';
 import {
   applyCachedEdition,
   applyEdition,
   fetchPublishedEdition,
   cacheEdition
 } from './lib/edition.js';
+import { normaliseThemeId, sanitizeThemeOptions } from './lib/themes.js';
 import {
   initDialogBehaviour,
   byId,
@@ -237,7 +238,8 @@ function showReaderView(name) {
     if (isTarget) view.style.removeProperty('display');
   });
 
-  const publication = byId('publication-view');
+  const hero = byId('edition-hero');
+  if (hero) hero.classList.toggle('hidden', target !== 'publication');
   const credits = byId('credits-view');
   const gallery = byId('gallery-view');
 
@@ -558,23 +560,43 @@ function enforcePortraitGate() {
  * @returns {Promise<void>}
  */
 export async function boot() {
-  /* --- 1. Theme ---------------------------------------------------------- */
-  // Dark/light is handled by the inline head script + initThemeControls.
-  // Editorial edition: apply cached value first (no flash), then try an early
-  // fetch before first render so first-time visitors do not see a Default swap.
-  applyCachedEdition();
-  initThemeControls();
-  syncThemeIcon();
-
-  let publishedEdition = null;
-  try {
-    publishedEdition = await fetchPublishedEdition(800);
-  } catch {
-    publishedEdition = null;
+  const params = new URLSearchParams(window.location.search);
+  const isPreview = params.get('preview') === '1';
+  if (isPreview) {
+    const robots = document.querySelector('meta[name="robots"]');
+    if (robots) robots.setAttribute('content', 'noindex, nofollow');
   }
-  if (publishedEdition) {
-    cacheEdition(publishedEdition.theme, publishedEdition.options);
-    applyEdition(publishedEdition.theme, publishedEdition.options, { updateCache: false });
+
+  /* --- 1. Theme ---------------------------------------------------------- */
+  if (isPreview) {
+    const previewTheme = normaliseThemeId(params.get('theme'));
+    let previewOptions = {};
+    try {
+      previewOptions = JSON.parse(params.get('options') || '{}');
+    } catch {
+      previewOptions = {};
+    }
+    previewOptions = sanitizeThemeOptions(previewTheme, previewOptions);
+    applyEdition(previewTheme, previewOptions, { updateCache: false });
+    initThemeControls();
+    syncThemeIcon();
+    const mode = params.get('mode');
+    if (mode === 'light' || mode === 'dark') applyTheme(mode, { persist: false });
+  } else {
+    applyCachedEdition();
+    initThemeControls();
+    syncThemeIcon();
+
+    let publishedEdition = null;
+    try {
+      publishedEdition = await fetchPublishedEdition(800);
+    } catch {
+      publishedEdition = null;
+    }
+    if (publishedEdition) {
+      cacheEdition(publishedEdition.theme, publishedEdition.options);
+      applyEdition(publishedEdition.theme, publishedEdition.options, { updateCache: false });
+    }
   }
 
   /* --- 2. Global dialog behaviour ---------------------------------------- */
@@ -590,7 +612,8 @@ export async function boot() {
 
   // Reconcile edition with the hydrated store (authoritative when fetch succeeded).
   // In demo mode there is no server-published theme, so keep the cached edition.
-  if (!config.demoMode) {
+  // Preview mode never reconciles or caches.
+  if (!isPreview && !config.demoMode) {
     try {
       const state = store.getState();
       if (state?.publishedTheme) {
