@@ -589,14 +589,17 @@ export async function boot() {
   }
 
   // Reconcile edition with the hydrated store (authoritative when fetch succeeded).
-  try {
-    const state = store.getState();
-    if (state?.publishedTheme) {
-      cacheEdition(state.publishedTheme, state.publishedOptions || {});
-      applyEdition(state.publishedTheme, state.publishedOptions || {}, { updateCache: false });
+  // In demo mode there is no server-published theme, so keep the cached edition.
+  if (!config.demoMode) {
+    try {
+      const state = store.getState();
+      if (state?.publishedTheme) {
+        cacheEdition(state.publishedTheme, state.publishedOptions || {});
+        applyEdition(state.publishedTheme, state.publishedOptions || {}, { updateCache: false });
+      }
+    } catch (error) {
+      console.warn('[app] edition reconcile failed', error);
     }
-  } catch (error) {
-    console.warn('[app] edition reconcile failed', error);
   }
 
   /* --- 3b. Portrait cache ------------------------------------------------- */
