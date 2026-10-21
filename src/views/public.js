@@ -2107,7 +2107,8 @@ function initNavigation() {
     // Below the drawer breakpoint every item measures 0 (the list is display:none)
     // and "More" stays hidden -- the drawer is the answer there, not a menu.
     const toolsWidth = bar.querySelector('.nav-bar__tools')?.offsetWidth || 0;
-    const available = bar.clientWidth - toolsWidth - 32; // 32 = bar padding
+    const moreWidth = 80; // reserve space for the "More" control
+    const available = bar.clientWidth - toolsWidth - moreWidth - 32; // 32 = bar padding
 
     if (neededWidth() <= available) {
       // Everything fits. Hide "More" entirely rather than offering a menu with
