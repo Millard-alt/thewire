@@ -83,8 +83,10 @@ export function applyEdition(themeId, options, { updateCache = false } = {}) {
     root.dataset[`edition${key.charAt(0).toUpperCase()}${key.slice(1)}`] = String(clean[key]);
   });
   // Christmas snow (utility bar + masthead only).
-  if (typeof document !== 'undefined') {
+  if (typeof document !== 'undefined' && typeof requestAnimationFrame === 'function') {
     requestAnimationFrame(() => renderSnow());
+  } else if (typeof document !== 'undefined') {
+    renderSnow();
   }
   if (updateCache) cacheEdition(theme, clean);
   if (typeof window !== 'undefined') {
