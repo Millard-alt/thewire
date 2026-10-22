@@ -208,9 +208,22 @@
   }
 
   .rule {
-    border-top: 1px solid var(--rule);
-    margin-bottom: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
     position: relative;
+  }
+  .rule-line {
+    flex: 1 1 auto;
+    height: 1px;
+    background: var(--rule);
+  }
+  .holly {
+    width: 68px;
+    height: 24px;
+    color: var(--orn);
+    flex: 0 0 auto;
   }
   .rule-soft {
     border-color: var(--rule-soft);
@@ -3639,3 +3652,7 @@ class because the ratio is the whole point.
 
 .hero .m { display: none; }
 @media (max-width: 700px) { .hero .d { display: none; } .hero .m { display: block; } }
+
+.nav-bar__more > button, .nav-bar__more button { font: 700 11px/1 var(--font-sans); letter-spacing: .08em; text-transform: uppercase; }
+
+@media (max-width: 700px) { .hero.x .hs { display: none; } }

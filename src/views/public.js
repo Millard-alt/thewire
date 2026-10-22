@@ -264,8 +264,10 @@ function sectionHeading(id, kicker, title) {
         <h2 id="${escapeHtml(id)}" class="font-headline text-2xl font-black tracking-wide uppercase md:text-3xl">
           ${escapeHtml(title)}
         </h2>
-        <div class="rule relative">
-          <svg class="holly orn xm" aria-hidden="true"><use href="#holly"/></svg>
+        <div class="rule">
+          <span class="rule-line"></span>
+          <svg class="holly orn xm" width="68" height="24" viewBox="0 0 64 24" aria-hidden="true"><use href="#holly"/></svg>
+          <span class="rule-line"></span>
         </div>
       </div>
     `;

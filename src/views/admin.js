@@ -2481,7 +2481,9 @@ function renderThemesTab() {
           </select>
           <button type="button" class="btn btn-ghost" data-action="theme-preview-refresh">Refresh preview</button>
         </div>
-        <iframe id="theme-preview-frame" src="${previewSrc}" style="width:${previewWidth}px;height:600px;border:1px solid var(--rule-soft)"></iframe>
+        <div id="theme-preview-wrapper" style="position:relative;overflow:hidden;width:100%;height:600px;">
+          <iframe id="theme-preview-frame" src="${previewSrc}" style="width:1280px;height:800px;border:1px solid var(--rule-soft);transform-origin:top left;"></iframe>
+        </div>
       </div>
     </div>
   `;
@@ -8466,6 +8468,7 @@ case 'gallery-category-delete': {
 
     case 'theme-preview-refresh': {
       const frame = byId('theme-preview-frame');
+      const wrapper = byId('theme-preview-wrapper');
       if (!frame) break;
       const theme = document.querySelector('input[name="draft-theme"]:checked')?.value || 'default';
       const opts = {};
@@ -8475,10 +8478,13 @@ case 'gallery-category-delete': {
       const clean = sanitizeThemeOptions(theme, opts);
       const route = byId('theme-preview-route')?.value || '/';
       const mode = byId('theme-preview-mode')?.value || 'light';
-      const width = byId('theme-preview-width')?.value || '1280';
+      const width = Number(byId('theme-preview-width')?.value || 1280);
       const src = `${route}?preview=1&theme=${theme}&options=${encodeURIComponent(JSON.stringify(clean))}&mode=${mode}`;
       frame.src = src;
       frame.style.width = width + 'px';
+      const scale = (wrapper?.clientWidth || width) / width;
+      frame.style.transform = `scale(${scale})`;
+      if (wrapper) wrapper.style.height = Math.round(800 * scale) + 'px';
       break;
     }
 
