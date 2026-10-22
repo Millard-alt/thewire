@@ -1598,12 +1598,13 @@ function normaliseStaffStatus(value) {
  * Index the staff roster's approved portraits by name.
  *
  * This is the whole reason it lives here rather than in `primePortraits()`:
- * `primePortraits()` reads `credits_people`, the hand-picked public Credits page,
- * which is not the staff roster. Until this runs, a byline can only be answered
- * from the Credits page, so a staffer who approved a portrait but was never added
- * to that page renders as plain text while somebody who WAS added gets a photo --
- * for the same kind of author. The Staff tab is where the roster lives, so the
- * Staff tab is what indexes it.
+ * the panel has the LIVE roster — the freshest `portrait_status` in memory,
+ * including one that was approved minutes ago. `primePortraits()` now also
+ * feeds the staff index at boot through `wire_public_portraits()` (migration
+ * 042), which is what makes the one-face resolution work for signed-out
+ * readers; that RPC reads Postgres directly, so for the panel's just-approved
+ * portrait it is one hydrate behind. The Staff tab is where the roster lives
+ * with no lag, so the Staff tab is what indexes it for staff sessions.
  *
  * There is no account lookup here, deliberately. An earlier version joined
  * `staff` to `staff_accounts` on username so it could key portraits by
