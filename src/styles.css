@@ -208,7 +208,9 @@
   }
 
   .rule {
-    border-color: var(--rule);
+    border-top: 1px solid var(--rule);
+    margin-bottom: 1.25rem;
+    position: relative;
   }
   .rule-soft {
     border-color: var(--rule-soft);
@@ -3534,7 +3536,7 @@ class because the ratio is the whole point.
   }
 }
 /* =====================================================================
-   EDITION LAYER (Stage B+) — per-edition component rules
+   EDITION LAYER (Stage B+) ï¿½ per-edition component rules
    ===================================================================== */
 [data-theme] .util-strip { background: var(--mast-bg); color: var(--mast-muted); border-color: var(--mast-line); }
 [data-theme] .util-strip .ink-muted { color: var(--mast-muted); }

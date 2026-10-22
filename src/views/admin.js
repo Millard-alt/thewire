@@ -2402,9 +2402,35 @@ function renderBrandingTab() {
 function renderThemesTab() {
   const state = store.getState();
   const published = state.publishedTheme || 'default';
-  const options = state.publishedOptions || {};
   const draftTheme = published;
-  const draftOptions = options;
+  const draftOptions = state.publishedOptions || {};
+  const selectedOptions = sanitizeThemeOptions(draftTheme, draftOptions);
+
+  const optionDefs = {
+    christmas: [
+      { key: 'hero', label: 'Hero banner', desc: 'Festive hero between the breaking bar and content' },
+      { key: 'ornaments', label: 'Ornaments', desc: 'Masthead sprigs and holly dividers' },
+      { key: 'label', label: 'Edition label', desc: 'Christmas Edition stamp under the dateline' },
+      { key: 'motion', label: 'Snowfall', desc: 'Snow over the utility bar and masthead' }
+    ],
+    sports: [
+      { key: 'hero', label: 'Hero banner', desc: 'Track hero between the breaking bar and content' },
+      { key: 'ornaments', label: 'Ornaments', desc: 'Chevron marks and clay rule segment' },
+      { key: 'label', label: 'Edition label', desc: 'Sports Edition bib under the dateline' },
+      { key: 'motion', label: 'Speed streak', desc: 'Animated streak across the hero' }
+    ]
+  };
+  const defs = optionDefs[draftTheme] || [];
+  const opts = defs
+    .map((d) => {
+      const checked = selectedOptions[d.key] !== false ? 'checked' : '';
+      return `<label class="flex items-start gap-2 text-xs"><input type="checkbox" data-theme-option="${d.key}" ${checked} /> <span><strong>${escapeHtml(d.label)}</strong><br /><span class="ink-muted">${escapeHtml(d.desc)}</span></span></label>`;
+    })
+    .join('');
+  const optsJson = encodeURIComponent(JSON.stringify(selectedOptions));
+  const previewWidth = '1280';
+  const previewSrc = `/?preview=1&theme=${draftTheme}&options=${optsJson}&mode=light`;
+
   const themeCards = ['default', 'christmas', 'sports']
     .map((id) => {
       const selected = id === draftTheme ? 'checked' : '';
@@ -2416,14 +2442,7 @@ function renderThemesTab() {
       `;
     })
     .join('');
-  const opts = ['hero', 'ornaments', 'label', 'motion']
-    .map((key) => {
-      const checked = draftOptions[key] !== false ? 'checked' : '';
-      return `<label class="flex items-center gap-2 text-xs"><input type="checkbox" data-theme-option="${key}" ${checked} /> ${key}</label>`;
-    })
-    .join('');
-  const optsJson = encodeURIComponent(JSON.stringify(draftOptions));
-  const previewSrc = `/?preview=1&theme=${draftTheme}&options=${optsJson}`;
+
   return `
     <div class="space-y-5">
       ${panelHeader('Website Themes', 'Preview, publish and restore editorial editions')}
@@ -2432,11 +2451,16 @@ function renderThemesTab() {
         <p class="text-xs ink-muted">Currently published: <strong>${escapeHtml(published)}</strong></p>
       </div>
 
+      <div class="flex flex-wrap items-center gap-2">
+        <button type="button" class="btn btn-accent" data-action="theme-publish">Publish selected theme</button>
+        <button type="button" class="btn btn-ghost" data-action="theme-restore-default">Restore Default</button>
+      </div>
+
       <div class="grid gap-3 sm:grid-cols-3">${themeCards}</div>
 
       <div class="panel-raised space-y-2 p-4">
         <p class="text-xs font-semibold uppercase">Options</p>
-        <div class="flex flex-wrap gap-4">${opts}</div>
+        <div class="flex flex-wrap gap-4">${opts || '<span class="ink-muted text-xs">No optional effects for Default.</span>'}</div>
       </div>
 
       <div class="panel-raised space-y-3 p-4">
@@ -2453,16 +2477,11 @@ function renderThemesTab() {
           <select id="theme-preview-width" class="field">
             <option value="360">Mobile (360)</option>
             <option value="768">Tablet (768)</option>
-            <option value="1280">Desktop (1280)</option>
+            <option value="1280" selected>Desktop (1280)</option>
           </select>
           <button type="button" class="btn btn-ghost" data-action="theme-preview-refresh">Refresh preview</button>
         </div>
-        <iframe id="theme-preview-frame" src="${previewSrc}" style="width:100%;height:600px;border:1px solid var(--rule-soft)"></iframe>
-      </div>
-
-      <div class="flex flex-wrap gap-2">
-        <button type="button" class="btn btn-accent" data-action="theme-publish">Publish selected theme</button>
-        <button type="button" class="btn btn-ghost" data-action="theme-restore-default">Restore Default</button>
+        <iframe id="theme-preview-frame" src="${previewSrc}" style="width:${previewWidth}px;height:600px;border:1px solid var(--rule-soft)"></iframe>
       </div>
     </div>
   `;
@@ -6435,6 +6454,11 @@ async function saveAssignmentFromForm(form) {
 function handleChange(event) {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
+
+  if (target.name === 'draft-theme') {
+    paintActiveTab();
+    return;
+  }
 
   /* --- Broadcast audience -> reveal the "Specific User" picker ------------
      This is the only thing that reveals #broadcast-target-wrap. Without it the
