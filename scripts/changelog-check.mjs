@@ -139,7 +139,7 @@ for (const [label, needle] of [
  * So the assertion is not "the two migrations I remembered" but "every migration
  * file that exists, in ascending order, and 030 appears before 033".
  */
-const PENDING = ['028', '029', '030', '031', '032', '033'];
+  const PENDING = ['028', '029', '030', '031', '032', '033', '042'];
 // `blob` above is already exactly the Pending section's items, joined by newlines
 // -- it is not the whole file. The first version of this sliced the file looking
 // for '### Pending' and '### Added' headings that are not in it, produced an empty

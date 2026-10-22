@@ -20,7 +20,7 @@ formatEditionDate,
     imageFallbackAttr,
     captionText
 } from '../lib/dom.js';
-import { bylineSticker, renderAbout } from '../lib/credits.js';
+import { bylineSticker, renderAbout, portraitFor } from '../lib/credits.js';
 import { listPodcasts } from '../lib/podcasts.js';
 
 /**
@@ -1695,8 +1695,17 @@ function podcastCard(episode) {
   const staffMember = (store.getState().staff || []).find(
     (person) => String(person?.name || '').trim().toLowerCase() === authorName.trim().toLowerCase()
   );
+  // Precedence matches the byline path: the staff roster's portrait wins, and
+  // portraitFor() — which consults the same staff index first, then the Credits
+  // roster — answers for an anonymous reader, whose state.staff is empty (RLS
+  // gates `staff` on is_staff(), so signed-out visitors never receive rows).
+  // Without this fallback every podcast byline for a logged-out reader resolved
+  // to the generic glyph, and a subscriber who saw their own face while signed
+  // in saw the placeholder again from a private window.
   const authorAvatar =
-    safeUrl(staffMember?.portrait_url) || DEFAULT_AVATAR;
+    safeUrl(staffMember?.portrait_url) ||
+    safeUrl(portraitFor(authorName)) ||
+    DEFAULT_AVATAR;
 
   return `
     <article class="podcast-card" data-podcast-player>

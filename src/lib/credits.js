@@ -1703,8 +1703,62 @@ export function indexStaffPortraits(people) {
 export async function primePortraits() {
   const people = await listAllPeople();
   indexPortraits(people);
+  await primePublicStaffPortraits();
   // Count people, not index keys — the index holds several aliases per person.
   return people.filter((p) => safeUrl(p.portrait_url)).length;
+}
+
+/**
+ * Feed the STAFF half of the byline portrait index from the public RPC.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * The staff portrait index was only ever built by the Owner panel's Staff tab
+ * (primeStaffPortraits in src/views/admin.js), and the `staff` table is RLS-gated
+ * on is_staff() besides. A signed-in staffer therefore saw the corrected
+ * "one author, one face" resolution while an anonymous reader silently fell
+ * through to the Credits roster — which is the lower-precedence source that
+ * resolution was written to stop using. That is why the profile-picture mismatch
+ * kept coming back for everybody not signed in.
+ *
+ * The database side is `wire_public_portraits()` (migration 042): a SECURITY
+ * DEFINER reader that returns exactly the rows publication rules already allow
+ * the public to see — active staffers, portrait approved through the review
+ * pipeline, image non-empty. Rows come back pre-approved by construction, so
+ * they are stamped `portrait_status: 'approved'` for indexStaffPortraits.
+ *
+ * This MUST run inside primePortraits(), before the first paint, for the same
+ * reason that function explains above: bylineSticker() resolves synchronously.
+ *
+ * Failure is non-fatal and quiet: without migration 042 pasted yet the RPC is
+ * simply absent, and the app degrades to exactly the behaviour described above.
+ *
+ * @returns {Promise<number>} how many approved portraits the RPC handed over
+ */
+export async function primePublicStaffPortraits() {
+  if (config.demoMode) return 0;
+  const client = getSupabase();
+  if (!client) return 0;
+
+  try {
+    const { data, error } = await client.rpc('wire_public_portraits');
+    if (error) throw error;
+    const faces = (data || [])
+      .filter((row) => row && String(row.name || '').trim() && safeUrl(row.portrait_url))
+      .map((row) => ({
+        name: row.name,
+        portrait_url: row.portrait_url,
+        portrait_status: 'approved'
+      }));
+    indexStaffPortraits(faces);
+    return faces.length;
+  } catch (error) {
+    console.warn(
+      '[credits] public staff portraits unavailable — is supabase/migrations/042_public_staff_portraits.sql applied?',
+      error
+    );
+    return 0;
+  }
 }
 
 /**
