@@ -99,6 +99,7 @@
     color-scheme: dark;
   }
 
+  :root { --mast-bg: var(--surface); --mast-ink: var(--text); --mast-muted: var(--text-muted); --mast-accent: var(--accent); --mast-stamp: var(--accent); --mast-line: var(--rule-soft); --mast-orn: var(--accent); --mast-berry: var(--accent); }
   /* Editorial edition token overrides (layered over light/dark). */
   /* Christmas */
   [data-theme='christmas'] {
@@ -131,7 +132,6 @@
   }
 
   /* Base masthead tokens default to page tokens. */
-  :root { --mast-bg: var(--surface); --mast-ink: var(--text); --mast-muted: var(--text-muted); --mast-accent: var(--accent); --mast-stamp: var(--accent); --mast-line: var(--rule-soft); --mast-orn: var(--accent); --mast-berry: var(--accent); }
 
   * {
     border-color: var(--rule-soft);
