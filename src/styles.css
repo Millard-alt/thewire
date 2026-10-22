@@ -73,6 +73,8 @@
     /* The nav underline accent. A variable rather than a `.dark .nav-link::after`
        override, so the hover rule below never has to be restated per theme. */
     --nav-underline: var(--color-newsred);
+    --brk-bg: var(--color-newsred);
+    --brk-ink: #ffffff;
     color-scheme: light;
   }
 
@@ -92,6 +94,8 @@
     --accent-contrast: #1a0d0b;
     --overlay: rgb(0 0 0 / 0.8);
     --nav-underline: var(--color-newsgold-bright);
+    --brk-bg: var(--color-newsred);
+    --brk-ink: #ffffff;
     color-scheme: dark;
   }
 
@@ -3534,7 +3538,7 @@ class because the ratio is the whole point.
    ===================================================================== */
 [data-theme] .util-strip { background: var(--mast-bg); color: var(--mast-muted); border-color: var(--mast-line); }
 [data-theme] .util-strip .ink-muted { color: var(--mast-muted); }
-[data-theme] .masthead-bar { background: var(--mast-bg); color: var(--mast-ink); border-color: var(--mast-line); }
+[data-theme] .masthead-bar { position: relative; background: var(--mast-bg); color: var(--mast-ink); border-color: var(--mast-line); }
 [data-theme] .masthead-bar .ink-muted { color: var(--mast-muted); }
 [data-theme] .masthead-bar .text-newsred { color: var(--mast-accent); }
 
@@ -3605,7 +3609,7 @@ class because the ratio is the whole point.
 .hero.s .t { position: absolute; left: 64px; top: 0; bottom: 0; display: flex; flex-direction: column; justify-content: center; gap: 8px; align-items: flex-start; z-index: 1; }
 .hero.s .h { background: #0E1A2B; color: #fff; padding: 4px 16px; transform: skewX(-10deg); font: 800 italic 40px/1.05 'Barlow Condensed','Arial Narrow',Impact,sans-serif; letter-spacing: .02em; text-transform: uppercase; }
 .hero.s .h span { display: inline-block; transform: skewX(10deg); }
-.spr { position: absolute; top: 22px; width: 130px; height: 44px; color: var(--mast-orn); }
+.spr { position: absolute; top: 22px; width: 130px; height: 44px; color: var(--mast-orn); --berry: var(--mast-berry); }
 .spr.l { left: 20px; } .spr.r { right: 20px; transform: scaleX(-1); }
 .holly { position: absolute; left: 50%; top: -12px; transform: translateX(-50%); width: 68px; height: 24px; padding: 0 10px; background: var(--bg); color: var(--orn); box-sizing: content-box; }
 .snow { position: absolute; left: 0; right: 0; top: 0; overflow: hidden; pointer-events: none; z-index: 3; -webkit-mask-image: linear-gradient(#000 65%, transparent); mask-image: linear-gradient(#000 65%, transparent); }
@@ -3628,3 +3632,8 @@ class because the ratio is the whole point.
 [data-theme="sports"] .rule { border-top: 4px solid var(--rule); position: relative; }
 [data-theme="sports"] .rule::before { content: ""; position: absolute; left: 0; top: -4px; width: 64px; height: 4px; background: var(--accent); }
 [data-off~='orn'][data-theme='sports'] .rule::before { display: none !important; }
+
+[data-theme="sports"] h2, [data-theme="sports"] .edition-card h3 { font-family: 'Barlow Condensed','Arial Narrow',Impact,sans-serif; font-weight: 800; font-style: italic; text-transform: uppercase; }
+
+.hero .m { display: none; }
+@media (max-width: 700px) { .hero .d { display: none; } .hero .m { display: block; } }

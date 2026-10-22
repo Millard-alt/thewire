@@ -150,8 +150,8 @@ export function renderBreakingBanner() {
   // Owner could fill them in and see no change. See renderBreakingTab().
   slot.innerHTML = `
     <div
-      class="emergency-pulse text-white no-print"
-      style="background: ${accent}"
+      class="emergency-pulse no-print"
+      style="background: var(--brk-bg); color: var(--brk-ink)"
       role="region"
       aria-label="Breaking news"
     >
@@ -159,7 +159,7 @@ export function renderBreakingBanner() {
         class="mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 text-[0.6875rem] font-bold tracking-[0.12em] uppercase"
       >
         <span class="badge badge-live shrink-0"
-          style="background: #fff; color: ${accent}">${severity}</span>
+          style="background: #fff; color: var(--brk-bg)">${severity}</span>
         <strong class="min-w-0 flex-1 truncate">${escapeHtml(banner.headline)}</strong>
         ${
           escapeHtml(banner.subtext)
