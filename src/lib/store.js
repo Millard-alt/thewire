@@ -663,6 +663,7 @@ export async function hydrate() {
           row.author && typeof row.author === 'object'
             ? row.author.full_name || row.author.name || 'The Pulse Staff'
             : row.author || 'The Pulse Staff',
+        authorPhotoUrl: row.author_photo_url || null,
         authorProfile: (() => {
           if (row.author && typeof row.author === 'object') return row.author;
           const match = (staff.data || []).find(
@@ -1227,6 +1228,7 @@ export async function createArticle(input) {
     id: newId('article'),
     title: input.title?.trim() || 'Untitled dispatch',
     author: input.author?.trim() || 'The Pulse Staff',
+    authorPhotoUrl: input.authorPhotoUrl || null,
     category: input.category || 'Civic Dispatch',
     date: input.date || nowStamp(),
     image: input.image || '',
@@ -1248,6 +1250,7 @@ export async function createArticle(input) {
     const row = {
       title: article.title,
       author: article.author,
+      author_photo_url: article.authorPhotoUrl || null,
       category: article.category,
       published_at: article.date,
       image_url: article.image,
@@ -1307,6 +1310,7 @@ export async function updateArticle(id, patch) {
     const row = {};
     if (patch.title !== undefined) row.title = patch.title;
     if (patch.author !== undefined) row.author = patch.author;
+    if (patch.authorPhotoUrl !== undefined) row.author_photo_url = patch.authorPhotoUrl;
     if (patch.category !== undefined) row.category = patch.category;
     if (patch.date !== undefined) row.published_at = patch.date;
     if (patch.image !== undefined) row.image_url = patch.image;
