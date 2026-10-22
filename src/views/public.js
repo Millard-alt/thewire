@@ -43,11 +43,12 @@ import { listPodcasts } from '../lib/podcasts.js';
  */
 function renderByline(article, opts = {}) {
   return bylineSticker(
-    article?.author?.full_name || article?.author || 'The Pulse staff',
+    (typeof article?.author === 'string' ? article.author : article?.author?.full_name || 'The Pulse staff'),
     {
       ...opts,
       portrait:
         opts.portrait ||
+        article?.authorPhotoUrl ||
         article?.author?.avatar_url ||
         article?.authorProfile?.avatar_url ||
         null

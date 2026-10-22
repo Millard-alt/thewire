@@ -2508,6 +2508,14 @@ function articleEditorDialog() {
               <label class="field-label" for="article-author">Byline</label>
               <input id="article-author" class="field" type="text" />
             </div>
+            ${
+              store.canApprove()
+                ? `<div>
+              <label class="field-label" for="article-author-photo">Byline photo URL (optional)</label>
+              <input id="article-author-photo" class="field" type="text" placeholder="https://..." />
+            </div>`
+                : ''
+            }
             <div>
               <label class="field-label" for="article-category">Section</label>
               <input
@@ -6030,6 +6038,7 @@ async function saveArticleFromForm(form) {
   const payload = {
     title: byId('article-title').value,
     author: byId('article-author').value,
+    authorPhotoUrl: byId('article-author-photo')?.value.trim() || null,
     category: byId('article-category').value,
     status: byId('article-status').value,
     date: byId('article-date').value,
@@ -7160,6 +7169,7 @@ function openArticleEditor(articleId) {
   byId('article-editor-title').textContent = article ? 'Edit Article' : 'Create Article';
   byId('article-title').value = article?.title ?? '';
   byId('article-author').value = article?.author ?? '';
+  if (byId('article-author-photo')) byId('article-author-photo').value = article?.authorPhotoUrl ?? '';
   byId('article-category').value = article?.category ?? 'Civic Dispatch';
   byId('article-status').value = article?.status ?? 'Pending Review';
   byId('article-date').value = article?.date ?? '';
