@@ -2440,8 +2440,19 @@ function articleEditorDialog() {
             ${
               store.canApprove()
                 ? `<div>
-              <label class="field-label" for="article-author-photo">Byline photo URL (optional)</label>
-              <input id="article-author-photo" class="field" type="text" placeholder="https://..." />
+              <label class="field-label" for="article-author-photo-file">Byline photo (optional)</label>
+              <input
+                id="article-author-photo-file"
+                class="field"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+              />
+              <input
+                id="article-author-photo"
+                class="field mt-2"
+                type="text"
+                placeholder="...or paste an image URL"
+              />
             </div>`
                 : ''
             }
@@ -5366,7 +5377,7 @@ function bindFilePickers() {
   const pairs = [
     ['media-file', 'media-url'],
     ['article-image-file', 'article-image'],
-    // The interview poster picker. Without this pair the file input rendered but
+    ['article-author-photo-file', 'article-author-photo'],    // The interview poster picker. Without this pair the file input rendered but
     // carried no listener, so choosing a photo from the device did nothing at
     // all -- while the "paste an image URL" text box beside it saved normally,
     // which makes the field look half-broken rather than missing. Same dead
