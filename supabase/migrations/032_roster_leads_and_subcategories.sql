@@ -177,6 +177,7 @@ create index if not exists credits_people_scope_sub_idx
 -- -----------------------------------------------------------------------------
 -- BOTH OLDER SIGNATURES ARE DROPPED. See the header: two candidates for one
 -- PostgREST name is PGRST202 on every write, and it kills both public pages.
+drop function if exists public.wire_credits_people_upsert(uuid, text, text, text, text, text, integer, text, integer, text);
 drop function if exists public.wire_credits_people_upsert(uuid, text, text, text, text, text, integer, text, integer, text, text);
 drop function if exists public.wire_credits_people_upsert(uuid, text, text, text, text, text, integer, text, integer, text, text, boolean);
 

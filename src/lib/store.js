@@ -421,7 +421,9 @@ function mergeState(next = {}, { remote = false } = {}) {
     branding: pickObject(next.branding, seed.branding),
     breakingNews: pickObject(next.breakingNews, seed.breakingNews),
     notifications: pickObject(next.notifications, seed.notifications),
-    weeklySlots: pickObject(next.weeklySlots, seed.weeklySlots)
+    weeklySlots: pickObject(next.weeklySlots, seed.weeklySlots),
+    publishedTheme: typeof next.publishedTheme === 'string' ? next.publishedTheme : 'default',
+    publishedOptions: next.publishedOptions && typeof next.publishedOptions === 'object' ? next.publishedOptions : {}
   };
 }
 
@@ -570,8 +572,6 @@ export async function hydrate() {
       performers,
       media,
       categories,
-      audit,
-      broadcasts,
       settings
     ] = await Promise.all([
       client.from(TABLES.assignments).select('*').order('created_at', { ascending: false }),
@@ -582,16 +582,6 @@ export async function hydrate() {
         ascending: true,
         nullsFirst: false
       }),
-      client
-        .from(TABLES.auditLogs)
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50),
-      client
-        .from(TABLES.broadcasts)
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50),
       client.from('site_settings').select('*').limit(1).maybeSingle()
     ]);
     const articles = articlesRes;
@@ -640,6 +630,20 @@ export async function hydrate() {
         else console.warn('[store] could not load interviews', error.message);
       } catch (error) {
         console.warn('[store] interviews read failed', error);
+      }
+    }
+
+    let themeRow = null;
+    if (!config.demoMode && db()) {
+      try {
+        const { data, error } = await db()
+          .from('site_theme_public')
+          .select('published_theme,published_options')
+          .limit(1)
+          .maybeSingle();
+        if (!error) themeRow = data || null;
+      } catch (error) {
+        console.warn('[store] could not load site theme', error?.message || error);
       }
     }
 
@@ -779,12 +783,7 @@ export async function hydrate() {
        * empty list rather than three fabricated interviews.
        */
       interviews: interviews.map(mapInterviewRow),
-      auditLogs: (audit.data || []).map((row) => ({
-        id: row.id,
-        user: row.actor_name,
-        action: row.action,
-        time: row.created_at
-      })),
+      auditLogs: [],
       notifications: {
         ...local.notifications,
         forced: Boolean(settingsRow.forced_notifications),
@@ -818,7 +817,11 @@ export async function hydrate() {
         // the key entirely. Default to enabled rather than to undefined: an
         // undefined flag is falsy and would hide the band for every reader on
         // a database that never asked for it.
-        showThisWeek: settingsRow.show_this_week ?? true
+        showThisWeek: settingsRow.show_this_week ?? true,
+        publishedTheme: themeRow?.published_theme ?? (config.demoMode ? (local.publishedTheme || 'default') : 'default'),
+        publishedOptions: themeRow?.published_options && typeof themeRow.published_options === 'object'
+          ? themeRow.published_options
+          : (config.demoMode ? (local.publishedOptions || {}) : {})
       },
       { remote: true }
     );
@@ -982,6 +985,38 @@ export async function hasExtraImagesColumn() {
     extraImagesColumnReady = false;
   }
   return extraImagesColumnReady;
+}
+
+/**
+ * Does `articles.author_photo_url` exist yet?
+ *
+ * Same reasoning as hasExtraImagesColumn() above: the byline-photo feature
+ * (commit 1515967) writes this column, but a deployment that lands before the
+ * matching migration is pasted must not break article creation. PostgREST
+ * rejects the whole insert (PGRST204) when an unknown column appears in the
+ * payload, so the probe gates whether the key is sent at all.
+ */
+let authorPhotoUrlColumnReady = null;
+
+export async function hasAuthorPhotoUrlColumn() {
+  if (authorPhotoUrlColumnReady !== null) return authorPhotoUrlColumnReady;
+  if (config.demoMode || !db()) {
+    authorPhotoUrlColumnReady = false;
+    return false;
+  }
+  try {
+    const { error } = await db().from(TABLES.articles).select('author_photo_url').limit(1);
+    authorPhotoUrlColumnReady = !error;
+    if (error) {
+      console.warn(
+        '[store] articles.author_photo_url is missing — run supabase/migrations/043_add_article_author_photo_url.sql',
+        error.message
+      );
+    }
+  } catch {
+    authorPhotoUrlColumnReady = false;
+  }
+  return authorPhotoUrlColumnReady;
 }
 
 /**
@@ -1250,7 +1285,6 @@ export async function createArticle(input) {
     const row = {
       title: article.title,
       author: article.author,
-      author_photo_url: article.authorPhotoUrl || null,
       category: article.category,
       published_at: article.date,
       image_url: article.image,
@@ -1262,6 +1296,14 @@ export async function createArticle(input) {
 
     if (await hasOwnershipColumn()) {
       row.author_account_id = currentAccountId();
+    }
+
+    // Only send author_photo_url once the column is known to exist. Sending an
+    // unknown key makes PostgREST reject the entire insert with PGRST204, so a
+    // deploy that lands before the migration is pasted must not break article
+    // creation.
+    if (await hasAuthorPhotoUrlColumn()) {
+      row.author_photo_url = article.authorPhotoUrl || null;
     }
 
     // Only send extra_images once the column is known to exist. Sending an
@@ -1310,7 +1352,9 @@ export async function updateArticle(id, patch) {
     const row = {};
     if (patch.title !== undefined) row.title = patch.title;
     if (patch.author !== undefined) row.author = patch.author;
-    if (patch.authorPhotoUrl !== undefined) row.author_photo_url = patch.authorPhotoUrl;
+    if (patch.authorPhotoUrl !== undefined && (await hasAuthorPhotoUrlColumn())) {
+      row.author_photo_url = patch.authorPhotoUrl;
+    }
     if (patch.category !== undefined) row.category = patch.category;
     if (patch.date !== undefined) row.published_at = patch.date;
     if (patch.image !== undefined) row.image_url = patch.image;
@@ -2800,7 +2844,32 @@ async function persistSettings(overrides = {}) {
   );
 }
 
-/** UPDATE the publication's masthead branding. */
+/** UPDATE the published editorial edition (owner-only via RLS). */
+export async function savePublishedTheme({ theme, options } = {}) {
+  const allowed = ['default', 'christmas', 'sports'];
+  const nextTheme = allowed.includes(String(theme || '').trim().toLowerCase())
+    ? String(theme).trim().toLowerCase()
+    : 'default';
+  const nextOptions = options && typeof options === 'object' ? options : {};
+
+  const current = getState();
+  current.publishedTheme = nextTheme;
+  current.publishedOptions = nextOptions;
+
+  if (!(config.demoMode || !db())) {
+    assertOk(
+      await db()
+        .from('site_theme')
+        .upsert({ id: 1, published_theme: nextTheme, published_options: nextOptions }, { onConflict: 'id' })
+        .select()
+        .maybeSingle(),
+      'save published theme'
+    );
+  }
+  await addAuditLog(`Published website theme: ${nextTheme}`);
+  commit();
+  return { theme: nextTheme, options: nextOptions };
+}
 export async function saveBranding({ title, subtitle, edition }) {
   const current = getState();
   current.branding = { ...current.branding, title, subtitle, edition };
@@ -2950,4 +3019,7 @@ export async function resetLocalData() {
   hydrated = false;
   return hydrate();
 }
+
+
+
 

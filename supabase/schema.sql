@@ -20,6 +20,7 @@ create table if not exists public.articles (
   id           uuid primary key default gen_random_uuid(),
   title        text        not null,
   author       text        not null default 'The Pulse Staff',
+  author_photo_url text,
   category     text        not null default 'Civic Dispatch',
   published_at text,
   image_url    text,
