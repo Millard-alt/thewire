@@ -585,6 +585,7 @@ export async function hydrate() {
     const articles = articlesRes;
 
     assertOk({ data: articles.data, error: articles.error }, 'load articles');
+    console.log('[hydrate] articles from Supabase:', articles.data?.length ?? 0, 'error:', articles.error?.message || null);
 
     // The subscriber count lives in a table readers may not read, so it comes
     // through a SECURITY DEFINER function rather than a direct select. A failure
@@ -807,6 +808,7 @@ export async function hydrate() {
     );
   } catch (error) {
     console.error('[store] hydration failed, using local store', error);
+    console.log('[hydrate] FALLBACK TO MOCK DATA');
     replaceState(readLocalState());
   }
 
