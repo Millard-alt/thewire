@@ -24,6 +24,8 @@ its migrations have been run in the Supabase SQL Editor.**
 - **`supabase/migrations/033_writer_lockdown.sql`.** **Run this LAST.** Closes five holes in the Writer/approver model: an articles publish guard (articles had none, so a Writer could set the status to Published on their own draft), a status-pinning insert policy on `articles`, removal of the `author_account_id is null` rescue arm from both update policies, a guard trigger that makes the approver grant status-only on three tables, and `interviews_publish_guard` widened to `can_approve()`. Until it is run the client-side gates are the only enforcement.
 - **`supabase/migrations/042_public_staff_portraits.sql`.** Adds `wire_public_portraits()`, the anonymous-readable read of active staffers' **approved** portraits (`name`, `portrait_url`, nothing else). Until it is pasted, signed-out visitors keep resolving bylines from the Credits roster — the lower-precedence source that causes the profile-picture mismatch — the app logs a `[credits] public staff portraits unavailable` warning naming this file, and nothing else breaks. It depends only on the portrait pipeline (013/014); run it any time after 033.
 
+- **`supabase/migrations/043_add_article_author_photo_url.sql`.** Adds `articles.author_photo_url`. Without it the byline photo entered in the article editor is not persisted (the client degrades gracefully and article creation still works). Run any time after 033.
+
 **These run in the order listed, and each one depends on the ones above it.**
 This list used to name only some of them, which meant a database could follow it
 exactly and still fail on a missing dependency: `can_approve()` from 030 was never

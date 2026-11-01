@@ -5500,6 +5500,34 @@ function bindFilePickers() {
     episode. Choosing either clears the other, so the submitted audio is always
     the one they last pointed at.
   */
+  // Credits roster photos: the file input has no paired URL field, so upload
+  // directly and persist the resulting URL through updatePerson.
+  document.querySelectorAll('[data-credits-photo]').forEach((fileInput) => {
+    if (fileInput.dataset.bound === 'true') return;
+    fileInput.dataset.bound = 'true';
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files?.[0];
+      if (!file) return;
+      const form = fileInput.closest('form');
+      const personId = form?.dataset?.creditsForm;
+      if (!personId) return;
+      try {
+        const { url } = await uploadImage(file);
+        const result = await updatePerson(personId, { portrait_url: url });
+        if (!result.ok) {
+          showToast(result.message, { type: 'error' });
+          return;
+        }
+        await refreshCreditsPeople();
+        paintActiveTab();
+        showToast('Photo uploaded.', { type: 'success' });
+      } catch (error) {
+        showToast(error?.message || 'Upload failed.', { type: 'error' });
+      } finally {
+        fileInput.value = '';
+      }
+    });
+  });
   const podcastFile = byId('podcast-sub-file');
   const podcastUrl = byId('podcast-sub-audio-url');
   if (podcastFile && podcastUrl && podcastFile.dataset.bound !== 'true') {
@@ -7174,6 +7202,9 @@ export async function sendBroadcastFromForm(form) {
 async function guard(action) {
   try {
     await action();
+    // Keep the panel in sync with the database after every successful mutation
+    // so the Owner never has to reload the page to see a change.
+    paintActiveTab();
   } catch (error) {
     console.error('[admin]', error);
     showToast(error?.message || 'That action could not be completed.', {
@@ -8574,4 +8605,5 @@ case 'gallery-category-delete': {
       console.warn('[admin] unhandled action', action);
   }
 }
+
 
