@@ -547,7 +547,7 @@ function aboutSubTeam(people, heading, idBase) {
           rest.length
              ? (rest.length > 1
                  ? `<ul class="about-carousel" aria-label="${heading ? `More ${escapeHtml(heading)}` : 'More members'}">${rest.map((p) => aboutCard(p, 'carousel')).join('')}</ul>`
-                 : `<ul class="space-y-4">${rest.map((p) => aboutCard(p)).join('')}</ul>`)
+                 : `<ul class="flex flex-col gap-4">${rest.map((p) => aboutCard(p)).join('')}</ul>`)
              : ''
         }
       </div>
