@@ -545,12 +545,10 @@ function aboutSubTeam(people, heading, idBase) {
         ${aboutCard(lead, 'lead', { isLead: true })}
         ${
           rest.length
-            ? `<ul class="about-carousel" aria-label="${
-                heading
-                  ? `More ${escapeHtml(heading)}`
-                  : `More members`
-              }">${rest.map((p) => aboutCard(p, 'carousel')).join('')}</ul>`
-            : ''
+             ? (rest.length > 1
+                 ? `<ul class="about-carousel" aria-label="${heading ? `More ${escapeHtml(heading)}` : 'More members'}">${rest.map((p) => aboutCard(p, 'carousel')).join('')}</ul>`
+                 : `<ul>${rest.map((p) => aboutCard(p)).join('')}</ul>`)
+             : ''
         }
       </div>
     </div>
