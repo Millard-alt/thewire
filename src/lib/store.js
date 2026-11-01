@@ -774,16 +774,7 @@ export async function hydrate() {
         forced: Boolean(settingsRow.forced_notifications),
         // Real device count from the database, not a seeded number.
         activeSubscriberCount: subscriberCount,
-        history: (broadcasts.data || []).map((row) => ({
-          id: row.id,
-          title: row.title,
-          message: row.message,
-          audience: row.audience,
-          time: row.created_at,
-          delivered: row.delivered_count,
-          requiresAction: Boolean(row.requires_action),
-          targetEndpoint: row.target_endpoint || null
-        }))
+        history: []
       },
       branding: {
           ...local.branding,
