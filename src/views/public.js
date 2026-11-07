@@ -413,6 +413,7 @@ export function renderPublication() {
   }
   view.dataset.rendering = '1';
   console.log('[renderPublication] start', view.children.length, 'articles', store.getState().articles.length);
+  try {
 
   const published = store.listPublishedArticles();
 
@@ -495,6 +496,7 @@ view.innerHTML = `
   document.querySelectorAll('a.nav-link[href="#weekly"]').forEach((link) => {
     link.hidden = showThisWeek === false;
   });
+   } catch (err) { console.error('[renderPublication] FAILED', err); view.dataset.rendering = '0'; return; }
    view.dataset.rendering = '0';
    view.dataset.rendered = '1';
    if (view.dataset.rerender === '1') { view.dataset.rerender = '0'; setTimeout(() => renderPublication(), 0); }
@@ -2229,6 +2231,7 @@ function initNavigation() {
       subtree: true
     });
 }
+
 
 
 
