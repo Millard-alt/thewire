@@ -402,7 +402,8 @@ export function renderPublication() {
   const view = byId('publication-view');
   if (!view) return;
   if (view.dataset.rendering === '1') {
-    console.log('[renderPublication] skipped (already rendering)');
+    console.log('[renderPublication] queued (already rendering)');
+    view.dataset.rerender = '1';
     return;
   }
   view.dataset.rendering = '1';
@@ -2220,6 +2221,7 @@ function initNavigation() {
       subtree: true
     });
 }
+
 
 
 
