@@ -412,7 +412,7 @@ export function renderPublication() {
     return;
   }
   view.dataset.rendering = '1';
-  console.log('[renderPublication] start', view.children.length);
+  console.log('[renderPublication] start', view.children.length, 'articles', store.getState().articles.length);
 
   const published = store.listPublishedArticles();
 
