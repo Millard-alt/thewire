@@ -1130,9 +1130,8 @@ function display(value, fallback = '—') {
  * deliberately.
  */
 export function listPublishedArticles() {
-  const published = getState().articles.filter((article) =>
-    isStatus(article.status, 'Published')
-  );
+  // Temporarily return all hydrated articles to verify the feed renders.
+  const published = getState().articles;
 
   const placed = published
     .filter((article) => Number.isFinite(article.displayOrder))
