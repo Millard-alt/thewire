@@ -58,6 +58,7 @@ export function applyEdition(themeId, options, { updateCache = false } = {}) {
   const theme = normaliseThemeId(themeId);
   const clean = sanitizeThemeOptions(theme, options);
   const root = document.documentElement;
+  console.log('[edition] applyEdition', theme, clean);
   root.dataset.theme = theme;
   root.dataset.edition = theme;
   // Load Sports-only font on demand.

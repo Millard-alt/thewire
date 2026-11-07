@@ -594,8 +594,11 @@ export async function boot() {
       publishedEdition = null;
     }
     if (publishedEdition) {
+      console.log('[app] publishedEdition from server', publishedEdition);
       cacheEdition(publishedEdition.theme, publishedEdition.options);
       applyEdition(publishedEdition.theme, publishedEdition.options, { updateCache: false });
+    } else {
+      console.log('[app] no publishedEdition from server');
     }
   }
 

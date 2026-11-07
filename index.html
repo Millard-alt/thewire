@@ -219,6 +219,7 @@
           var edition = null;
           try { edition = localStorage.getItem('wire.edition'); } catch (e) {}
           if (edition !== 'christmas' && edition !== 'sports' && edition !== 'diwali') edition = 'default';
+          console.log('[inline] edition from cache', edition);
           root.dataset.theme = edition;
           root.dataset.edition = edition;
           var meta = document.querySelector('meta[name="theme-color"]');
