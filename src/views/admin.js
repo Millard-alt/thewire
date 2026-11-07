@@ -5996,7 +5996,17 @@ function addArticleExtras(urls) {
 
 /** Reset when the editor opens, so one article's photos never leak into the next. */
 function setArticleExtras(urls) {
-  articleExtras = [...new Set(urls.filter(Boolean))].slice(0, MAX_ARTICLE_PHOTOS);
+  const list = (Array.isArray(urls) ? urls : [])
+    .map((entry) =>
+      typeof entry === 'string'
+        ? entry
+        : entry && typeof entry === 'object'
+          ? entry.url || entry.src || entry.path || entry.publicUrl || ''
+          : ''
+    )
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  articleExtras = [...new Set(list)].slice(0, MAX_ARTICLE_PHOTOS);
   renderArticleExtraPreview();
 }
 
