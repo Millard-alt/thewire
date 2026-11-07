@@ -25,7 +25,7 @@ function report(label, ok, detail = '') {
   else { fail++; failures.push(label + (detail ? '\n        ' + detail : '')); console.log('  FAIL  ' + label + (detail ? '\n        ' + detail : '')); }
 }
 
-report('three themes only', THEME_IDS.length === 3 && THEME_IDS.includes('default') && THEME_IDS.includes('christmas') && THEME_IDS.includes('sports'), JSON.stringify(THEME_IDS));
+report('four themes only', THEME_IDS.length === 4 && THEME_IDS.includes('default') && THEME_IDS.includes('christmas') && THEME_IDS.includes('sports') && THEME_IDS.includes('diwali'), JSON.stringify(THEME_IDS));
 report('invalid theme falls back to default', normaliseThemeId('nope') === 'default');
 report('valid theme preserved', normaliseThemeId('Sports') === 'sports');
 report('theme config valid', validateAllThemes().ok === true);

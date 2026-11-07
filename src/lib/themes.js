@@ -5,7 +5,7 @@
    an options schema plus asset references. It never carries layout or content.
    ========================================================================== */
 
-export const THEME_IDS = ['default', 'christmas', 'sports'];
+export const THEME_IDS = ['default', 'christmas', 'sports', 'diwali'];
 
 export function isValidThemeId(value) {
   return THEME_IDS.includes(String(value || '').trim().toLowerCase());
@@ -20,14 +20,16 @@ export function normaliseThemeId(value) {
 export const DEFAULT_THEME_OPTIONS = {
   default: {},
   christmas: { hero: true, ornaments: true, label: true, motion: true },
-  sports: { hero: true, ornaments: true, label: true, motion: true }
+  sports: { hero: true, ornaments: true, label: true, motion: true },
+  diwali: { hero: true, ornaments: true, label: true, motion: true }
 };
 
 /** Schema: allowed option keys and their types. */
 export const THEME_OPTION_SCHEMAS = {
   default: {},
   christmas: { hero: 'boolean', ornaments: 'boolean', label: 'boolean', motion: 'boolean' },
-  sports: { hero: 'boolean', ornaments: 'boolean', label: 'boolean', motion: 'boolean' }
+  sports: { hero: 'boolean', ornaments: 'boolean', label: 'boolean', motion: 'boolean' },
+  diwali: { hero: 'boolean', ornaments: 'boolean', label: 'boolean', motion: 'boolean' }
 };
 
 /** Sanitize an options object against the schema, falling back to defaults. */
@@ -72,6 +74,15 @@ export const THEMES = {
     defaultOptions: { hero: true, ornaments: true, label: true, motion: true },
     tokens: {},
     assets: { hero: 'sports-hero', track: 'sports-track' }
+  },
+  diwali: {
+    id: 'diwali',
+    label: 'Diwali',
+    editionLabel: 'Diwali Edition',
+    optionsSchema: { hero: 'boolean', ornaments: 'boolean', label: 'boolean', motion: 'boolean' },
+    defaultOptions: { hero: true, ornaments: true, label: true, motion: true },
+    tokens: {},
+    assets: { hero: 'diwali-hero', ornament: 'diwali-ornament' }
   }
 };
 

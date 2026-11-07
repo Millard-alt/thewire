@@ -13,7 +13,7 @@ export const EDITION_STORAGE_KEY = 'wire.edition';
 export const EDITION_OPTIONS_STORAGE_KEY = 'wire.edition.options';
 export const EDITION_CHANGE_EVENT = 'wire:editionchange';
 
-const ALLOWED = ['default', 'christmas', 'sports'];
+const ALLOWED = ['default', 'christmas', 'sports', 'diwali'];
 
 function safeParseJson(value) {
   try {

@@ -131,6 +131,21 @@
     --text: #F2F4F7; --text-muted: #9FB0C8; --accent-contrast: #0A1220; --nav-underline: #FF7A3D;
   }
 
+   /* Diwali */
+   [data-theme='diwali'] {
+     --bg: #FBF8F4; --surface: #FFFFFF; --ink: #241420; --muted: #5B4A55; --accent: #A8123A; --accent2: #241420; --rule: #2A1233; --line: #E8DDD6; --nav-bg: #FFFFFF; --nav-ink: #241420; --brk-bg: #A8123A; --brk-ink: #FFFFFF; --btn-bg: #A8123A; --btn-ink: #FFFFFF; --link: #A8123A; --hero-bg: #2A1233; --hero-ink: #FFF4E0; --orn: #C27400; --berry: #A8123A; --gold: #E8A33D; --flame: #F5B24A;
+     --mast-bg: #2A1233; --mast-ink: #FFF4E0; --mast-muted: #CDB6C9; --mast-accent: #F5B24A; --mast-stamp: #F5B24A; --mast-line: #4A2A55; --mast-orn: #E8A33D; --mast-berry: #FFD27A;
+     --color-paper: #FBF8F4; --color-paper-dark: #E8DDD6; --color-ink: #241420; --color-ink-muted: #5B4A55; --color-newsred: #A8123A; --color-newsgold: #E8A33D; --color-newsblue: #1c3f60;
+     --surface-raised: #FFFFFF; --surface-sunken: #E8DDD6; --surface-card: #FFFFFF; --surface-card-edge: #E8DDD6;
+     --text: #241420; --text-muted: #5B4A55; --accent-contrast: #FFFFFF; --nav-underline: #A8123A;
+   }
+   [data-theme='diwali'].dark {
+     --bg: #150A1C; --surface: #1F1028; --ink: #FFF1DC; --muted: #C4AEBF; --accent: #F5B24A; --accent2: #F5B24A; --rule: #E8A33D; --line: #3A2447; --nav-bg: #0E0613; --nav-ink: #FFF1DC; --brk-bg: #B5174A; --brk-ink: #FFFFFF; --btn-bg: #F5B24A; --btn-ink: #1A0B12; --link: #F5B24A; --hero-bg: #2A1233; --hero-ink: #FFF1DC; --orn: #E8A33D; --berry: #F5B24A; --gold: #E8A33D; --flame: #F5B24A;
+     --color-paper: #150A1C; --color-paper-dark: #3A2447; --color-ink: #FFF1DC; --color-ink-muted: #C4AEBF; --color-newsred: #F5B24A; --color-newsgold: #E8A33D; --color-newsblue: #8faec9;
+     --surface-raised: #1F1028; --surface-sunken: #0E0613; --surface-card: #1F1028; --surface-card-edge: #3A2447;
+     --text: #FFF1DC; --text-muted: #C4AEBF; --accent-contrast: #1A0B12; --nav-underline: #F5B24A;
+   }
+
   /* Base masthead tokens default to page tokens. */
 
   * {
