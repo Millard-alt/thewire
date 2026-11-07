@@ -1130,7 +1130,6 @@ function display(value, fallback = '—') {
  * deliberately.
  */
 export function listPublishedArticles() {
-  console.log('[listPublishedArticles] total', getState().articles.length, 'statuses', getState().articles.map(a => a.status));
   const published = getState().articles.filter((article) =>
     isStatus(article.status, 'Published')
   );
