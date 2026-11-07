@@ -98,6 +98,11 @@ let contentFilter = 'all';
 // the Owner switched tabs.
 let interviewFilter = 'all';
 let themeDraft = null;
+// Exposed for inline onchange handlers on the theme radios.
+window.__setThemeDraft = (value) => {
+  themeDraft = value;
+  paintActiveTab();
+};
 // Ids being edited, and the video rows staged in the editor.
 let editingInterviewId = null;
 let interviewVideoDraft = [];
@@ -2438,7 +2443,7 @@ function renderThemesTab() {
       const selected = id === draftTheme ? 'checked' : '';
       return `
         <label class="panel-raised flex cursor-pointer items-center gap-3 p-4">
-          <input type="radio" name="draft-theme" value="${id}" ${selected} />
+          <input type="radio" name="draft-theme" value="${id}" ${selected} onchange="__setThemeDraft(this.value)" />
           <span class="font-semibold uppercase">${id}</span>
         </label>
       `;
@@ -8616,6 +8621,8 @@ case 'gallery-category-delete': {
       console.warn('[admin] unhandled action', action);
   }
 }
+
+
 
 
 
