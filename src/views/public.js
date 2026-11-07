@@ -260,7 +260,7 @@ captionText(article.caption)
 function sectionHeading(id, kicker, title) {
     return `
       <div class="mb-5">
-        ${kicker ? `<p class="accent-text text-[0.625rem] font-bold tracking-[0.24em] uppercase"><svg class="orn sp mr-1 inline-block" width="14" height="10" viewBox="0 0 14 10" aria-hidden="true"><path d="M1 1l4 4-4 4M7 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2"/></svg>${escapeHtml(kicker)}</p>` : ''}
+        ${kicker ? `<p class="accent-text text-[0.625rem] font-bold tracking-[0.24em] uppercase"><span class="dia orn dw mr-1" aria-hidden="true"></span>${escapeHtml(kicker)}</p>` : ''}
         <h2 id="${escapeHtml(id)}" class="font-headline text-2xl font-black tracking-wide uppercase md:text-3xl">
           ${escapeHtml(title)}
         </h2>
@@ -269,6 +269,7 @@ function sectionHeading(id, kicker, title) {
           <svg class="holly orn xm" width="68" height="24" viewBox="0 0 64 24" aria-hidden="true"><use href="#holly"/></svg>
           <span class="rule-line"></span>
         </div>
+         <div class="band orn dw"></div>
       </div>
     `;
   }
