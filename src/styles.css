@@ -3701,3 +3701,14 @@ class because the ratio is the whole point.
 [data-theme='diwali'] .btn-primary { background-color: var(--btn-bg); color: var(--btn-ink); }
 [data-theme='diwali'].dark .btn-primary { background-color: var(--btn-bg); color: var(--btn-ink); }
 
+
+
+[data-theme="diwali"] nav { background: var(--nav-bg); color: var(--nav-ink); border-bottom: 3px solid var(--gold); }
+[data-theme="diwali"] .edition-card,
+[data-theme="diwali"] .about-card,
+[data-theme="diwali"] .credits-card,
+[data-theme="diwali"] .podcast-card,
+[data-theme="diwali"] .gallery-card { border-radius: 2px; border: 1px solid var(--line); border-top: 3px solid var(--gold); }
+[data-theme="diwali"] .btn,
+[data-theme="diwali"] .btn-primary { background-color: var(--btn-bg); color: var(--btn-ink); border-radius: 2px; }
+[data-theme="diwali"] .edition-stamp { border: 1px solid var(--mast-stamp); padding: 5px 20px; position: relative; }
