@@ -401,6 +401,11 @@ function statusBadge(status) {
 export function renderPublication() {
   const view = byId('publication-view');
   if (!view) return;
+  if (view.dataset.rendering === '1') {
+    console.log('[renderPublication] skipped (already rendering)');
+    return;
+  }
+  view.dataset.rendering = '1';
   console.log('[renderPublication] start', view.children.length);
 
   const published = store.listPublishedArticles();
@@ -2215,5 +2220,6 @@ function initNavigation() {
       subtree: true
     });
 }
+
 
 
