@@ -490,6 +490,9 @@ view.innerHTML = `
   document.querySelectorAll('a.nav-link[href="#weekly"]').forEach((link) => {
     link.hidden = showThisWeek === false;
   });
+   view.dataset.rendering = '0';
+   view.dataset.rendered = '1';
+   if (view.dataset.rerender === '1') { view.dataset.rerender = '0'; setTimeout(() => renderPublication(), 0); }
 
   /*
     Kick off the podcast strip AFTER the markup is in place, and do not await it.
