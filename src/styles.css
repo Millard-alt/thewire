@@ -3697,3 +3697,7 @@ class because the ratio is the whole point.
 @media (max-width:900px){.rg{display:none}}
 @media (max-width:700px){.hero.hd .k{display:none}.hero.hd .h{font-size:20px}.hero.hd .t{padding-top:12px}}
 @media (prefers-reduced-motion:reduce){.embers{display:none!important}}
+
+[data-theme='diwali'] .btn-primary { background-color: var(--btn-bg); color: var(--btn-ink); }
+[data-theme='diwali'].dark .btn-primary { background-color: var(--btn-bg); color: var(--btn-ink); }
+
