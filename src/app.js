@@ -769,3 +769,4 @@ window.addEventListener('unhandledrejection', (event) => {
 window.addEventListener('error', (event) => {
   if (event.message) console.error('[app]', event.error || event.message);
 });
+
