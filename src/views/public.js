@@ -401,6 +401,11 @@ function statusBadge(status) {
 export function renderPublication() {
   const view = byId('publication-view');
   if (!view) return;
+  // Do not render until the store has hydrated its articles.
+  if (!store.getState().articles.length) {
+    setTimeout(() => renderPublication(), 50);
+    return;
+  }
   if (view.dataset.rendering === '1') {
     console.log('[renderPublication] queued (already rendering)');
     view.dataset.rerender = '1';
