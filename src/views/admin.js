@@ -2439,7 +2439,7 @@ function renderThemesTab() {
   const previewWidth = '1280';
   const previewSrc = `/?preview=1&theme=${draftTheme}&options=${optsJson}&mode=light`;
 
-  const themeCards = ['default', 'christmas', 'sports']
+  const themeCards = ['default', 'christmas', 'sports', 'diwali']
     .map((id) => {
       const selected = id === draftTheme ? 'checked' : '';
       return `
@@ -8622,6 +8622,8 @@ case 'gallery-category-delete': {
       console.warn('[admin] unhandled action', action);
   }
 }
+
+
 
 
 
