@@ -97,6 +97,7 @@ let contentFilter = 'all';
 // never 'Pending Review', so sharing one filter would make every row vanish when
 // the Owner switched tabs.
 let interviewFilter = 'all';
+let themeDraft = null;
 // Ids being edited, and the video rows staged in the editor.
 let editingInterviewId = null;
 let interviewVideoDraft = [];
@@ -8615,5 +8616,7 @@ case 'gallery-category-delete': {
       console.warn('[admin] unhandled action', action);
   }
 }
+
+
 
 
