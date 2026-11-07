@@ -2409,7 +2409,8 @@ function renderBrandingTab() {
 function renderThemesTab() {
   const state = store.getState();
   const published = state.publishedTheme || 'default';
-  const draftTheme = published;
+  if (!themeDraft) themeDraft = published;
+  const draftTheme = themeDraft;
   const draftOptions = state.publishedOptions || {};
   const selectedOptions = sanitizeThemeOptions(draftTheme, draftOptions);
 
@@ -8621,6 +8622,10 @@ case 'gallery-category-delete': {
       console.warn('[admin] unhandled action', action);
   }
 }
+
+
+
+
 
 
 
