@@ -56,7 +56,7 @@ export function escapeAttr(value) {
 export function safeUrl(value, { allowedHosts } = {}) {
   const raw = String(value || '').trim();
   if (!raw) return '';
-  if (raw.startsWith('/') || raw.startsWith('#')) return raw;
+  if (raw.startsWith('/') || raw.startsWith('#') || raw.startsWith('data:')) return raw;
   if (!/^https?:\/\//i.test(raw)) return '';
 
   if (Array.isArray(allowedHosts) && allowedHosts.length) {
