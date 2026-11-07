@@ -133,7 +133,7 @@
 
    /* Diwali */
    [data-theme='diwali'] {
-     --bg: #FBF8F4; --surface: #FFFFFF; --ink: #241420; --muted: #5B4A55; --accent: #A8123A; --accent2: #241420; --rule: #2A1233; --line: #E8DDD6; --nav-bg: #FFFFFF; --nav-ink: #241420; --brk-bg: #A8123A; --brk-ink: #FFFFFF; --btn-bg: #A8123A; --btn-ink: #FFFFFF; --link: #A8123A; --hero-bg: #2A1233; --hero-ink: #FFF4E0; --orn: #C27400; --berry: #A8123A; --gold: #E8A33D; --flame: #F5B24A;
+     --bg: #FBF8F4; --surface: #FFFFFF; --ink: #241420; --muted: #5B4A55; --accent: #A8123A; --accent2: #241420; --rule: #2A1233; --line: #E8DDD6; --nav-bg: #FFFFFF; --nav-ink: #241420; --brk-bg: #A8123A; --brk-ink: #FFFFFF; --btn-bg: #A8123A; --btn-ink: #FFFFFF; --link: #A8123A; --hero-bg: #2A1233; --hero-ink: #FFF4E0; --orn: #C27400; --berry: #A8123A; --gold: #E8A33D; --flame: #F5B24A; --disp: var(--font-headline); --serif: var(--font-body);
      --mast-bg: #2A1233; --mast-ink: #FFF4E0; --mast-muted: #CDB6C9; --mast-accent: #F5B24A; --mast-stamp: #F5B24A; --mast-line: #4A2A55; --mast-orn: #E8A33D; --mast-berry: #FFD27A;
      --color-paper: #FBF8F4; --color-paper-dark: #E8DDD6; --color-ink: #241420; --color-ink-muted: #5B4A55; --color-newsred: #A8123A; --color-newsgold: #E8A33D; --color-newsblue: #1c3f60;
      --surface-raised: #FFFFFF; --surface-sunken: #E8DDD6; --surface-card: #FFFFFF; --surface-card-edge: #E8DDD6;
