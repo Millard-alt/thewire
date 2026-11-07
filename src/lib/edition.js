@@ -98,22 +98,41 @@ export function applyEdition(themeId, options, { updateCache = false } = {}) {
 function renderSnow() {
   if (typeof document === 'undefined') return;
   const snow = document.getElementById('snow');
-  if (!snow) return;
-  snow.innerHTML = '';
+  const embers = document.getElementById('embers');
+  if (snow) snow.innerHTML = '';
+  if (embers) embers.innerHTML = '';
   const root = document.documentElement;
-  if (root.dataset.theme !== 'christmas') return;
-  if (String(root.dataset.off || '').includes('fx')) return;
-  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const fxOff = String(root.dataset.off || '').includes('fx');
   const mast = document.querySelector('.masthead-bar');
   const h = mast ? mast.offsetTop + mast.offsetHeight : 300;
-  snow.style.height = h + 'px';
-  snow.style.setProperty('--h', h + 'px');
-  const n = window.innerWidth < 700 ? 22 : 40;
-  for (let i = 0; i < n; i++) {
-    const f = document.createElement('i');
-    const s = 2 + Math.random() * 2.5;
-    f.style.cssText = `left:${Math.random() * 100}%;width:${s}px;height:${s}px;opacity:${0.5 + Math.random() * 0.4};animation-duration:${9 + Math.random() * 9}s;animation-delay:-${Math.random() * 18}s;--dx:${Math.random() * 50 - 25}px`;
-    snow.appendChild(f);
+  if (snow) {
+    snow.style.height = h + 'px';
+    snow.style.setProperty('--h', h + 'px');
+  }
+  if (embers) {
+    embers.style.height = h + 'px';
+    embers.style.setProperty('--h', h + 'px');
+  }
+  // Christmas snow.
+  if (root.dataset.theme === 'christmas' && !fxOff && !reduced && snow) {
+    const n = window.innerWidth < 700 ? 22 : 40;
+    for (let i = 0; i < n; i++) {
+      const f = document.createElement('i');
+      const s = 2 + Math.random() * 2.5;
+      f.style.cssText = `left:${Math.random() * 100}%;width:${s}px;height:${s}px;opacity:${0.5 + Math.random() * 0.4};animation-duration:${9 + Math.random() * 9}s;animation-delay:-${Math.random() * 18}s;--dx:${Math.random() * 50 - 25}px`;
+      snow.appendChild(f);
+    }
+  }
+  // Diwali embers.
+  if (root.dataset.theme === 'diwali' && !fxOff && !reduced && embers) {
+    const n = window.innerWidth < 700 ? 16 : 28;
+    for (let i = 0; i < n; i++) {
+      const f = document.createElement('i');
+      const s = 2 + Math.random() * 1.5;
+      f.style.cssText = `left:${Math.random() * 100}%;width:${s}px;height:${s}px;animation-duration:${9 + Math.random() * 8}s;animation-delay:-${Math.random() * 16}s;--dx:${Math.random() * 40 - 20}px`;
+      embers.appendChild(f);
+    }
   }
 }
 
