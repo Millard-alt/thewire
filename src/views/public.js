@@ -1483,12 +1483,27 @@ export async function openArticle(id) {
  * @param {string[]} urls
  */
 function renderArticlePhotoStrip(urls) {
-  if (!urls.length) return '';
+  // `article.extraImages` is stored as an array of `{ url, caption }` objects,
+  // but older callers (and the editor) may hand over bare URL strings. Accept
+  // both shapes so the gallery never silently drops a photograph because of a
+  // binding mismatch.
+  const list = (Array.isArray(urls) ? urls : [])
+    .map((entry) =>
+      typeof entry === 'string'
+        ? entry
+        : entry && typeof entry === 'object'
+          ? entry.url || entry.src || entry.path || entry.publicUrl || ''
+          : ''
+    )
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+
+  if (!list.length) return '';
 
   return `
     <section class="article-photos" aria-label="More photographs from this story">
       <h3 class="rule-soft mb-3 mt-8 border-t pt-4 font-headline text-xs font-bold tracking-[0.18em] uppercase ink-muted">
-        ${urls.length} more photograph${urls.length === 1 ? '' : 's'}
+        ${list.length} more photograph${list.length === 1 ? '' : 's'}
       </h3>
 
       <button
@@ -1499,7 +1514,7 @@ function renderArticlePhotoStrip(urls) {
         aria-controls="article-photo-panel"
       >
         <span class="article-photos__thumbs" aria-hidden="true">
-          ${urls
+          ${list
             .map(
               (url) =>
                 `<img src="${escapeHtml(safeUrl(url) || BLANK_IMAGE)}" ${imageFallbackAttr(BLANK_IMAGE)} alt="" loading="lazy" decoding="async" />`
@@ -1513,7 +1528,7 @@ function renderArticlePhotoStrip(urls) {
       </button>
 
       <div class="article-photos__grid" id="article-photo-panel" data-photo-panel="strip" hidden>
-        ${urls
+        ${list
           .map(
             (url, index) => `
             <figure class="article-photos__item">
