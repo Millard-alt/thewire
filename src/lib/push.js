@@ -1156,7 +1156,7 @@ export async function pollOnce() {
 
     let query = client
       .from('broadcasts')
-      .select('id,title,message,audience,created_at')
+      .select('id,title,message,audience,created_at,pushed_at')
       .order('created_at', { ascending: false })
       .limit(newestSeen ? NEW_BROADCAST_LIMIT : SEED_LIMIT);
 
@@ -1200,10 +1200,19 @@ export async function pollOnce() {
     markSeen(key);
     if (seen.size === 0) continue;
 
+    // A row that was already pushed by Web Push has (or will) reach this
+    // device through the service worker, which shows its own notification.
+    // Raising it again here would stack a second notification on top of the
+    // first. Web Push is the authoritative channel whenever it was used, so
+    // the poller's only job for such a row is to record it as seen. In-app
+    // delivery (pushed_at still null) is the only case that needs a local popup.
+    const wasPushed = Boolean(row.pushed_at);
+    if (wasPushed) continue;
+
     const delivered = await deliverLocally({
       title: row.title || 'The Pulse',
       body: row.message || '',
-      tag: `broadcast-${key}`,
+      tag: `wire-${key}`,
       url: config.notificationTargetUrl || '/',
       // An emergency alarm stays on screen; a routine bulletin can be dismissed.
       requireInteraction: row.audience === 'Emergency'

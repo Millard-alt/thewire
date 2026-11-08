@@ -2714,6 +2714,7 @@ export async function createBroadcast(input) {
 
     const inserted = assertOk(result, 'create broadcast');
     broadcast.id = inserted.id;
+    broadcast.created_at = inserted.created_at || null;
   }
 
   current.notifications.history = [
