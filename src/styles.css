@@ -2610,6 +2610,10 @@ class because the ratio is the whole point.
 .about-card--carousel .about-card__photo {
   width: 52px;
   height: 52px;
+  /* The base rule's 56px minimum is for the desktop grid; without relaxing it
+     here the smaller width silently cannot apply (measured 56 on a phone). */
+  min-width: 52px;
+  min-height: 52px;
   border-radius: 50%;
 }
 
@@ -3693,8 +3697,12 @@ class because the ratio is the whole point.
 .fa{animation:fa 2.6s ease-in-out infinite}.fb{animation:fa 3.1s ease-in-out -1.2s infinite}
 @keyframes fa{0%,100%{opacity:1}50%{opacity:.78}}
 .embers{position:absolute;left:0;right:0;top:0;overflow:hidden;pointer-events:none;z-index:3;--h:300px;--ember:#FFD27A;-webkit-mask-image:linear-gradient(transparent,#000 40%);mask-image:linear-gradient(transparent,#000 40%)}
-.embers i{position:absolute;bottom:0;border-radius:50%;background:var(--ember);animation:rise linear infinite;will-change:transform}
-@keyframes rise{0%{transform:translate3d(0,0,0);opacity:0}15%{opacity:.9}100%{transform:translate3d(var(--dx,0),calc(var(--h) * -1),0);opacity:0}}
+.embers i{position:absolute;bottom:0;border-radius:50%;background:var(--ember);animation:dw-rise linear infinite;will-change:transform}
+/* The site already defines @keyframes rise (the reveal-on-boot animation, which
+   must END at opacity 1). The mockup's embers keyframes end at opacity 0 and
+   would hijack that name, blanking the whole publication view, so they get a
+   Diwali-scoped name here. Do not rename back to plain `rise`. */
+@keyframes dw-rise{0%{transform:translate3d(0,0,0);opacity:0}15%{opacity:.9}100%{transform:translate3d(var(--dx,0),calc(var(--h) * -1),0);opacity:0}}
 [data-off~=fx] .fa,[data-off~=fx] .fb{animation:none}
 @media (max-width:900px){.rg{display:none}}
 @media (max-width:700px){.hero.hd .k{display:none}.hero.hd .h{font-size:20px}.hero.hd .t{padding-top:12px}}
