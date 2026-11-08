@@ -103,9 +103,15 @@ function renderSnow() {
   if (snow) snow.innerHTML = '';
   if (embers) embers.innerHTML = '';
   const root = document.documentElement;
-  const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const fxOff = String(root.dataset.off || '').includes('fx');
-  const mast = document.querySelector('.masthead-bar');
+  const mast =
+    typeof document.querySelector === 'function'
+      ? document.querySelector('.masthead-bar')
+      : null;
   const h = mast ? mast.offsetTop + mast.offsetHeight : 300;
   if (snow) {
     snow.style.height = h + 'px';
@@ -117,7 +123,7 @@ function renderSnow() {
   }
   // Christmas snow.
   if (root.dataset.theme === 'christmas' && !fxOff && !reduced && snow) {
-    const n = window.innerWidth < 700 ? 22 : 40;
+    const n = typeof window !== 'undefined' && window.innerWidth < 700 ? 22 : 40;
     for (let i = 0; i < n; i++) {
       const f = document.createElement('i');
       const s = 2 + Math.random() * 2.5;
@@ -127,7 +133,7 @@ function renderSnow() {
   }
   // Diwali embers.
   if (root.dataset.theme === 'diwali' && !fxOff && !reduced && embers) {
-    const n = window.innerWidth < 700 ? 16 : 28;
+    const n = typeof window !== 'undefined' && window.innerWidth < 700 ? 16 : 28;
     for (let i = 0; i < n; i++) {
       const f = document.createElement('i');
       const s = 2 + Math.random() * 1.5;
