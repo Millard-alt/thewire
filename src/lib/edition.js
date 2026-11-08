@@ -1,0 +1,203 @@
+/* =============================================================================
+   src/lib/edition.js — PUBLISHED EDITION CONTROLLER
+   -----------------------------------------------------------------------------
+   Dark/light mode (src/lib/theme.js) is independent. This module owns only the
+   editorial edition: which theme is published, its options, caching and DOM
+   application. Preview state never touches the published cache.
+   ========================================================================== */
+
+import { getSupabase } from './supabase.js';
+import { normaliseThemeId, sanitizeThemeOptions, isValidThemeId } from './themes.js';
+
+export const EDITION_STORAGE_KEY = 'wire.edition';
+export const EDITION_OPTIONS_STORAGE_KEY = 'wire.edition.options';
+export const EDITION_CHANGE_EVENT = 'wire:editionchange';
+
+const ALLOWED = ['default', 'christmas', 'sports', 'diwali'];
+
+function safeParseJson(value) {
+  try {
+    return value ? JSON.parse(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getCachedEdition() {
+  try {
+    const theme = normaliseThemeId(localStorage.getItem(EDITION_STORAGE_KEY));
+    const options = sanitizeThemeOptions(theme, safeParseJson(localStorage.getItem(EDITION_OPTIONS_STORAGE_KEY)));
+    return { theme, options };
+  } catch {
+    return { theme: 'default', options: {} };
+  }
+}
+
+export function cacheEdition(themeId, options) {
+  const theme = normaliseThemeId(themeId);
+  const clean = sanitizeThemeOptions(theme, options);
+  try {
+    localStorage.setItem(EDITION_STORAGE_KEY, theme);
+    localStorage.setItem(EDITION_OPTIONS_STORAGE_KEY, JSON.stringify(clean));
+  } catch {
+    /* storage unavailable */
+  }
+  return { theme, options: clean };
+}
+
+export function clearCachedEdition() {
+  try {
+    localStorage.removeItem(EDITION_STORAGE_KEY);
+    localStorage.removeItem(EDITION_OPTIONS_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function applyEdition(themeId, options, { updateCache = false } = {}) {
+  const theme = normaliseThemeId(themeId);
+  const clean = sanitizeThemeOptions(theme, options);
+  const root = document.documentElement;
+  console.log('[edition] applyEdition', theme, clean);
+  root.dataset.theme = theme;
+  root.dataset.edition = theme;
+  // Load Sports-only font on demand.
+  if (typeof document !== 'undefined') {
+    const existing = document.getElementById('sports-font');
+    if (theme === 'sports' && !existing) {
+      const link = document.createElement('link');
+      link.id = 'sports-font';
+      link.rel = 'stylesheet';
+      link.href = 'https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@1,800&display=swap';
+      document.head.appendChild(link);
+    }
+    if (theme !== 'sports' && existing) existing.remove();
+  }
+  const off = [];
+  if (clean.hero === false) off.push('hero');
+  if (clean.ornaments === false) off.push('orn');
+  if (clean.label === false) off.push('label');
+  if (clean.motion === false) off.push('fx');
+  root.dataset.off = off.join(' ');
+  // Keep option flags available to scoped CSS/decorations.
+  Object.keys(clean).forEach((key) => {
+    root.dataset[`edition${key.charAt(0).toUpperCase()}${key.slice(1)}`] = String(clean[key]);
+  });
+  // Christmas snow (utility bar + masthead only).
+  if (typeof document !== 'undefined' && typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => renderSnow());
+  } else if (typeof document !== 'undefined') {
+    renderSnow();
+  }
+  if (updateCache) cacheEdition(theme, clean);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(EDITION_CHANGE_EVENT, { detail: { theme, options: clean } }));
+  }
+  return { theme, options: clean };
+}
+
+function renderSnow() {
+  if (typeof document === 'undefined') return;
+  const snow = document.getElementById('snow');
+  const embers = document.getElementById('embers');
+  if (snow) snow.innerHTML = '';
+  if (embers) embers.innerHTML = '';
+  const root = document.documentElement;
+  const reduced =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const fxOff = String(root.dataset.off || '').includes('fx');
+  const mast =
+    typeof document.querySelector === 'function'
+      ? document.querySelector('.masthead-bar')
+      : null;
+  const h = mast ? mast.offsetTop + mast.offsetHeight : 300;
+  if (snow) {
+    snow.style.height = h + 'px';
+    snow.style.setProperty('--h', h + 'px');
+  }
+  if (embers) {
+    embers.style.height = h + 'px';
+    embers.style.setProperty('--h', h + 'px');
+  }
+  // Christmas snow.
+  if (root.dataset.theme === 'christmas' && !fxOff && !reduced && snow) {
+    const n = typeof window !== 'undefined' && window.innerWidth < 700 ? 22 : 40;
+    for (let i = 0; i < n; i++) {
+      const f = document.createElement('i');
+      const s = 2 + Math.random() * 2.5;
+      f.style.cssText = `left:${Math.random() * 100}%;width:${s}px;height:${s}px;opacity:${0.5 + Math.random() * 0.4};animation-duration:${9 + Math.random() * 9}s;animation-delay:-${Math.random() * 18}s;--dx:${Math.random() * 50 - 25}px`;
+      snow.appendChild(f);
+    }
+  }
+  // Diwali embers.
+  if (root.dataset.theme === 'diwali' && !fxOff && !reduced && embers) {
+    const n = typeof window !== 'undefined' && window.innerWidth < 700 ? 16 : 28;
+    for (let i = 0; i < n; i++) {
+      const f = document.createElement('i');
+      const s = 2 + Math.random() * 1.5;
+      f.style.cssText = `left:${Math.random() * 100}%;width:${s}px;height:${s}px;animation-duration:${9 + Math.random() * 8}s;animation-delay:-${Math.random() * 16}s;--dx:${Math.random() * 40 - 20}px`;
+      embers.appendChild(f);
+    }
+  }
+}
+
+export function applyCachedEdition() {
+  const cached = getCachedEdition();
+  return applyEdition(cached.theme, cached.options, { updateCache: false });
+}
+
+/** Fetch the published edition from Supabase (view only). Returns null on failure/timeout/missing. */
+export async function fetchPublishedEdition(timeoutMs = 800) {
+  const client = getSupabase();
+  if (!client) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const query = client
+      .from('site_theme_public')
+      .select('published_theme,published_options')
+      .limit(1)
+      .maybeSingle();
+    // supabase-js doesn't accept abort signal directly in older versions; race instead.
+    const result = await Promise.race([
+      query,
+      new Promise((resolve) => setTimeout(() => resolve({ data: null, error: new Error('timeout') }), timeoutMs))
+    ]);
+    clearTimeout(timer);
+    if (!result || result.error || !result.data) return null;
+    const theme = normaliseThemeId(result.data.published_theme);
+    const options = sanitizeThemeOptions(theme, result.data.published_options);
+    return { theme, options };
+  } catch {
+    clearTimeout(timer);
+    return null;
+  }
+}
+
+/** Publish (owner). Writes to site_theme; caller must be owner (RLS). */
+export async function publishEdition(themeId, options) {
+  const theme = normaliseThemeId(themeId);
+  const clean = sanitizeThemeOptions(theme, options);
+  const client = getSupabase();
+  if (!client) {
+    // Demo mode: cache + apply only.
+    cacheEdition(theme, clean);
+    return applyEdition(theme, clean, { updateCache: true });
+  }
+  const { error } = await client
+    .from('site_theme')
+    .upsert({ id: 1, published_theme: theme, published_options: clean }, { onConflict: 'id' });
+  if (error) throw error;
+  cacheEdition(theme, clean);
+  return applyEdition(theme, clean, { updateCache: true });
+}
+
+export async function restoreDefault() {
+  return publishEdition('default', {});
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', () => requestAnimationFrame(renderSnow));
+}

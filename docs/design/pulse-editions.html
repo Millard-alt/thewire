@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Pulse — Edition Design Spec</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@1,800&amp;family=Playfair+Display:wght@700;900&amp;family=Source+Serif+4:wght@400;600&amp;display=swap" rel="stylesheet">
+<style>
+:root{--c-bg:#e4e2dd;--c-ink:#1a1a1a;--c-card:#fff;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--c-bg:#1c1c1e;--c-ink:#eee;--c-card:#2a2a2d}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--c-bg);color:var(--c-ink);font:15px/1.5 system-ui,sans-serif;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+.ctl{display:flex;flex-wrap:wrap;gap:8px 20px;padding:12px 16px;background:var(--c-card);border-bottom:1px solid #8883;position:sticky;top:0;z-index:5;align-items:center}
+.ctl b{font-size:12px;opacity:.7}
+.ctl button{font:inherit;padding:6px 12px;border:1px solid #888;background:transparent;color:inherit;cursor:pointer;border-radius:4px}
+.ctl button[aria-pressed=true]{background:var(--c-ink);color:var(--c-bg)}
+.ctl label{display:flex;gap:6px;align-items:center;font-size:13px}
+.ctl :focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+
+/* ===== TOKENS ===== */
+/* masthead tokens default to the page tokens; light modes override them with a dark masthead */
+[data-ed][data-mode]{--mast-bg:var(--bg);--mast-ink:var(--ink);--mast-muted:var(--muted);--mast-accent:var(--accent);--mast-stamp:var(--accent2);--mast-line:var(--line);--mast-orn:var(--orn);--mast-berry:var(--berry)}
+#stage{--serif:'Source Serif 4',Georgia,serif;--disp:'Playfair Display',Georgia,serif}
+[data-ed=xmas][data-mode=light]{--bg:#F6F7F3;--surface:#FFFFFF;--ink:#14261C;--muted:#46564C;--accent:#9B1B30;--accent2:#14261C;--rule:#17382A;--line:#DDE2DA;--nav-bg:#FFFFFF;--nav-ink:#14261C;--brk-bg:#9B1B30;--brk-ink:#FFFFFF;--btn-bg:#9B1B30;--btn-ink:#FFFFFF;--link:#9B1B30;--hero-bg:#17382A;--hero-ink:#F7F3E6;--orn:#17382A;--berry:#9B1B30;--gold:#C9A24D;--mast-bg:#17382A;--mast-ink:#F7F3E6;--mast-muted:#B9C9BE;--mast-accent:#E2C27A;--mast-stamp:#E2C27A;--mast-line:#2D5240;--mast-orn:#C9A24D;--mast-berry:#E0707F}
+[data-ed=xmas][data-mode=dark]{--bg:#101A15;--surface:#17241D;--ink:#EFE8D6;--muted:#A9B3A8;--accent:#D9B25C;--accent2:#D9B25C;--rule:#C9A24D;--line:#2A3A30;--nav-bg:#0B120E;--nav-ink:#EFE8D6;--brk-bg:#8E2A38;--brk-ink:#FBF8F0;--btn-bg:#D9B25C;--btn-ink:#101A15;--link:#D9B25C;--hero-bg:#1B3A2B;--hero-ink:#EFE8D6;--orn:#C9A24D;--berry:#C65A68;--gold:#C9A24D}
+[data-ed=sports][data-mode=light]{--bg:#EEF1F5;--surface:#FFFFFF;--ink:#0B1626;--muted:#44536A;--accent:#BE3C08;--accent2:#0B1626;--rule:#0B1626;--line:#D3D9E2;--nav-bg:#FFFFFF;--nav-ink:#0B1626;--brk-bg:#0B1626;--brk-ink:#FFFFFF;--btn-bg:#BE3C08;--btn-ink:#FFFFFF;--link:#BE3C08;--hero-bg:#C8420A;--hero-ink:#FFFFFF;--orn:#BE3C08;--berry:#BE3C08;--gold:#BE3C08;--mast-bg:#0B1E3A;--mast-ink:#FFFFFF;--mast-muted:#A9B8D0;--mast-accent:#FF8A4C;--mast-stamp:#FFFFFF;--mast-line:#1E3558}
+[data-ed=sports][data-mode=dark]{--bg:#0A1220;--surface:#121C2E;--ink:#F2F4F7;--muted:#9FB0C8;--accent:#FF7A3D;--accent2:#F2F4F7;--rule:#F2F4F7;--line:#2A3A55;--nav-bg:#060C17;--nav-ink:#F2F4F7;--brk-bg:#E8590C;--brk-ink:#0A1220;--btn-bg:#FF7A3D;--btn-ink:#0A1220;--link:#FF7A3D;--hero-bg:#B93A0E;--hero-ink:#FFFFFF;--orn:#FF7A3D;--berry:#FF7A3D;--gold:#FF7A3D}
+
+/* ===== SHARED STRUCTURE (identical in every edition) ===== */
+#stage{position:relative;background:var(--bg);color:var(--ink);font-family:var(--serif);max-width:1280px;margin:0 auto}
+.util{display:flex;justify-content:space-between;gap:12px;padding:9px 16px;font:600 11px/1 var(--serif);letter-spacing:.12em;text-transform:uppercase;color:var(--mast-muted);background:var(--mast-bg);border-bottom:1px solid var(--mast-line)}
+.mast{position:relative;text-align:center;padding:22px 16px 20px;background:var(--mast-bg);color:var(--mast-ink)}
+.brand{display:flex;justify-content:center;align-items:center;gap:16px}
+.brand h1{font:900 clamp(38px,7vw,64px)/1 var(--disp);letter-spacing:.02em;margin:0;text-transform:uppercase}
+.sub{font:700 11px/1 var(--serif);letter-spacing:.25em;margin-top:8px;text-transform:uppercase}
+.tag{font:700 11px/1.4 var(--serif);letter-spacing:.14em;color:var(--mast-accent);margin-top:10px;text-transform:uppercase}
+.date{font:11px/1.4 ui-monospace,Menlo,monospace;color:var(--mast-muted);margin-top:4px;text-transform:uppercase}
+nav{display:flex;align-items:center;gap:26px;padding:0 16px;height:52px;background:var(--nav-bg);color:var(--nav-ink)}
+nav a{font:700 11px/1 var(--serif);letter-spacing:.08em;text-transform:uppercase;color:inherit;text-decoration:none}
+nav .sp1{flex:1}
+.pill{width:38px;height:20px;border-radius:10px;background:var(--accent);position:relative}
+.pill::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--surface)}
+.login{background:var(--btn-bg);color:var(--btn-ink);font:800 11px/1 var(--serif);letter-spacing:.06em;padding:11px 14px;text-transform:uppercase}
+.bars{display:none;width:20px;height:2px;background:currentColor;box-shadow:0 6px currentColor,0 -6px currentColor}
+.brk{display:flex;gap:14px;align-items:center;padding:10px 16px;background:var(--brk-bg);color:var(--brk-ink);font:700 11px/1.3 var(--serif);letter-spacing:.06em;text-transform:uppercase}
+.brk i{font-style:normal;background:var(--brk-ink);color:var(--brk-bg);padding:3px 7px;font-weight:800;font-size:10px}
+.hero{position:relative;height:140px;overflow:hidden;background:var(--hero-bg);color:var(--hero-ink)}
+.hero svg.bg{position:absolute;inset:0;width:100%;height:100%}
+main{padding:28px 16px 36px}
+.eyebrow{font:800 11px/1 var(--serif);letter-spacing:.2em;color:var(--accent);text-transform:uppercase;display:flex;align-items:center;gap:8px}
+h2{font:900 clamp(28px,4vw,40px)/1.05 var(--disp);text-transform:uppercase;margin:8px 0 12px}
+.rule{position:relative;border-top:1px solid var(--rule);margin-bottom:20px}
+.grid{display:grid;gap:16px;grid-template-columns:1fr 1fr}
+.card{background:var(--surface);border:1px solid var(--line);padding:18px}
+.card h3{font:700 20px/1.2 var(--disp);margin:0 0 10px}
+.by{display:flex;align-items:center;gap:10px;font:800 11px/1 var(--serif);letter-spacing:.1em;color:var(--accent);text-transform:uppercase;margin-bottom:10px}
+.av{width:28px;height:28px;border-radius:50%;background:var(--line)}
+.card p{margin:0;color:var(--muted);line-height:1.6}
+
+/* ===== EDITION LAYER ===== */
+[data-ed=xmas] .sp,[data-ed=sports] .xm{display:none!important}
+/* Christmas */
+[data-ed=xmas] .card{border-radius:2px;border-top:4px double var(--rule)}
+[data-ed=xmas] .login{border-radius:2px}
+[data-ed=xmas] nav{border-bottom:2px solid var(--gold)}
+.spr{position:absolute;top:22px;width:130px;height:44px;color:var(--mast-orn);--berry:var(--mast-berry)}
+.spr.l{left:20px}.spr.r{right:20px;transform:scaleX(-1)}
+.stamp{display:inline-block;margin-top:12px;padding:5px 12px;border:3px double var(--mast-stamp);color:var(--mast-stamp);font:700 11px/1.2 var(--disp);letter-spacing:.22em;text-transform:uppercase}
+[data-ed=xmas] .rule .holly{position:absolute;left:50%;top:-12px;transform:translateX(-50%);width:68px;height:24px;padding:0 10px;background:var(--bg);color:var(--orn);box-sizing:content-box}
+.hero.x{border-bottom:0}
+.hero.x .t{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 12%}
+.hero.x .k{font:700 11px/1 var(--disp);letter-spacing:.3em;color:var(--gold);text-transform:uppercase}
+.hero.x .h{font:700 italic 34px/1.1 var(--disp);margin-top:8px}
+.hero.x .s{font:400 14px/1.3 var(--serif);margin-top:6px;opacity:.9}
+/* Sports */
+[data-ed=sports]{--sd:'Barlow Condensed','Arial Narrow',Impact,sans-serif}
+[data-ed=sports] h2,[data-ed=sports] .brand h1~*{font-family:var(--sd)}
+[data-ed=sports] h2{font:800 italic clamp(34px,5vw,50px)/1 var(--sd);letter-spacing:.01em}
+[data-ed=sports] .card h3{font:800 italic 26px/1.05 var(--sd);text-transform:uppercase}
+[data-ed=sports] .card{border-radius:0;border-left:4px solid var(--accent)}
+[data-ed=sports] .login{border-radius:0}
+[data-ed=sports] nav{border-bottom:4px solid var(--accent)}
+[data-ed=sports] .rule{border-top:4px solid var(--rule)}
+[data-ed=sports] .rule::before{content:"";position:absolute;left:0;top:-4px;width:64px;height:4px;background:var(--accent)}
+.bib{position:relative;display:inline-block;background:#fff;color:#0E1A2B;border:2px solid #0E1A2B;padding:3px 12px;font:800 italic 14px/1.2 var(--sd,'Barlow Condensed',sans-serif);letter-spacing:.08em;text-transform:uppercase}
+.bib::before,.bib::after{content:"";position:absolute;top:3px;width:3px;height:3px;border-radius:50%;background:#0E1A2B}
+.bib::before{left:3px}.bib::after{right:3px}
+.hero.s .t{position:absolute;left:64px;top:0;bottom:0;display:flex;flex-direction:column;justify-content:center;gap:8px;align-items:flex-start}
+.hero.s .h{background:#0E1A2B;color:#fff;padding:4px 16px;transform:skewX(-10deg);font:800 italic 40px/1.05 var(--sd);letter-spacing:.02em;text-transform:uppercase}
+.hero.s .h span{display:inline-block;transform:skewX(10deg)}
+.hero .m{display:none}
+/* Motion effects: Christmas snowfall, Sports speed streak */
+.snow{position:absolute;left:0;right:0;top:0;overflow:hidden;pointer-events:none;z-index:3;--h:300px;-webkit-mask-image:linear-gradient(#000 65%,transparent);mask-image:linear-gradient(#000 65%,transparent)}
+.snow{--flake:#F2F5F0}
+.snow i{position:absolute;top:0;border-radius:50%;background:var(--flake);animation:fall linear infinite;will-change:transform}
+@keyframes fall{from{transform:translate3d(0,-8px,0)}to{transform:translate3d(var(--dx,0),var(--h),0)}}
+.hero.s .t{z-index:1}
+.hero.s::after{content:"";position:absolute;top:0;bottom:0;left:-140px;width:90px;background:linear-gradient(100deg,transparent,rgba(255,255,255,.35),transparent);transform:skewX(-20deg);animation:dash 7s ease-in-out infinite;pointer-events:none}
+@keyframes dash{0%,65%{left:-140px}100%{left:105%}}
+@media (prefers-reduced-motion:reduce){.snow,.hero.s::after{display:none!important}}
+/* Optional-effect switches */
+[data-off~=fx] .snow,[data-off~=fx] .hero.s::after{display:none!important}
+[data-off~=hero] .hero,[data-off~=label] .stamp,[data-off~=label] .bib.top,[data-off~=orn] .orn{display:none!important}
+[data-off~=orn][data-ed=sports] .rule::before{display:none}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width:900px){.spr{display:none}nav a.l{display:none}.bars{display:block}nav .t{flex:1;text-align:center;font-family:var(--disp);font-size:15px}}
+@media (max-width:700px){.grid{grid-template-columns:1fr}.hero{height:84px}.hero .d{display:none}.hero .m{display:block}
+.hero.x .h{font-size:20px;margin-top:5px}.hero.x .s,.hero.x .k{display:none}.hero.x .hs{display:none}
+.hero.s .t{left:36px}.hero.s .h{font-size:24px;padding:2px 10px}.hero.s .bib{font-size:11px}.util span:last-child{display:none}.brand h1{font-size:34px}.crest{width:46px;height:46px}.brk span.x2{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ===== SPEC PANEL ===== */
+.spec{max-width:1280px;margin:0 auto;padding:24px 16px 48px}
+.spec h4{margin:28px 0 8px;font-size:16px}
+.sw{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.sw div{border:1px solid #8886;background:var(--c-card);padding:6px;font:12px/1.3 ui-monospace,monospace}
+.sw i{display:block;height:26px;margin-bottom:5px;border:1px solid #8886}
+table{border-collapse:collapse;width:100%;font-size:13px;background:var(--c-card)}
+td,th{border:1px solid #8886;padding:6px 8px;text-align:left}
+.ok{color:#15803d;font-weight:700}.no{color:#b91c1c;font-weight:700}
+.spec ul{margin:6px 0;padding-left:20px}.spec li{margin:3px 0}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+ <defs>
+  <symbol id="sprig" viewBox="0 0 120 40"><path d="M4 20H112M16 20l8-12M16 20l8 12M30 20l8-12M30 20l8 12M44 20l8-12M44 20l8 12M58 20l8-12M58 20l8 12M72 20l8-12M72 20l8 12M86 20l8-12M86 20l8 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><g fill="var(--berry)"><circle cx="102" cy="20" r="3.6"/><circle cx="110" cy="14" r="3.6"/><circle cx="110" cy="26" r="3.6"/></g></symbol>
+  <symbol id="holly" viewBox="0 0 64 24"><g fill="currentColor"><path d="M32 12C28 3 18 2 8 8c4 1 4 5 0 6 5 1 6 4 4 8 8-1 16-3 20-10z"/><path d="M32 12C36 3 46 2 56 8c-4 1-4 5 0 6-5 1-6 4-4 8-8-1-16-3-20-10z"/></g><g fill="var(--berry)"><circle cx="28" cy="13" r="3"/><circle cx="36" cy="13" r="3"/><circle cx="32" cy="18" r="3"/></g></symbol>
+ </defs>
+</svg>
+
+<div class="ctl" role="toolbar" aria-label="Preview controls">
+ <b>EDITION</b>
+ <span><button data-k="ed" data-v="xmas" aria-pressed="true">Christmas</button> <button data-k="ed" data-v="sports" aria-pressed="false">Sports</button></span>
+ <b>MODE</b>
+ <span><button data-k="mode" data-v="light" aria-pressed="true">Light</button> <button data-k="mode" data-v="dark" aria-pressed="false">Dark</button></span>
+ <b>OPTIONAL EFFECTS (off = still complete)</b>
+ <label><input type="checkbox" data-off="hero" checked> Hero banner</label>
+ <label><input type="checkbox" data-off="orn" checked> Ornaments</label>
+ <label><input type="checkbox" data-off="label" checked> Edition label</label>
+ <label><input type="checkbox" data-off="fx" checked> Motion effect</label>
+</div>
+
+<div id="stage" data-ed="xmas" data-mode="light" data-off="">
+ <div class="snow xm" id="snow" aria-hidden="true"></div>
+ <div class="util"><span>Nakuru, Kenya</span><span>Independent verified dispatches</span></div>
+
+ <header class="mast">
+  <svg class="spr l orn xm" aria-hidden="true"><use href="#sprig"/></svg>
+  <svg class="spr r orn xm" aria-hidden="true"><use href="#sprig"/></svg>
+  <div class="brand">
+   <!-- PLACEHOLDER: use the real lion crest, unaltered -->
+   <svg class="crest" width="64" height="64" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="30" fill="#1c3a6e" stroke="#b08d4a" stroke-width="3"/><text x="32" y="37" text-anchor="middle" font-size="13" font-weight="700" fill="#e9d9a8" font-family="Georgia,serif">MJLA</text></svg>
+   <h1>The Pulse</h1>
+  </div>
+  <div class="sub">Melvin Jones Press Club</div>
+  <div class="tag">MJLA Press Club · Independent verified dispatches</div>
+  <div class="date">Nakuru, Kenya · Wednesday, 21 October 2026</div>
+  <div class="stamp xm">Christmas Edition</div>
+  <div class="bib sp top">Sports Edition</div>
+ </header>
+
+ <nav aria-label="Main">
+  <span class="bars" aria-hidden="true"></span>
+  <a class="l" href="#">Latest</a><a class="l" href="#">Assignments</a><a class="l" href="#">Videos</a><a class="l" href="#">Podcasts</a><a class="l" href="#">Photo gallery</a><a class="l" href="#">Credits</a><a class="l" href="#">About us</a>
+  <a class="t" href="#" style="display:none"></a>
+  <span class="sp1"></span><span class="pill" aria-hidden="true"></span><span class="login">Press login</span>
+ </nav>
+
+ <div class="brk"><i>Breaking</i><span>MJLA Press Club launches sovereign editorial control suite</span><span class="x2" style="margin-left:auto">Full administrative controls are live across the newsroom.</span></div>
+
+ <!-- HERO — placement: directly under the breaking bar, homepage only. 140px desktop / 84px mobile -->
+ <section class="hero x xm" aria-hidden="true">
+  <svg class="bg" viewBox="0 0 1200 140" preserveAspectRatio="xMidYMid slice"><rect x="10" y="10" width="1180" height="120" fill="none" stroke="var(--gold)" stroke-width="1"/><rect x="16" y="16" width="1168" height="108" fill="none" stroke="var(--gold)" stroke-width=".5"/>
+   <g class="hs" color="var(--gold)" style="--berry:#C65A68"><use href="#sprig" x="40" y="48" width="240" height="80"/><g transform="translate(1200 0) scale(-1 1)"><use href="#sprig" x="40" y="48" width="240" height="80"/></g></g></svg>
+  <div class="t"><div class="k">The holiday edition</div><div class="h">Stories from Nakuru this season</div><div class="s">Reported by the club, December 2026</div></div>
+ </section>
+ <section class="hero s sp" aria-hidden="true">
+  <svg class="bg d" viewBox="0 0 1200 140" preserveAspectRatio="xMidYMid slice"><defs><pattern id="ck1" width="16" height="16" patternUnits="userSpaceOnUse"><rect width="16" height="16" fill="#fff"/><rect width="8" height="8" fill="#0E1A2B"/><rect x="8" y="8" width="8" height="8" fill="#0E1A2B"/></pattern></defs>
+   <g fill="none" stroke="#fff" stroke-width="2.5" opacity=".9"><path d="M0 28C420 28 800 4 1200-16"/><path d="M0 56C420 56 800 32 1200 12"/><path d="M0 84C420 84 800 60 1200 40"/><path d="M0 112C420 112 800 88 1200 68"/><path d="M0 140C420 140 800 116 1200 96"/></g>
+   <g fill="#fff" opacity=".85" font-family="'Barlow Condensed',sans-serif" font-style="italic" font-weight="800" font-size="16"><text x="20" y="48">1</text><text x="20" y="76">2</text><text x="20" y="104">3</text><text x="20" y="132">4</text></g>
+   <rect x="1120" y="0" width="32" height="140" fill="url(#ck1)"/><rect x="1152" y="0" width="4" height="140" fill="#fff"/></svg>
+  <svg class="bg m" viewBox="0 0 400 84" preserveAspectRatio="xMidYMid slice"><defs><pattern id="ck2" width="10" height="10" patternUnits="userSpaceOnUse"><rect width="10" height="10" fill="#fff"/><rect width="5" height="5" fill="#0E1A2B"/><rect x="5" y="5" width="5" height="5" fill="#0E1A2B"/></pattern></defs>
+   <g fill="none" stroke="#fff" stroke-width="2" opacity=".9"><path d="M0 8C140 8 270 0 400-6"/><path d="M0 27C140 27 270 19 400 13"/><path d="M0 46C140 46 270 38 400 32"/><path d="M0 65C140 65 270 57 400 51"/><path d="M0 84C140 84 270 76 400 70"/></g>
+   <g fill="#fff" opacity=".85" font-family="'Barlow Condensed',sans-serif" font-style="italic" font-weight="800" font-size="11"><text x="10" y="22">1</text><text x="10" y="41">2</text><text x="10" y="60">3</text><text x="10" y="79">4</text></g>
+   <rect x="366" y="0" width="20" height="84" fill="url(#ck2)"/><rect x="386" y="0" width="3" height="84" fill="#fff"/></svg>
+  <div class="t"><div class="h"><span>On the final straight</span></div></div>
+ </section>
+
+ <main>
+  <div class="eyebrow"><svg class="orn sp" width="14" height="10" viewBox="0 0 14 10" aria-hidden="true"><path d="M1 1l4 4-4 4M7 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2"/></svg>Listen</div>
+  <h2>Latest podcasts</h2>
+  <div class="rule"><svg class="holly orn xm" aria-hidden="true"><use href="#holly"/></svg></div>
+  <div class="grid">
+   <article class="card"><h3>Interview: the coach behind three championships</h3><div class="by"><span class="av"></span>Amara K.</div><p>Unrecorded in demo mode — the player needs a real uploaded MP3.</p></article>
+   <article class="card"><h3>Season opener: what the county budget actually says</h3><div class="by"><span class="av"></span>The Pulse staff</div><p>The Chair, the line items, and the three numbers worth arguing about.</p></article>
+  </div>
+ </main>
+</div>
+
+<section class="spec" aria-label="Design spec">
+ <h4>Tokens (live from the preview above)</h4><div class="sw" id="sw"></div>
+ <h4>Contrast (WCAG AA needs 4.5:1 for text; computed live)</h4><table id="ct"></table>
+
+ <div class="xm-spec" id="xs">
+  <h4>Christmas Edition — rules</h4>
+  <ul>
+   <li><b>Concept:</b> a holiday issue of a broadsheet. Light mode inverts the masthead: evergreen masthead and hero on a cool white page, white nav, burgundy for the breaking bar and actions, gold only as fine rules and ornaments. Dark mode keeps the masthead on the dark page. The one memorable device is the sprig-flanked hero with a double gold keyline.</li>
+   <li><b>Cards:</b> radius 2px, 1px border <code>--line</code>, 4px double <code>--rule</code> top edge. <b>Section header:</b> eyebrow, Playfair 900 uppercase, 1px rule with a centered holly mark. <b>Nav:</b> white bar in light mode (near-black in dark), 2px gold underline. <b>Breaking bar:</b> burgundy. <b>Buttons:</b> burgundy (light) or gold (dark), radius 2px.</li>
+   <li><b>Placement:</b> sprig corners in the masthead (desktop only, hidden under 900px); holly divider on homepage section headers only; edition stamp under the dateline; hero between the breaking bar and content, homepage only. Not used on article pages, cards, forms, the Owners Panel or the footer. Mobile hero drops the sprigs and keeps the keylines and headline.</li>
+   <li><b>Optional switches:</b> hero banner, ornaments (sprigs and holly), edition stamp, snowfall. With all four off, the evergreen/burgundy/gold palette, double-rule cards and gold-underlined nav still read as a Christmas edition.</li>
+  </ul>
+ </div>
+ <div class="sp-spec" id="ss">
+  <h4>Sports Edition — rules</h4>
+  <ul>
+   <li><b>Concept:</b> the sports section of a serious paper. Navy and clay with white lane lines. One extra font: Barlow Condensed 800 italic, used only for headlines and the bib label; body stays Source Serif 4. The memorable device is the hero: curved lane lines, lane numbers 1 to 4, a checkered finish line, and the headline on a skewed navy slab.</li>
+   <li><b>Cards:</b> radius 0, 4px clay left bar. <b>Section header:</b> double-chevron eyebrow mark, Barlow italic uppercase, 4px ink rule with a 64px clay lead segment. <b>Nav:</b> white bar in light mode (deep navy in dark), 4px clay underline. <b>Breaking bar:</b> navy in light mode, clay in dark. <b>Masthead:</b> navy in light mode, so the clay hero is the only large clay block. <b>Buttons:</b> clay, radius 0. <b>Label:</b> white race-bib chip with two pin dots.</li>
+   <li><b>Placement:</b> the track appears only in the hero. Chevron mark and clay rule segment only on homepage section headers. Not used behind sections, on article pages, forms, the Owners Panel or the footer. Mobile hero swaps to a dedicated 400×84 track SVG.</li>
+   <li><b>Optional switches:</b> hero banner, ornaments (chevrons and clay segment), bib label, speed streak. With all four off, the navy/clay palette, italic condensed headlines, square cards and clay-underlined nav remain.</li>
+  </ul>
+ </div>
+
+ <h4>Both editions</h4>
+ <ul>
+  <li><b>Photo slot (optional):</b> hero 1200×140 desktop and 400×84 mobile (about 8.6:1 and 4.8:1), focal point centered, covered by a 55% <code>--hero-bg</code> overlay so hero text stays at 4.5:1. The edition works without a photo.</li>
+  <li><b>Motion:</b> Christmas: 40 small flakes (22 on mobile) drift down over the utility bar and masthead only and fade out before the nav, so the breaking bar, hero banner and content are never touched. Flakes are 2 to 4.5px, 50 to 90% opacity, 9 to 18s per fall, pointer-events none. Sports: one soft white streak sweeps the hero lanes every 7s. Both are removed under <code>prefers-reduced-motion</code> and by the Motion effect switch.</li>
+  <li><b>Logo:</b> the crest is a placeholder here. Use the real file, never recolored.</li>
+  <li><b>Fonts:</b> Playfair Display and Source Serif 4 as on the live site; Barlow Condensed (Sports only) is the single addition. Load it only when Sports is active.</li>
+ </ul>
+ <h4>Default: small refinements only</h4>
+ <ul>
+  <li>Fix “ABOUT US” colliding with “MORE” at 768px: collapse overflow links into “More” before they touch, and reserve space for it.</li>
+  <li>Tighten the vertical gap between the breaking bar and the notification banner, and give section eyebrows and headings one spacing scale.</li>
+  <li>Keep all existing colors; change nothing else.</li>
+ </ul>
+</section>
+
+<script>
+const st=document.getElementById('stage');
+const T=['bg','surface','ink','muted','accent','accent2','rule','line','nav-bg','nav-ink','brk-bg','brk-ink','btn-bg','btn-ink','link','hero-bg','hero-ink','orn','berry','gold','mast-bg','mast-ink','mast-muted','mast-accent','mast-stamp','mast-line'];
+const P=[['ink','bg','Body text'],['muted','bg','Muted text'],['ink','surface','Card text'],['muted','surface','Card muted text'],['accent','bg','Eyebrow'],['accent','surface','Author label'],['nav-ink','nav-bg','Nav links'],['brk-ink','brk-bg','Breaking bar'],['btn-ink','btn-bg','Button'],['hero-ink','hero-bg','Hero text'],['mast-ink','mast-bg','Masthead title'],['mast-muted','mast-bg','Masthead dateline'],['mast-accent','mast-bg','Masthead tagline']];
+const lum=h=>{const c=[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255).map(v=>v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4));return .2126*c[0]+.7152*c[1]+.0722*c[2]};
+const ratio=(a,b)=>{const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
+function spec(){
+ const cs=getComputedStyle(st),g=k=>cs.getPropertyValue('--'+k).trim();
+ document.getElementById('sw').innerHTML=T.map(k=>`<div><i style="background:${g(k)}"></i>--${k}<br>${g(k)}</div>`).join('');
+ document.getElementById('ct').innerHTML='<tr><th>Pair</th><th>Colors</th><th>Ratio</th></tr>'+P.map(([a,b,n])=>{const r=ratio(g(a),g(b));return `<tr><td>${n}</td><td>${g(a)} on ${g(b)}</td><td class="${r>=4.5?'ok':'no'}">${r.toFixed(2)} ${r>=4.5?'pass':'fail'}</td></tr>`}).join('');
+ document.getElementById('xs').style.display=st.dataset.ed==='xmas'?'':'none';
+ document.getElementById('ss').style.display=st.dataset.ed==='sports'?'':'none';
+}
+function off(){st.dataset.off=[...document.querySelectorAll('[data-off]')].filter(i=>i.type==='checkbox'&&!i.checked).map(i=>i.dataset.off).join(' ')}
+document.querySelectorAll('button[data-k]').forEach(b=>b.onclick=()=>{st.dataset[b.dataset.k]=b.dataset.v;document.querySelectorAll(`button[data-k=${b.dataset.k}]`).forEach(x=>x.setAttribute('aria-pressed',x===b));spec()});
+document.querySelectorAll('input[data-off]').forEach(i=>i.onchange=off);
+const snow=document.getElementById('snow');
+const n=innerWidth<700?22:40;
+for(let i=0;i<n;i++){const f=document.createElement('i'),s=2+Math.random()*2.5;
+ f.style.cssText=`left:${Math.random()*100}%;width:${s}px;height:${s}px;opacity:${.5+Math.random()*.4};animation-duration:${9+Math.random()*9}s;animation-delay:-${Math.random()*18}s;--dx:${Math.random()*50-25}px`;snow.appendChild(f)}
+function snowH(){const m=document.querySelector('.mast'),v=m.offsetTop+m.offsetHeight;snow.style.height=v+'px';snow.style.setProperty('--h',v+'px')}
+addEventListener('resize',snowH);document.querySelectorAll('button,input').forEach(e=>e.addEventListener('click',()=>requestAnimationFrame(snowH)));
+addEventListener('load',snowH);snowH();
+spec();
+</script>
+</body>
+</html>

@@ -18,6 +18,8 @@
    ========================================================================== */
 
 import * as store from '../lib/store.js';
+import { publishEdition, restoreDefault as restoreEditionDefault, applyEdition, cacheEdition, getCachedEdition } from '../lib/edition.js';
+import { normaliseThemeId, sanitizeThemeOptions, THEME_IDS } from '../lib/themes.js';
 import {
   signOut,
   isAdmin,
@@ -95,6 +97,12 @@ let contentFilter = 'all';
 // never 'Pending Review', so sharing one filter would make every row vanish when
 // the Owner switched tabs.
 let interviewFilter = 'all';
+let themeDraft = null;
+// Exposed for inline onchange handlers on the theme radios.
+window.__setThemeDraft = (value) => {
+  themeDraft = value;
+  paintActiveTab();
+};
 // Ids being edited, and the video rows staged in the editor.
 let editingInterviewId = null;
 let interviewVideoDraft = [];
@@ -2394,6 +2402,114 @@ function renderBrandingTab() {
           <button type="submit" class="btn btn-accent">Save branding</button>
         </div>
       </form>
+    </div>
+  `;
+}
+
+function renderThemesTab() {
+  /*
+    The live published edition is what the site itself booted with: app.js
+    overwrites the edition cache with the server row on every load, and
+    publishEdition()/restoreDefault() refresh it the moment a publish
+    succeeds. store state never tracks the edition, so reading it from
+    `state` here printed 'default' forever.
+  */
+  const published = getCachedEdition().theme || 'default';
+  if (!themeDraft) themeDraft = published;
+  const draftTheme = themeDraft;
+  const draftOptions = getCachedEdition().options || {};
+  const selectedOptions = sanitizeThemeOptions(draftTheme, draftOptions);
+
+  const optionDefs = {
+    christmas: [
+      { key: 'hero', label: 'Hero banner', desc: 'Festive hero between the breaking bar and content' },
+      { key: 'ornaments', label: 'Ornaments', desc: 'Masthead sprigs and holly dividers' },
+      { key: 'label', label: 'Edition label', desc: 'Christmas Edition stamp under the dateline' },
+      { key: 'motion', label: 'Snowfall', desc: 'Snow over the utility bar and masthead' }
+    ],
+    sports: [
+      { key: 'hero', label: 'Hero banner', desc: 'Track hero between the breaking bar and content' },
+      { key: 'ornaments', label: 'Ornaments', desc: 'Chevron marks and clay rule segment' },
+      { key: 'label', label: 'Edition label', desc: 'Sports Edition bib under the dateline' },
+      { key: 'motion', label: 'Speed streak', desc: 'Animated streak across the hero' }
+    ],
+    diwali: [
+      { key: 'hero', label: 'Hero banner', desc: 'Festival hero between the breaking bar and content' },
+      { key: 'ornaments', label: 'Ornaments', desc: 'Rangoli marks beside the masthead' },
+      { key: 'label', label: 'Edition label', desc: 'Diwali Edition stamp under the dateline' },
+      { key: 'motion', label: 'Embers & flames', desc: 'Rising ember particles and the diya flame flicker' }
+    ]
+  };
+  const defs = optionDefs[draftTheme] || [];
+  /* Name the draft in the empty-state message: "No optional effects for
+     Default." used to be hardcoded, which lied whenever a theme WITHOUT
+     optional effects was drafted -- and hid the real bug (diwali simply had
+     no defs at all and showed this same line). */
+  const noOptionsMsg = `<span class="ink-muted text-xs">No optional effects for ${escapeHtml(draftTheme)}.</span>`;
+  const opts = defs
+    .map((d) => {
+      const checked = selectedOptions[d.key] !== false ? 'checked' : '';
+      return `<label class="flex items-start gap-2 text-xs"><input type="checkbox" data-theme-option="${d.key}" ${checked} /> <span><strong>${escapeHtml(d.label)}</strong><br /><span class="ink-muted">${escapeHtml(d.desc)}</span></span></label>`;
+    })
+    .join('');
+  const optsJson = encodeURIComponent(JSON.stringify(selectedOptions));
+  const previewWidth = '1280';
+  const previewSrc = `/?preview=1&theme=${draftTheme}&options=${optsJson}&mode=light`;
+
+  const themeCards = ['default', 'christmas', 'sports', 'diwali']
+    .map((id) => {
+      const selected = id === draftTheme ? 'checked' : '';
+      return `
+        <label class="panel-raised flex cursor-pointer items-center gap-3 p-4">
+          <input type="radio" name="draft-theme" value="${id}" ${selected} onchange="__setThemeDraft(this.value)" />
+          <span class="font-semibold uppercase">${id}</span>
+        </label>
+      `;
+    })
+    .join('');
+
+  return `
+    <div class="space-y-5">
+      ${panelHeader('Website Themes', 'Preview, publish and restore editorial editions')}
+
+      <div class="panel-raised p-4">
+        <p class="text-xs ink-muted">Currently published: <strong>${escapeHtml(published)}</strong></p>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <button type="button" class="btn btn-accent" data-action="theme-publish">Publish selected theme</button>
+        <button type="button" class="btn btn-ghost" data-action="theme-restore-default">Restore Default</button>
+      </div>
+
+      <div class="grid gap-3 sm:grid-cols-3">${themeCards}</div>
+
+      <div class="panel-raised space-y-2 p-4">
+        <p class="text-xs font-semibold uppercase">Options</p>
+        <div class="flex flex-wrap gap-4">${opts || noOptionsMsg}</div>
+      </div>
+
+      <div class="panel-raised space-y-3 p-4">
+        <p class="text-xs font-semibold uppercase">Preview</p>
+        <div class="flex flex-wrap gap-2">
+          <select id="theme-preview-route" class="field">
+            <option value="/">Home</option>
+            <option value="/about">About</option>
+          </select>
+          <select id="theme-preview-mode" class="field">
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+          <select id="theme-preview-width" class="field">
+            <option value="360">Mobile (360)</option>
+            <option value="768">Tablet (768)</option>
+            <option value="1280" selected>Desktop (1280)</option>
+          </select>
+          <button type="button" class="btn btn-ghost" data-action="theme-preview-refresh">Refresh preview</button>
+        </div>
+        <div id="theme-preview-wrapper" style="position:relative;overflow:hidden;width:100%;height:600px;">
+          <iframe id="theme-preview-frame" src="${previewSrc}" style="width:1280px;height:800px;border:1px solid var(--rule-soft);transform-origin:top left;"></iframe>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -5281,6 +5397,7 @@ const TABS = [
   { id: 'credits', label: 'Credits', icon: 'fa-id-badge', render: renderCreditsTab, ownerOnly: true },
   { id: 'changelog', label: 'Changelog', icon: 'fa-clock-rotate-left', render: renderChangelogTab, ownerOnly: true },
   { id: 'branding', label: 'Branding', icon: 'fa-font', render: renderBrandingTab, ownerOnly: true },
+  { id: 'themes', label: 'Website Themes', icon: 'fa-palette', render: renderThemesTab, ownerOnly: true },
   { id: 'media', label: 'Media', icon: 'fa-images', render: renderMediaTab, minRole: 'Writer' },
   { id: 'security', label: 'Security', icon: 'fa-shield-halved', render: renderSecurityTab, ownerOnly: true }
 ];
@@ -5407,7 +5524,8 @@ function bindFilePickers() {
     episode. Choosing either clears the other, so the submitted audio is always
     the one they last pointed at.
   */
-  // Credits roster photos
+  // Credits roster photos: the file input has no paired URL field, so upload
+  // directly and persist the resulting URL through updatePerson.
   document.querySelectorAll('[data-credits-photo]').forEach((fileInput) => {
     if (fileInput.dataset.bound === 'true') return;
     fileInput.dataset.bound = 'true';
@@ -5420,7 +5538,10 @@ function bindFilePickers() {
       try {
         const { url } = await uploadImage(file);
         const result = await updatePerson(personId, { portrait_url: url });
-        if (!result.ok) { showToast(result.message, { type: 'error' }); return; }
+        if (!result.ok) {
+          showToast(result.message, { type: 'error' });
+          return;
+        }
         await refreshCreditsPeople();
         paintActiveTab();
         showToast('Photo uploaded.', { type: 'success' });
@@ -6399,6 +6520,11 @@ function handleChange(event) {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
 
+  if (target.name === 'draft-theme') {
+    paintActiveTab();
+    return;
+  }
+
   /* --- Broadcast audience -> reveal the "Specific User" picker ------------
      This is the only thing that reveals #broadcast-target-wrap. Without it the
      picker stays `hidden` for good and the Owner has no way to aim a
@@ -7110,6 +7236,8 @@ export async function sendBroadcastFromForm(form) {
 async function guard(action) {
   try {
     await action();
+    // Keep the panel in sync with the database after every successful mutation
+    // so the Owner never has to reload the page to see a change.
     paintActiveTab();
   } catch (error) {
     console.error('[admin]', error);
@@ -8404,8 +8532,65 @@ case 'gallery-category-delete': {
       });
       break;
 
-    /* --- account approvals --- */
-    case 'accounts-refresh':
+    case 'theme-preview-refresh': {
+      const frame = byId('theme-preview-frame');
+      const wrapper = byId('theme-preview-wrapper');
+      if (!frame) break;
+      const theme = document.querySelector('input[name="draft-theme"]:checked')?.value || 'default';
+      const opts = {};
+      document.querySelectorAll('[data-theme-option]').forEach((cb) => {
+        opts[cb.dataset.themeOption] = cb.checked;
+      });
+      const clean = sanitizeThemeOptions(theme, opts);
+      const route = byId('theme-preview-route')?.value || '/';
+      const mode = byId('theme-preview-mode')?.value || 'light';
+      const width = Number(byId('theme-preview-width')?.value || 1280);
+      const src = `${route}?preview=1&theme=${theme}&options=${encodeURIComponent(JSON.stringify(clean))}&mode=${mode}`;
+      frame.src = src;
+      frame.style.width = width + 'px';
+      const scale = (wrapper?.clientWidth || width) / width;
+      frame.style.transform = `scale(${scale})`;
+      if (wrapper) wrapper.style.height = Math.round(800 * scale) + 'px';
+      break;
+    }
+
+    case 'theme-publish': {
+      const theme = document.querySelector('input[name="draft-theme"]:checked')?.value || 'default';
+      const opts = {};
+      document.querySelectorAll('[data-theme-option]').forEach((cb) => {
+        opts[cb.dataset.themeOption] = cb.checked;
+      });
+      const clean = sanitizeThemeOptions(theme, opts);
+      const current = getCachedEdition().theme || 'default';
+      if (!window.confirm(`Publish theme "${theme}" (replacing "${current}")?`)) break;
+      guard(async () => {
+        /*
+          publishEdition is the whole save: it upserts the owner-only
+          `site_theme` row (RLS-checked server side), refreshes the edition
+          cache and applies the theme locally. There is deliberately no
+          store-level save here -- `store.savePublishedTheme` never existed,
+          and Rollup compiled that call to `(void 0)(...)`, which threw
+          "TypeError: (void 0) is not a function" on click in production.
+        */
+        await publishEdition(theme, clean);
+        window.dispatchEvent(new Event('wire:settings-changed'));
+        paintActiveTab();
+        showToast(`Published theme: ${theme}`, { type: 'success' });
+      });
+      break;
+    }
+
+    case 'theme-restore-default': {
+      if (!window.confirm('Restore Default theme now?')) break;
+      guard(async () => {
+        /* Same as theme-publish: restoreDefault() alone is the save. */
+        await restoreEditionDefault();
+        window.dispatchEvent(new Event('wire:settings-changed'));
+        paintActiveTab();
+        showToast('Restored Default theme.', { type: 'success' });
+      });
+      break;
+    }
       guard(async () => {
         await reloadAccounts();
         showToast('Account list refreshed.', { type: 'success' });
@@ -8461,5 +8646,3 @@ case 'gallery-category-delete': {
       console.warn('[admin] unhandled action', action);
   }
 }
-
-

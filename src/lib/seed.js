@@ -336,6 +336,12 @@ export function createSeedState() {
         time: 'Just now'
       }
     ]
+    /* publishedTheme/publishedOptions deliberately absent: the seed once
+       hardwired them to 'default', and the merge spread that over every
+       hydrate, making the post-hydrate reconcile force-reset a live site's
+       published theme back to Default after every refresh. The published
+       edition has exactly one authority -- the site_theme row on Supabase
+       (edition.js) -- and nothing else may even appear to hold one. */
   };
 }
 

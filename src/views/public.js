@@ -42,10 +42,11 @@ import { listPodcasts } from '../lib/podcasts.js';
  * @param {{tag?: string, cls?: string, suffix?: string}} [opts]
  */
 function renderByline(article, opts = {}) {
-  return bylineSticker(
-    (typeof article?.author === 'string' ? article.author : article?.author?.full_name || 'The Pulse staff'),
-    {
-      ...opts,
+  // The byline is the article's author NAME. bylineSticker normalises both the
+  // plain-string and the hydrated {full_name, avatar_url} shapes; the account
+  // pointer may never resolve the face, it names whoever operated the CMS.
+  return bylineSticker(article?.author, {
+    ...opts,
       portrait:
         opts.portrait ||
         article?.authorPhotoUrl ||
@@ -150,8 +151,8 @@ export function renderBreakingBanner() {
   // Owner could fill them in and see no change. See renderBreakingTab().
   slot.innerHTML = `
     <div
-      class="emergency-pulse text-white no-print"
-      style="background: ${accent}"
+      class="emergency-pulse no-print"
+      style="background: var(--brk-bg); color: var(--brk-ink)"
       role="region"
       aria-label="Breaking news"
     >
@@ -159,7 +160,7 @@ export function renderBreakingBanner() {
         class="mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 text-[0.6875rem] font-bold tracking-[0.12em] uppercase"
       >
         <span class="badge badge-live shrink-0"
-          style="background: #fff; color: ${accent}">${severity}</span>
+          style="background: #fff; color: var(--brk-bg)">${severity}</span>
         <strong class="min-w-0 flex-1 truncate">${escapeHtml(banner.headline)}</strong>
         ${
           escapeHtml(banner.subtext)
@@ -211,7 +212,7 @@ function articleCard(article, { showBody = false, size = 'md' } = {}) {
   return `
     <article
       id="article-${escapeHtml(article.id)}"
-      class="panel-raised group flex h-full flex-col overflow-hidden"
+       class="panel-raised edition-card group flex h-full flex-col overflow-hidden"
     >
       <a href="${href}" class="block overflow-hidden" tabindex="-1" aria-hidden="true">
         <img
@@ -259,11 +260,17 @@ captionText(article.caption)
 /** A section heading with the newspaper double rule beneath it. */
 function sectionHeading(id, kicker, title) {
     return `
-      <div class="mb-5 rule border-b-2 border-double pb-3">
-        ${kicker ? `<p class="accent-text text-[0.625rem] font-bold tracking-[0.24em] uppercase">${escapeHtml(kicker)}</p>` : ''}
+      <div class="mb-5">
+        ${kicker ? `<p class="accent-text text-[0.625rem] font-bold tracking-[0.24em] uppercase"><span class="dia orn dw mr-1" aria-hidden="true"></span>${escapeHtml(kicker)}</p>` : ''}
         <h2 id="${escapeHtml(id)}" class="font-headline text-2xl font-black tracking-wide uppercase md:text-3xl">
           ${escapeHtml(title)}
         </h2>
+        <div class="rule">
+          <span class="rule-line"></span>
+          <svg class="holly orn xm" width="68" height="24" viewBox="0 0 64 24" aria-hidden="true"><use href="#holly"/></svg>
+          <span class="rule-line"></span>
+        </div>
+         <div class="band orn dw"></div>
       </div>
     `;
   }
@@ -395,6 +402,15 @@ function statusBadge(status) {
 export function renderPublication() {
   const view = byId('publication-view');
   if (!view) return;
+  if (view.dataset.rendering === '1') {
+    // A render pass is already running (its DOM write is atomic and synchronous,
+    // but something may call us from inside that pass). Relay the pending call:
+    // when the running pass finishes it re-renders once with the newest state.
+    view.dataset.rerender = '1';
+    return;
+  }
+  view.dataset.rendering = '1';
+  try {
 
   const published = store.listPublishedArticles();
 
@@ -477,6 +493,10 @@ view.innerHTML = `
   document.querySelectorAll('a.nav-link[href="#weekly"]').forEach((link) => {
     link.hidden = showThisWeek === false;
   });
+   } catch (err) { console.error('[renderPublication] FAILED', err); view.dataset.rendering = '0'; return; }
+   view.dataset.rendering = '0';
+   view.dataset.rendered = '1';
+   if (view.dataset.rerender === '1') { view.dataset.rerender = '0'; setTimeout(() => renderPublication(), 0); }
 
   /*
     Kick off the podcast strip AFTER the markup is in place, and do not await it.
@@ -2131,7 +2151,8 @@ function initNavigation() {
     // Below the drawer breakpoint every item measures 0 (the list is display:none)
     // and "More" stays hidden -- the drawer is the answer there, not a menu.
     const toolsWidth = bar.querySelector('.nav-bar__tools')?.offsetWidth || 0;
-    const available = bar.clientWidth - toolsWidth - 32; // 32 = bar padding
+    const moreWidth = 80; // reserve space for the "More" control
+    const available = bar.clientWidth - toolsWidth - moreWidth - 32; // 32 = bar padding
 
     if (neededWidth() <= available) {
       // Everything fits. Hide "More" entirely rather than offering a menu with
@@ -2207,4 +2228,3 @@ function initNavigation() {
       subtree: true
     });
 }
-

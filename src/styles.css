@@ -73,6 +73,8 @@
     /* The nav underline accent. A variable rather than a `.dark .nav-link::after`
        override, so the hover rule below never has to be restated per theme. */
     --nav-underline: var(--color-newsred);
+    --brk-bg: var(--color-newsred);
+    --brk-ink: #ffffff;
     color-scheme: light;
   }
 
@@ -92,8 +94,59 @@
     --accent-contrast: #1a0d0b;
     --overlay: rgb(0 0 0 / 0.8);
     --nav-underline: var(--color-newsgold-bright);
+    --brk-bg: var(--color-newsred);
+    --brk-ink: #ffffff;
     color-scheme: dark;
   }
+
+  :root { --mast-bg: var(--surface); --mast-ink: var(--text); --mast-muted: var(--text-muted); --mast-accent: var(--accent); --mast-stamp: var(--accent); --mast-line: var(--rule-soft); --mast-orn: var(--accent); --mast-berry: var(--accent); }
+  /* Editorial edition token overrides (layered over light/dark). */
+  /* Christmas */
+  [data-theme='christmas'] {
+    --bg: #F6F7F3; --surface: #FFFFFF; --ink: #14261C; --muted: #46564C; --accent: #9B1B30; --accent2: #14261C; --rule: #17382A; --line: #DDE2DA; --nav-bg: #FFFFFF; --nav-ink: #14261C; --brk-bg: #9B1B30; --brk-ink: #FFFFFF; --btn-bg: #9B1B30; --btn-ink: #FFFFFF; --link: #9B1B30; --hero-bg: #17382A; --hero-ink: #F7F3E6; --orn: #17382A; --berry: #9B1B30; --gold: #C9A24D;
+    --mast-bg: #17382A; --mast-ink: #F7F3E6; --mast-muted: #B9C9BE; --mast-accent: #E2C27A; --mast-stamp: #E2C27A; --mast-line: #2D5240; --mast-orn: #C9A24D; --mast-berry: #E0707F;
+    /* mapped real tokens */
+    --color-paper: #F6F7F3; --color-paper-dark: #DDE2DA; --color-ink: #14261C; --color-ink-muted: #46564C; --color-newsred: #9B1B30; --color-newsgold: #C9A24D; --color-newsblue: #1c3f60;
+    --surface-raised: #FFFFFF; --surface-sunken: #DDE2DA; --surface-card: #FFFFFF; --surface-card-edge: #DDE2DA;
+    --text: #14261C; --text-muted: #46564C; --accent-contrast: #FFFFFF; --nav-underline: #9B1B30;
+  }
+  [data-theme='christmas'].dark {
+    --bg: #101A15; --surface: #17241D; --ink: #EFE8D6; --muted: #A9B3A8; --accent: #D9B25C; --accent2: #D9B25C; --rule: #C9A24D; --line: #2A3A30; --nav-bg: #0B120E; --nav-ink: #EFE8D6; --brk-bg: #8E2A38; --brk-ink: #FBF8F0; --btn-bg: #D9B25C; --btn-ink: #101A15; --link: #D9B25C; --hero-bg: #1B3A2B; --hero-ink: #EFE8D6; --orn: #C9A24D; --berry: #C65A68; --gold: #C9A24D;
+    --color-paper: #101A15; --color-paper-dark: #2A3A30; --color-ink: #EFE8D6; --color-ink-muted: #A9B3A8; --color-newsred: #D9B25C; --color-newsgold: #D9B25C; --color-newsblue: #8faec9;
+    --surface-raised: #17241D; --surface-sunken: #0B120E; --surface-card: #17241D; --surface-card-edge: #2A3A30;
+    --text: #EFE8D6; --text-muted: #A9B3A8; --accent-contrast: #101A15; --nav-underline: #D9B25C;
+  }
+  /* Sports */
+  [data-theme='sports'] {
+    --bg: #EEF1F5; --surface: #FFFFFF; --ink: #0B1626; --muted: #44536A; --accent: #BE3C08; --accent2: #0B1626; --rule: #0B1626; --line: #D3D9E2; --nav-bg: #FFFFFF; --nav-ink: #0B1626; --brk-bg: #0B1626; --brk-ink: #FFFFFF; --btn-bg: #BE3C08; --btn-ink: #FFFFFF; --link: #BE3C08; --hero-bg: #C8420A; --hero-ink: #FFFFFF; --orn: #BE3C08; --berry: #BE3C08; --gold: #BE3C08;
+    --mast-bg: #0B1E3A; --mast-ink: #FFFFFF; --mast-muted: #A9B8D0; --mast-accent: #FF8A4C; --mast-stamp: #FFFFFF; --mast-line: #1E3558; --mast-orn: #BE3C08; --mast-berry: #BE3C08;
+    --color-paper: #EEF1F5; --color-paper-dark: #D3D9E2; --color-ink: #0B1626; --color-ink-muted: #44536A; --color-newsred: #BE3C08; --color-newsgold: #BE3C08; --color-newsblue: #1c3f60;
+    --surface-raised: #FFFFFF; --surface-sunken: #D3D9E2; --surface-card: #FFFFFF; --surface-card-edge: #D3D9E2;
+    --text: #0B1626; --text-muted: #44536A; --accent-contrast: #FFFFFF; --nav-underline: #BE3C08;
+  }
+  [data-theme='sports'].dark {
+    --bg: #0A1220; --surface: #121C2E; --ink: #F2F4F7; --muted: #9FB0C8; --accent: #FF7A3D; --accent2: #F2F4F7; --rule: #F2F4F7; --line: #2A3A55; --nav-bg: #060C17; --nav-ink: #F2F4F7; --brk-bg: #E8590C; --brk-ink: #0A1220; --btn-bg: #FF7A3D; --btn-ink: #0A1220; --link: #FF7A3D; --hero-bg: #B93A0E; --hero-ink: #FFFFFF; --orn: #FF7A3D; --berry: #FF7A3D; --gold: #FF7A3D;
+    --color-paper: #0A1220; --color-paper-dark: #2A3A55; --color-ink: #F2F4F7; --color-ink-muted: #9FB0C8; --color-newsred: #FF7A3D; --color-newsgold: #FF7A3D; --color-newsblue: #8faec9;
+    --surface-raised: #121C2E; --surface-sunken: #060C17; --surface-card: #121C2E; --surface-card-edge: #2A3A55;
+    --text: #F2F4F7; --text-muted: #9FB0C8; --accent-contrast: #0A1220; --nav-underline: #FF7A3D;
+  }
+
+   /* Diwali */
+   [data-theme='diwali'] {
+     --bg: #FBF8F4; --surface: #FFFFFF; --ink: #241420; --muted: #5B4A55; --accent: #A8123A; --accent2: #241420; --rule: #2A1233; --line: #E8DDD6; --nav-bg: #FFFFFF; --nav-ink: #241420; --brk-bg: #A8123A; --brk-ink: #FFFFFF; --btn-bg: #A8123A; --btn-ink: #FFFFFF; --link: #A8123A; --hero-bg: #2A1233; --hero-ink: #FFF4E0; --orn: #C27400; --berry: #A8123A; --gold: #E8A33D; --flame: #F5B24A; --disp: var(--font-headline); --serif: var(--font-body);
+     --mast-bg: #2A1233; --mast-ink: #FFF4E0; --mast-muted: #CDB6C9; --mast-accent: #F5B24A; --mast-stamp: #F5B24A; --mast-line: #4A2A55; --mast-orn: #E8A33D; --mast-berry: #FFD27A;
+     --color-paper: #FBF8F4; --color-paper-dark: #E8DDD6; --color-ink: #241420; --color-ink-muted: #5B4A55; --color-newsred: #A8123A; --color-newsgold: #E8A33D; --color-newsblue: #1c3f60;
+     --surface-raised: #FFFFFF; --surface-sunken: #E8DDD6; --surface-card: #FFFFFF; --surface-card-edge: #E8DDD6;
+     --text: #241420; --text-muted: #5B4A55; --accent-contrast: #FFFFFF; --nav-underline: #A8123A;
+   }
+   [data-theme='diwali'].dark {
+     --bg: #150A1C; --surface: #1F1028; --ink: #FFF1DC; --muted: #C4AEBF; --accent: #F5B24A; --accent2: #F5B24A; --rule: #E8A33D; --line: #3A2447; --nav-bg: #0E0613; --nav-ink: #FFF1DC; --brk-bg: #B5174A; --brk-ink: #FFFFFF; --btn-bg: #F5B24A; --btn-ink: #1A0B12; --link: #F5B24A; --hero-bg: #2A1233; --hero-ink: #FFF1DC; --orn: #E8A33D; --berry: #F5B24A; --gold: #E8A33D; --flame: #F5B24A;
+     --color-paper: #150A1C; --color-paper-dark: #3A2447; --color-ink: #FFF1DC; --color-ink-muted: #C4AEBF; --color-newsred: #F5B24A; --color-newsgold: #E8A33D; --color-newsblue: #8faec9;
+     --surface-raised: #1F1028; --surface-sunken: #0E0613; --surface-card: #1F1028; --surface-card-edge: #3A2447;
+     --text: #FFF1DC; --text-muted: #C4AEBF; --accent-contrast: #1A0B12; --nav-underline: #F5B24A;
+   }
+
+  /* Base masthead tokens default to page tokens. */
 
   * {
     border-color: var(--rule-soft);
@@ -170,7 +223,22 @@
   }
 
   .rule {
-    border-color: var(--rule);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+    position: relative;
+  }
+  .rule-line {
+    flex: 1 1 auto;
+    height: 1px;
+    background: var(--rule);
+  }
+  .holly {
+    width: 68px;
+    height: 24px;
+    color: var(--orn);
+    flex: 0 0 auto;
   }
   .rule-soft {
     border-color: var(--rule-soft);
@@ -2542,6 +2610,10 @@ class because the ratio is the whole point.
 .about-card--carousel .about-card__photo {
   width: 52px;
   height: 52px;
+  /* The base rule's 56px minimum is for the desktop grid; without relaxing it
+     here the smaller width silently cannot apply (measured 56 on a phone). */
+  min-width: 52px;
+  min-height: 52px;
   border-radius: 50%;
 }
 
@@ -3493,5 +3565,232 @@ class because the ratio is the whole point.
     border: 1px dashed var(--surface-card-edge, #27272a);
     border-radius: 10px;
     padding: 1.5rem;
+  }
+}
+/* =====================================================================
+   EDITION LAYER (Stage B+) � per-edition component rules
+   ===================================================================== */
+[data-theme] .util-strip { background: var(--mast-bg); color: var(--mast-muted); border-color: var(--mast-line); }
+[data-theme] .util-strip .ink-muted { color: var(--mast-muted); }
+[data-theme] .masthead-bar { position: relative; background: var(--mast-bg); color: var(--mast-ink); border-color: var(--mast-line); }
+[data-theme] .masthead-bar .ink-muted { color: var(--mast-muted); }
+[data-theme] .masthead-bar .text-newsred { color: var(--mast-accent); }
+
+[data-theme="christmas"] nav { background: var(--nav-bg); color: var(--nav-ink); border-bottom: 2px solid var(--gold); }
+[data-theme="sports"] nav { background: var(--nav-bg); color: var(--nav-ink); border-bottom: 4px solid var(--accent); }
+
+[data-theme="christmas"] .edition-card,
+[data-theme="christmas"] .about-card,
+[data-theme="christmas"] .credits-card,
+[data-theme="christmas"] .podcast-card,
+[data-theme="christmas"] .gallery-card {
+  border-radius: 2px;
+  border-top: 4px double var(--rule);
+}
+[data-theme="sports"] .edition-card,
+[data-theme="sports"] .about-card,
+[data-theme="sports"] .credits-card,
+[data-theme="sports"] .podcast-card,
+[data-theme="sports"] .gallery-card {
+  border-radius: 0;
+  border-left: 4px solid var(--accent);
+}
+
+.edition-stamp, .edition-bib { display: none; }
+[data-theme="christmas"] .edition-stamp {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 5px 12px;
+  border: 3px double var(--mast-stamp);
+  color: var(--mast-stamp);
+  font: 700 11px/1.2 var(--font-headline);
+  letter-spacing: .22em;
+  text-transform: uppercase;
+}
+[data-theme="sports"] .edition-bib {
+  display: inline-block;
+  margin-top: 12px;
+  position: relative;
+  background: #fff;
+  color: #0E1A2B;
+  border: 2px solid #0E1A2B;
+  padding: 3px 12px;
+  font: 800 italic 14px/1.2 'Barlow Condensed', 'Arial Narrow', Impact, sans-serif;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+[data-theme="sports"] .edition-bib::before,
+[data-theme="sports"] .edition-bib::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #0E1A2B;
+}
+[data-theme="sports"] .edition-bib::before { left: 3px; }
+[data-theme="sports"] .edition-bib::after { right: 3px; }
+[data-off~='label'] .edition-stamp, [data-off~='label'] .edition-bib { display: none !important; }
+[data-off~='orn'][data-theme='christmas'] .masthead-bar { /* sprigs handled in Stage C */ }
+/* ===== EDITION HERO (Stage C/D) ===== */
+.hero { position: relative; height: 140px; overflow: hidden; background: var(--hero-bg); color: var(--hero-ink); }
+.hero svg.bg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.hero .t { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0 12%; z-index: 1; }
+.hero.x .k { font: 700 11px/1 var(--font-headline); letter-spacing: .3em; color: var(--gold); text-transform: uppercase; }
+.hero.x .h { font: 700 italic 34px/1.1 var(--font-headline); margin-top: 8px; }
+.hero.x .s { font: 400 14px/1.3 var(--font-body); margin-top: 6px; opacity: .9; }
+.hero.s .t { position: absolute; left: 64px; top: 0; bottom: 0; display: flex; flex-direction: column; justify-content: center; gap: 8px; align-items: flex-start; z-index: 1; }
+.hero.s .h { background: #0E1A2B; color: #fff; padding: 4px 16px; transform: skewX(-10deg); font: 800 italic 40px/1.05 'Barlow Condensed','Arial Narrow',Impact,sans-serif; letter-spacing: .02em; text-transform: uppercase; }
+.hero.s .h span { display: inline-block; transform: skewX(10deg); }
+.spr { position: absolute; top: 22px; width: 130px; height: 44px; color: var(--mast-orn); --berry: var(--mast-berry); }
+.spr.l { left: 20px; } .spr.r { right: 20px; transform: scaleX(-1); }
+.holly { position: absolute; left: 50%; top: -12px; transform: translateX(-50%); width: 68px; height: 24px; padding: 0 10px; background: var(--bg); color: var(--orn); box-sizing: content-box; }
+.snow { position: absolute; left: 0; right: 0; top: 0; overflow: hidden; pointer-events: none; z-index: 3; -webkit-mask-image: linear-gradient(#000 65%, transparent); mask-image: linear-gradient(#000 65%, transparent); }
+.snow { --flake: #F2F5F0; }
+.snow i { position: absolute; top: 0; border-radius: 50%; background: var(--flake); animation: fall linear infinite; will-change: transform; }
+@keyframes fall { from { transform: translate3d(0,-8px,0); } to { transform: translate3d(var(--dx,0), var(--h), 0); } }
+.hero.s::after { content: ""; position: absolute; top: 0; bottom: 0; left: -140px; width: 90px; background: linear-gradient(100deg, transparent, rgba(255,255,255,.35), transparent); transform: skewX(-20deg); animation: dash 7s ease-in-out infinite; pointer-events: none; }
+@keyframes dash { 0%,65% { left: -140px; } 100% { left: 105%; } }
+/* optional switches */
+[data-off~='hero'] #edition-hero, [data-off~='hero'] .hero { display: none !important; }
+[data-off~='orn'] .spr, [data-off~='orn'] .holly, [data-off~='orn'] .rg { display: none !important; }
+[data-off~='fx'] .snow, [data-off~='fx'] .hero.s::after, [data-off~='fx'] .embers { display: none !important; }
+/* responsive */
+@media (max-width: 900px) { .spr { display: none; } }
+@media (max-width: 700px) { .hero { height: 84px; } .hero.x .h { font-size: 20px; margin-top: 5px; } .hero.x .s, .hero.x .k { display: none; } .hero.s .t { left: 36px; } .hero.s .h { font-size: 24px; padding: 2px 10px; } }
+@media (prefers-reduced-motion: reduce) { .snow, .hero.s::after { display: none !important; } }
+[data-theme="christmas"] .sp { display: none !important; }
+[data-theme="sports"] .xm { display: none !important; }
+[data-theme="default"] .xm, [data-theme="default"] .sp, [data-theme="default"] .dw { display: none !important; }
+[data-theme="christmas"] .dw, [data-theme="sports"] .dw { display: none !important; }
+[data-theme="diwali"] .xm, [data-theme="diwali"] .sp { display: none !important; }
+[data-theme="sports"] .rule { border-top: 4px solid var(--rule); position: relative; }
+[data-theme="sports"] .rule::before { content: ""; position: absolute; left: 0; top: -4px; width: 64px; height: 4px; background: var(--accent); }
+[data-off~='orn'][data-theme='sports'] .rule::before { display: none !important; }
+
+[data-theme="sports"] h2, [data-theme="sports"] .edition-card h3 { font-family: 'Barlow Condensed','Arial Narrow',Impact,sans-serif; font-weight: 800; font-style: italic; text-transform: uppercase; }
+
+.hero .m { display: none; }
+@media (max-width: 700px) { .hero .d { display: none; } .hero .m { display: block; } }
+
+.nav-bar__more > button, .nav-bar__more button { font: 700 11px/1 var(--font-sans); letter-spacing: .08em; text-transform: uppercase; }
+
+@media (max-width: 700px) { .hero.x .hs { display: none; } }
+
+/* Diwali */
+[data-theme="diwali"] .card{border-radius:2px;border-top:3px solid var(--gold)}
+[data-theme="diwali"] .login{border-radius:2px}
+[data-theme="diwali"] nav{border-bottom:3px solid var(--gold)}
+.rg{position:absolute;top:24px;width:60px;height:60px;color:var(--mast-orn)}
+.rg.l{left:28px}.rg.r{right:28px}
+.stamp.dw{position:relative;padding:5px 20px}
+.stamp.dw::before,.stamp.dw::after{content:"";position:absolute;top:50%;width:7px;height:7px;background:var(--mast-stamp);transform:translateY(-50%) rotate(45deg)}
+.stamp.dw::before{left:-4px}.stamp.dw::after{right:-4px}
+.dia{display:inline-block;width:7px;height:7px;background:var(--accent);transform:rotate(45deg);flex:none}
+.band,.hb{height:10px;background:var(--orn);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='10'%3E%3Cpath d='M10 1l5 4-5 4-5-4z' fill='none' stroke='black'/%3E%3Ccircle cx='0' cy='5' r='1.2'/%3E%3Ccircle cx='20' cy='5' r='1.2'/%3E%3C/svg%3E") repeat-x;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='10'%3E%3Cpath d='M10 1l5 4-5 4-5-4z' fill='none' stroke='black'/%3E%3Ccircle cx='0' cy='5' r='1.2'/%3E%3Ccircle cx='20' cy='5' r='1.2'/%3E%3C/svg%3E") repeat-x}
+.hb{position:absolute;left:0;right:0;top:8px;background:var(--gold);opacity:.6}
+.rule .band{margin-top:4px}
+.hero.hd .t{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;padding-top:24px;text-align:center}
+.hero.hd .k{font:700 11px/1 var(--disp);letter-spacing:.3em;color:var(--gold);text-transform:uppercase}
+.hero.hd .h{font:900 30px/1.1 var(--disp);letter-spacing:.06em;text-transform:uppercase;margin-top:8px}
+.fa{animation:fa 2.6s ease-in-out infinite}.fb{animation:fa 3.1s ease-in-out -1.2s infinite}
+@keyframes fa{0%,100%{opacity:1}50%{opacity:.78}}
+.embers{position:absolute;left:0;right:0;top:0;overflow:hidden;pointer-events:none;z-index:3;--h:300px;--ember:#FFD27A;-webkit-mask-image:linear-gradient(transparent,#000 40%);mask-image:linear-gradient(transparent,#000 40%)}
+.embers i{position:absolute;bottom:0;border-radius:50%;background:var(--ember);animation:dw-rise linear infinite;will-change:transform}
+/* The site already defines @keyframes rise (the reveal-on-boot animation, which
+   must END at opacity 1). The mockup's embers keyframes end at opacity 0 and
+   would hijack that name, blanking the whole publication view, so they get a
+   Diwali-scoped name here. Do not rename back to plain `rise`. */
+@keyframes dw-rise{0%{transform:translate3d(0,0,0);opacity:0}15%{opacity:.9}100%{transform:translate3d(var(--dx,0),calc(var(--h) * -1),0);opacity:0}}
+[data-off~=fx] .fa,[data-off~=fx] .fb{animation:none}
+@media (max-width:900px){.rg{display:none}}
+@media (max-width:700px){.hero.hd .k{display:none}.hero.hd .h{font-size:20px}.hero.hd .t{padding-top:12px}}
+@media (prefers-reduced-motion:reduce){.embers{display:none!important}}
+
+[data-theme='diwali'] .btn-primary { background-color: var(--btn-bg); color: var(--btn-ink); }
+[data-theme='diwali'].dark .btn-primary { background-color: var(--btn-bg); color: var(--btn-ink); }
+
+
+
+[data-theme="diwali"] nav { background: var(--nav-bg); color: var(--nav-ink); border-bottom: 3px solid var(--gold); }
+[data-theme="diwali"] .edition-card,
+[data-theme="diwali"] .about-card,
+[data-theme="diwali"] .credits-card,
+[data-theme="diwali"] .podcast-card,
+[data-theme="diwali"] .gallery-card { border-radius: 2px; border: 1px solid var(--line); border-top: 3px solid var(--gold); }
+[data-theme="diwali"] .btn,
+[data-theme="diwali"] .btn-primary { background-color: var(--btn-bg); color: var(--btn-ink); border-radius: 2px; }
+[data-theme="diwali"] .edition-stamp { border: 1px solid var(--mast-stamp); padding: 5px 20px; position: relative; }
+
+/* --- Diwali control polish ---------------------------------------------------
+   The apparatus above gives every button the mockup's 2px editorial edge. That
+   is right for content slabs, but in the utility bar the sharp squares sit
+   beside the fully-rounded dark-mode switch (a 9999px pill) and read as
+   unfinished, not as an editorial choice. Rounded to the switch's own 9999px,
+   diwali only -- every other edition keeps its corners unpolished.
+   Same for the dispatch CTAs: other themes render .btn-quiet as a transparent
+   text link, where its `px-0` (hug the copy) is intentional. Diwali FILLS the
+   same button with the gold slab instead, so `px-0` left the text and its tiny
+   arrow glued to the edges of a filled block inside an overflow-hidden card,
+   which reads as cut off. Padding restores the breathing room.
+   These rules stay UNLAYERED on purpose, exactly like the block above: unlayered
+   declarations outrank Tailwind's utility layer, which is what lets the padding
+   here beat the CTA's `px-0`. No colors are introduced: backgrounds and inks
+   remain the mockup tokens set above (--btn-bg / --btn-ink). */
+[data-theme='diwali'] #open-search {
+  width: 2.125rem;
+  height: 2.125rem;
+  padding: 0;
+  border-radius: 9999px;
+  /* Quiet icon, not a gold slab: the apparatus's shared .btn fill turns this
+     34px disc into a solid gold circle whose margin around the magnifier reads
+     as a yellow ring on the dark nav. Transparent again, as on every other
+     edition's quiet button. */
+  background-color: transparent;
+  color: var(--text-muted);
+}
+[data-theme='diwali'] #auth-slot .btn {
+  border-radius: 9999px;
+}
+[data-theme='diwali'] .btn-quiet {
+  padding: 9px 16px;
+  border-radius: 9999px;
+  gap: 0.5rem;
+  line-height: 1;
+}
+
+/* --- Diwali nameplate centering ----------------------------------------------
+   The row centers [crest + heading] as one unit, so the heading itself sits
+   (crest + gap) / 2 right of the page axis while the organisation subtitle and
+   the dateline below center exactly on it (measured: 458.8px vs 406.8px).
+   The mockup's own .brand composes it the same off-axis way, but on the site
+   it reads as broken centering. Diwali-only fix: take the crest out of the
+   flow and hang it to the LEFT of the heading, so justify-center centers just
+   the heading and the whole nameplate stacks on one axis, crest flanking.
+   Pure geometry, no colors. Unlayered like the blocks above. Other editions
+   keep the unit-centered composition because every rule here is
+   [data-theme='diwali']-scoped and the wrapper's Tailwind classes replicate
+   the old row layout everywhere else. */
+[data-theme='diwali'] .masthead-brand {
+  position: relative;
+}
+[data-theme='diwali'] .masthead-brand img {
+  position: absolute;
+  right: calc(100% + 1rem);
+  top: 50%;
+  transform: translateY(-50%);
+}
+@media (min-width: 48rem) {
+  [data-theme='diwali'] .masthead-brand img { right: calc(100% + 1.5rem); }
+}
+/* Narrow phones: a 56px crest hung clear of the centered title clips its left
+   edge at 320px, so it steps down one size, mirroring the mockup's compact
+   crest at small widths. */
+@media (width < 24rem) {
+  [data-theme='diwali'] .masthead-brand img {
+    width: 2.75rem;
+    height: 2.75rem;
+    right: calc(100% + 0.5rem);
   }
 }

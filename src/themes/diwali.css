@@ -1,0 +1,25 @@
+/* Diwali */
+[data-theme="diwali"] .card{border-radius:2px;border-top:3px solid var(--gold)}
+[data-theme="diwali"] .login{border-radius:2px}
+[data-theme="diwali"] nav{border-bottom:3px solid var(--gold)}
+.rg{position:absolute;top:24px;width:60px;height:60px;color:var(--mast-orn)}
+.rg.l{left:28px}.rg.r{right:28px}
+.stamp.dw{position:relative;padding:5px 20px}
+.stamp.dw::before,.stamp.dw::after{content:"";position:absolute;top:50%;width:7px;height:7px;background:var(--mast-stamp);transform:translateY(-50%) rotate(45deg)}
+.stamp.dw::before{left:-4px}.stamp.dw::after{right:-4px}
+.dia{display:inline-block;width:7px;height:7px;background:var(--accent);transform:rotate(45deg);flex:none}
+.band,.hb{height:10px;background:var(--orn);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='10'%3E%3Cpath d='M10 1l5 4-5 4-5-4z' fill='none' stroke='black'/%3E%3Ccircle cx='0' cy='5' r='1.2'/%3E%3Ccircle cx='20' cy='5' r='1.2'/%3E%3C/svg%3E") repeat-x;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='10'%3E%3Cpath d='M10 1l5 4-5 4-5-4z' fill='none' stroke='black'/%3E%3Ccircle cx='0' cy='5' r='1.2'/%3E%3Ccircle cx='20' cy='5' r='1.2'/%3E%3C/svg%3E") repeat-x}
+.hb{position:absolute;left:0;right:0;top:8px;background:var(--gold);opacity:.6}
+.rule .band{margin-top:4px}
+.hero.hd .t{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;padding-top:24px;text-align:center}
+.hero.hd .k{font:700 11px/1 var(--disp);letter-spacing:.3em;color:var(--gold);text-transform:uppercase}
+.hero.hd .h{font:900 30px/1.1 var(--disp);letter-spacing:.06em;text-transform:uppercase;margin-top:8px}
+.fa{animation:fa 2.6s ease-in-out infinite}.fb{animation:fa 3.1s ease-in-out -1.2s infinite}
+@keyframes fa{0%,100%{opacity:1}50%{opacity:.78}}
+.embers{position:absolute;left:0;right:0;top:0;overflow:hidden;pointer-events:none;z-index:3;--h:300px;--ember:#FFD27A;-webkit-mask-image:linear-gradient(transparent,#000 40%);mask-image:linear-gradient(transparent,#000 40%)}
+.embers i{position:absolute;bottom:0;border-radius:50%;background:var(--ember);animation:rise linear infinite;will-change:transform}
+@keyframes rise{0%{transform:translate3d(0,0,0);opacity:0}15%{opacity:.9}100%{transform:translate3d(var(--dx,0),calc(var(--h) * -1),0);opacity:0}}
+[data-off~=fx] .fa,[data-off~=fx] .fb{animation:none}
+@media (max-width:900px){.rg{display:none}}
+@media (max-width:700px){.hero.hd .k{display:none}.hero.hd .h{font-size:20px}.hero.hd .t{padding-top:12px}}
+@media (prefers-reduced-motion:reduce){.embers{display:none!important}}

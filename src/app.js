@@ -27,7 +27,14 @@ import { config, describeBackend } from './lib/config.js';
 import { initAuth, onAuthChange, getSession } from './lib/auth.js';
 import { linkSubscriptionToSession } from './lib/push.js';
 import * as store from './lib/store.js';
-import { initThemeControls, getActiveTheme } from './lib/theme.js';
+import { initThemeControls, getActiveTheme, applyTheme } from './lib/theme.js';
+import {
+  applyCachedEdition,
+  applyEdition,
+  fetchPublishedEdition,
+  cacheEdition
+} from './lib/edition.js';
+import { normaliseThemeId, sanitizeThemeOptions } from './lib/themes.js';
 import {
   initDialogBehaviour,
   byId,
@@ -231,7 +238,8 @@ function showReaderView(name) {
     if (isTarget) view.style.removeProperty('display');
   });
 
-  const publication = byId('publication-view');
+  const hero = byId('edition-hero');
+  if (hero) hero.classList.toggle('hidden', target !== 'publication');
   const credits = byId('credits-view');
   const gallery = byId('gallery-view');
 
@@ -552,11 +560,51 @@ function enforcePortraitGate() {
  * @returns {Promise<void>}
  */
 export async function boot() {
+  const params = new URLSearchParams(window.location.search);
+  const isPreview = params.get('preview') === '1';
+  if (isPreview) {
+    const robots = document.querySelector('meta[name="robots"]');
+    if (robots) robots.setAttribute('content', 'noindex, nofollow');
+  }
+
   /* --- 1. Theme ---------------------------------------------------------- */
-  // The inline <head> script already set the class before first paint; this
-  // attaches the toggle's behaviour and syncs the switch to the active theme.
-  initThemeControls();
-  syncThemeIcon();
+  /* The published edition has ONE authority: the site_theme row on Supabase,
+     read through site_theme_public. The reference is held here so the
+     post-hydrate retry below can make one more attempt when the fast boot
+     fetch returned nothing. */
+  let publishedEdition = null;
+  if (isPreview) {
+    const previewTheme = normaliseThemeId(params.get('theme'));
+    let previewOptions = {};
+    try {
+      previewOptions = JSON.parse(params.get('options') || '{}');
+    } catch {
+      previewOptions = {};
+    }
+    previewOptions = sanitizeThemeOptions(previewTheme, previewOptions);
+    applyEdition(previewTheme, previewOptions, { updateCache: false });
+    initThemeControls();
+    syncThemeIcon();
+    const mode = params.get('mode');
+    if (mode === 'light' || mode === 'dark') applyTheme(mode, { persist: false });
+  } else {
+    applyCachedEdition();
+    initThemeControls();
+    syncThemeIcon();
+
+    try {
+      publishedEdition = await fetchPublishedEdition(800);
+    } catch {
+      publishedEdition = null;
+    }
+    if (publishedEdition) {
+      console.log('[app] publishedEdition from server', publishedEdition);
+      cacheEdition(publishedEdition.theme, publishedEdition.options);
+      applyEdition(publishedEdition.theme, publishedEdition.options, { updateCache: false });
+    } else {
+      console.log('[app] no publishedEdition from server');
+    }
+  }
 
   /* --- 2. Global dialog behaviour ---------------------------------------- */
   initDialogBehaviour();
@@ -567,6 +615,28 @@ export async function boot() {
   } catch (error) {
     console.error('[app] could not load publication data', error);
     showToast('Some publication data could not be loaded.', { type: 'error' });
+  }
+
+  // The block this replaces consulted store state under `publishedTheme`,
+  // which nothing in the store ever produced -- only the demo seed carried a
+  // hardwired 'default'. On a live site store.hydrate() then re-applied
+  // Default AFTER the boot fetch had applied the Owner's edition, so every
+  // refresh reset the theme for every reader. It is now a bounded honest
+  // retry: if the fast fetch (800ms) returned nothing and we are neither in
+  // preview nor demo mode, try once more with a realistic budget now that
+  // hydration is out of the way. Edition data itself: cache paints first,
+  // the server row always wins when it answers.
+  if (!isPreview && !config.demoMode && !publishedEdition) {
+    try {
+      publishedEdition = await fetchPublishedEdition(4000);
+    } catch {
+      publishedEdition = null;
+    }
+    if (publishedEdition) {
+      console.log('[app] publishedEdition from server (late)', publishedEdition);
+      cacheEdition(publishedEdition.theme, publishedEdition.options);
+      applyEdition(publishedEdition.theme, publishedEdition.options, { updateCache: false });
+    }
   }
 
   /* --- 3b. Portrait cache ------------------------------------------------- */
@@ -710,3 +780,5 @@ window.addEventListener('unhandledrejection', (event) => {
 window.addEventListener('error', (event) => {
   if (event.message) console.error('[app]', event.error || event.message);
 });
+
+
