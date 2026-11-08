@@ -1713,6 +1713,7 @@ function renderStaffTab() {
                     <button class="btn btn-quiet" data-action="staff-delete"
                       data-id="${escapeHtml(member.id)}"
                       data-name="${escapeHtml(member.name)}"
+                      data-username="${escapeHtml(member.username)}"
                       aria-label="Remove staffer"
                       ${member.role === 'Owner' ? 'disabled' : ''}>
                       <i class="fa-solid fa-trash" aria-hidden="true"></i>
@@ -3354,7 +3355,7 @@ function accountRow(account) {
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div class="min-w-0">
           <p class="font-headline text-base font-bold">
-            ${escapeHtml(account.display_name || account.username || 'Unnamed')}
+            ${escapeHtml(accountDisplayName(account))}
           </p>
           <p class="ink-muted text-sm">
             <span class="font-mono">@${escapeHtml(account.username || '')}</span>
@@ -3387,6 +3388,17 @@ function accountRow(account) {
 }
 
 /** An already-approved account: change role, reset password, or remove. */
+/** Name to show for an account: prefer the newsroom profile's name (staff tab)
+ *  when one exists for the same username, so the two tabs never disagree. */
+function accountDisplayName(account) {
+  const staffMember = store
+    .listStaff()
+    .find(
+      (m) => String(m.username || '').toLowerCase() === String(account.username || '').toLowerCase()
+    );
+  return staffMember?.name || account.display_name || '—';
+}
+
 function approvedAccountRow(account) {
   const id = escapeHtml(account.id || '');
   const isOwner = Boolean(account.is_owner);
@@ -3395,7 +3407,7 @@ function approvedAccountRow(account) {
   return `
     <tr>
       <td class="px-4 py-3 font-semibold">
-        ${escapeHtml(account.display_name || '—')}
+        ${escapeHtml(accountDisplayName(account))}
         ${isOwner ? '<span class="badge badge-gold ml-2">You</span>' : ''}
       </td>
       <td class="ink-muted px-4 py-3 font-mono text-xs">@${username}</td>
@@ -8062,6 +8074,21 @@ function handleClick(event) {
       if (askToDelete('staff', name)) {
         guard(async () => {
           await store.deleteStaff(id);
+          // Keep the Accounts tab in sync: the same person may have an auth
+          // account keyed by the same username, and deleting only the staff
+          // profile leaves a dangling, sign-in-capable account behind.
+          if (username) {
+            try {
+              const accounts = await listAccounts();
+              const match = (accounts || []).find(
+                (a) => String(a.username || '').toLowerCase() === String(username).toLowerCase()
+              );
+              if (match?.id) await rejectAccount(match.id);
+            } catch (error) {
+              console.warn('[admin] could not remove the matching account', error);
+            }
+          }
+          await reloadAccounts();
           showToast('Staff member removed.', { type: 'success' });
         });
       }
@@ -8636,6 +8663,22 @@ case 'gallery-category-delete': {
       ) {
         guard(async () => {
           await rejectAccount(id);
+          // Keep the Staff tab in sync: drop the matching newsroom profile too,
+          // so the two tabs never disagree about who is on the team.
+          if (username) {
+            const match = store
+              .listStaff()
+              .find(
+                (m) => String(m.username || '').toLowerCase() === String(username).toLowerCase()
+              );
+            if (match?.id) {
+              try {
+                await store.deleteStaff(match.id);
+              } catch (error) {
+                console.warn('[admin] could not remove the matching staff profile', error);
+              }
+            }
+          }
           showToast(`@${username} removed.`, { type: 'success' });
           await reloadAccounts();
         });
