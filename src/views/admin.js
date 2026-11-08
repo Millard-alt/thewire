@@ -18,7 +18,7 @@
    ========================================================================== */
 
 import * as store from '../lib/store.js';
-import { publishEdition, restoreDefault as restoreEditionDefault, applyEdition, cacheEdition } from '../lib/edition.js';
+import { publishEdition, restoreDefault as restoreEditionDefault, applyEdition, cacheEdition, getCachedEdition } from '../lib/edition.js';
 import { normaliseThemeId, sanitizeThemeOptions, THEME_IDS } from '../lib/themes.js';
 import {
   signOut,
@@ -2407,11 +2407,17 @@ function renderBrandingTab() {
 }
 
 function renderThemesTab() {
-  const state = store.getState();
-  const published = state.publishedTheme || 'default';
+  /*
+    The live published edition is what the site itself booted with: app.js
+    overwrites the edition cache with the server row on every load, and
+    publishEdition()/restoreDefault() refresh it the moment a publish
+    succeeds. store state never tracks the edition, so reading it from
+    `state` here printed 'default' forever.
+  */
+  const published = getCachedEdition().theme || 'default';
   if (!themeDraft) themeDraft = published;
   const draftTheme = themeDraft;
-  const draftOptions = state.publishedOptions || {};
+  const draftOptions = getCachedEdition().options || {};
   const selectedOptions = sanitizeThemeOptions(draftTheme, draftOptions);
 
   const optionDefs = {
@@ -8544,10 +8550,17 @@ case 'gallery-category-delete': {
         opts[cb.dataset.themeOption] = cb.checked;
       });
       const clean = sanitizeThemeOptions(theme, opts);
-      const current = store.getState().publishedTheme || 'default';
+      const current = getCachedEdition().theme || 'default';
       if (!window.confirm(`Publish theme "${theme}" (replacing "${current}")?`)) break;
       guard(async () => {
-        await store.savePublishedTheme({ theme, options: clean });
+        /*
+          publishEdition is the whole save: it upserts the owner-only
+          `site_theme` row (RLS-checked server side), refreshes the edition
+          cache and applies the theme locally. There is deliberately no
+          store-level save here -- `store.savePublishedTheme` never existed,
+          and Rollup compiled that call to `(void 0)(...)`, which threw
+          "TypeError: (void 0) is not a function" on click in production.
+        */
         await publishEdition(theme, clean);
         window.dispatchEvent(new Event('wire:settings-changed'));
         paintActiveTab();
@@ -8559,7 +8572,7 @@ case 'gallery-category-delete': {
     case 'theme-restore-default': {
       if (!window.confirm('Restore Default theme now?')) break;
       guard(async () => {
-        await store.savePublishedTheme({ theme: 'default', options: {} });
+        /* Same as theme-publish: restoreDefault() alone is the save. */
         await restoreEditionDefault();
         window.dispatchEvent(new Event('wire:settings-changed'));
         paintActiveTab();
