@@ -42,10 +42,11 @@ import { listPodcasts } from '../lib/podcasts.js';
  * @param {{tag?: string, cls?: string, suffix?: string}} [opts]
  */
 function renderByline(article, opts = {}) {
-  return bylineSticker(
-    (typeof article?.author === 'string' ? article.author : article?.author?.full_name || 'The Pulse staff'),
-    {
-      ...opts,
+  // The byline is the article's author NAME. bylineSticker normalises both the
+  // plain-string and the hydrated {full_name, avatar_url} shapes; the account
+  // pointer may never resolve the face, it names whoever operated the CMS.
+  return bylineSticker(article?.author, {
+    ...opts,
       portrait:
         opts.portrait ||
         article?.authorPhotoUrl ||
@@ -401,18 +402,14 @@ function statusBadge(status) {
 export function renderPublication() {
   const view = byId('publication-view');
   if (!view) return;
-  // Do not render until the store has hydrated its articles.
-  if (!store.getState().articles.length) {
-    setTimeout(() => renderPublication(), 50);
-    return;
-  }
   if (view.dataset.rendering === '1') {
-    console.log('[renderPublication] queued (already rendering)');
+    // A render pass is already running (its DOM write is atomic and synchronous,
+    // but something may call us from inside that pass). Relay the pending call:
+    // when the running pass finishes it re-renders once with the newest state.
     view.dataset.rerender = '1';
     return;
   }
   view.dataset.rendering = '1';
-  console.log('[renderPublication] start', view.children.length, 'articles', store.getState().articles.length);
   try {
 
   const published = store.listPublishedArticles();

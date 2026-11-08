@@ -563,7 +563,11 @@ export async function hydrate() {
     let articlesRes = await client
       .from(TABLES.articles)
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      // Hard cap so the bootstrap query cannot grow without limit as the
+      // archive ages. 1000 rows far exceeds any archive this panel serves,
+      // but it keeps the payload contract explicit (egress-check enforces it).
+      .limit(1000);
     const [
       assignments,
       staff,
@@ -1130,8 +1134,9 @@ function display(value, fallback = '—') {
  * deliberately.
  */
 export function listPublishedArticles() {
-  // Temporarily return all hydrated articles to verify the feed renders.
-  const published = getState().articles;
+  const published = getState().articles.filter((article) =>
+    isStatus(article.status, 'Published')
+  );
 
   const placed = published
     .filter((article) => Number.isFinite(article.displayOrder))
