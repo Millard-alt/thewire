@@ -274,6 +274,11 @@
                <svg class="spr r orn xm" aria-hidden="true"><use href="#sprig"/></svg>
                <svg class="rg l orn dw" aria-hidden="true"><use href="#rangoli"/></svg>
                <svg class="rg r orn dw" aria-hidden="true"><use href="#rangoli"/></svg>
+            <!-- .masthead-brand groups the crest + heading as one unit so the
+                 theme can restyle the pair; diwali hangs the crest beside a
+                 page-centered heading (diwali nameplate block in styles.css).
+                 Image and heading remain siblings, never parent/child. -->
+            <div class="masthead-brand flex items-center gap-4 md:gap-6">
             <!--
               The crest, as a SIBLING of the heading and never inside it.
               renderMasthead() in src/views/public.js:67 assigns
@@ -298,6 +303,7 @@
                 class="mt-2 block text-[0.6rem] leading-tight font-bold tracking-[0.24em] md:text-[0.7rem]"
               >Melvin Jones Press Club</span>
             </h1>
+            </div>
           </div>
           <p
             id="masthead-subtitle"

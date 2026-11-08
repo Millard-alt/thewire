@@ -3743,6 +3743,12 @@ class because the ratio is the whole point.
   height: 2.125rem;
   padding: 0;
   border-radius: 9999px;
+  /* Quiet icon, not a gold slab: the apparatus's shared .btn fill turns this
+     34px disc into a solid gold circle whose margin around the magnifier reads
+     as a yellow ring on the dark nav. Transparent again, as on every other
+     edition's quiet button. */
+  background-color: transparent;
+  color: var(--text-muted);
 }
 [data-theme='diwali'] #auth-slot .btn {
   border-radius: 9999px;
@@ -3752,4 +3758,39 @@ class because the ratio is the whole point.
   border-radius: 9999px;
   gap: 0.5rem;
   line-height: 1;
+}
+
+/* --- Diwali nameplate centering ----------------------------------------------
+   The row centers [crest + heading] as one unit, so the heading itself sits
+   (crest + gap) / 2 right of the page axis while the organisation subtitle and
+   the dateline below center exactly on it (measured: 458.8px vs 406.8px).
+   The mockup's own .brand composes it the same off-axis way, but on the site
+   it reads as broken centering. Diwali-only fix: take the crest out of the
+   flow and hang it to the LEFT of the heading, so justify-center centers just
+   the heading and the whole nameplate stacks on one axis, crest flanking.
+   Pure geometry, no colors. Unlayered like the blocks above. Other editions
+   keep the unit-centered composition because every rule here is
+   [data-theme='diwali']-scoped and the wrapper's Tailwind classes replicate
+   the old row layout everywhere else. */
+[data-theme='diwali'] .masthead-brand {
+  position: relative;
+}
+[data-theme='diwali'] .masthead-brand img {
+  position: absolute;
+  right: calc(100% + 1rem);
+  top: 50%;
+  transform: translateY(-50%);
+}
+@media (min-width: 48rem) {
+  [data-theme='diwali'] .masthead-brand img { right: calc(100% + 1.5rem); }
+}
+/* Narrow phones: a 56px crest hung clear of the centered title clips its left
+   edge at 320px, so it steps down one size, mirroring the mockup's compact
+   crest at small widths. */
+@media (width < 24rem) {
+  [data-theme='diwali'] .masthead-brand img {
+    width: 2.75rem;
+    height: 2.75rem;
+    right: calc(100% + 0.5rem);
+  }
 }
