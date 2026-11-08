@@ -490,8 +490,10 @@ export async function sendBroadcastToDevices({
 
   // Mark seen before any delivery attempt: if the push fails, this device must
   // not have the poller raise the same text a second time a minute later. The
-  // local popup below is the confirmation on this device instead.
-  push.markBroadcastSeen(broadcast.id);
+  // local popup below is the confirmation on this device instead. Advancing the
+  // watermark here is what keeps the owner's own poller from re-fetching this
+  // row and popping a second notification on their machine.
+  push.markBroadcastSeen(broadcast.id, broadcast.created_at);
 
   // Real Web Push, via the serverless sender. This is NOT a count of rows in the
   // subscriber table - it is what the push service accepted.
@@ -520,7 +522,7 @@ export async function sendBroadcastToDevices({
   const popped = await push.deliverLocally({
     title: title || 'The Pulse',
     body: message || '',
-    tag: `broadcast-${broadcast.id}`,
+    tag: `wire-${broadcast.id}`,
     url: config.notificationTargetUrl || '/',
     requireInteraction: audience === 'Emergency'
   });
