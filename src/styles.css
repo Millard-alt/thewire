@@ -3722,3 +3722,34 @@ class because the ratio is the whole point.
 [data-theme="diwali"] .btn,
 [data-theme="diwali"] .btn-primary { background-color: var(--btn-bg); color: var(--btn-ink); border-radius: 2px; }
 [data-theme="diwali"] .edition-stamp { border: 1px solid var(--mast-stamp); padding: 5px 20px; position: relative; }
+
+/* --- Diwali control polish ---------------------------------------------------
+   The apparatus above gives every button the mockup's 2px editorial edge. That
+   is right for content slabs, but in the utility bar the sharp squares sit
+   beside the fully-rounded dark-mode switch (a 9999px pill) and read as
+   unfinished, not as an editorial choice. Rounded to the switch's own 9999px,
+   diwali only -- every other edition keeps its corners unpolished.
+   Same for the dispatch CTAs: other themes render .btn-quiet as a transparent
+   text link, where its `px-0` (hug the copy) is intentional. Diwali FILLS the
+   same button with the gold slab instead, so `px-0` left the text and its tiny
+   arrow glued to the edges of a filled block inside an overflow-hidden card,
+   which reads as cut off. Padding restores the breathing room.
+   These rules stay UNLAYERED on purpose, exactly like the block above: unlayered
+   declarations outrank Tailwind's utility layer, which is what lets the padding
+   here beat the CTA's `px-0`. No colors are introduced: backgrounds and inks
+   remain the mockup tokens set above (--btn-bg / --btn-ink). */
+[data-theme='diwali'] #open-search {
+  width: 2.125rem;
+  height: 2.125rem;
+  padding: 0;
+  border-radius: 9999px;
+}
+[data-theme='diwali'] #auth-slot .btn {
+  border-radius: 9999px;
+}
+[data-theme='diwali'] .btn-quiet {
+  padding: 9px 16px;
+  border-radius: 9999px;
+  gap: 0.5rem;
+  line-height: 1;
+}
