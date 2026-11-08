@@ -452,7 +452,9 @@ for (const f of [
   'supabase/migrations/037_media_requires_approval.sql',
   'supabase/migrations/038_approver_can_refuse_a_pending_episode.sql',
   'supabase/migrations/039_claim_next_broadcast.sql',
-  'supabase/migrations/040_interviews_get_a_category.sql'
+  'supabase/migrations/040_interviews_get_a_category.sql',
+  'supabase/migrations/041_site_theme.sql',
+  'supabase/migrations/042_add_diwali_theme.sql'
 ]) {
   const name = f.split('/').pop();
   try {
@@ -1329,6 +1331,91 @@ await denied('a SUSPENDED Board Manager cannot reject anything', 'authenticated'
   `delete from public.interviews where title = 'live item'`, 'delete');
 
 // ===========================================================================
+// ===========================================================================
+console.log('\n=== SITE THEME: THE OWNER PUBLISHES, EVERYONE ELSE READS ===');
+//
+// 041 + 042 carry the whole server half of the theme engine: the singleton
+// site_theme row the browser upserts when the Owner clicks "Publish selected
+// theme", gated by the x-wire-token -> is_owner() chain, and the
+// site_theme_public view so every anonymous visitor can read WHICH edition is
+// live without holding a token and without being shown any owner-only state.
+
+// -- structure ----------------------------------------------------------------
+{
+  const view = await db.query(
+    `select 1 from information_schema.views
+      where table_schema = 'public' and table_name = 'site_theme_public'`);
+  if (view.rows.length) ok('site_theme_public exists - the boot fetch reads it');
+  else bad('site_theme_public is missing: every boot falls back to the stash');
+
+  const rls = (await db.query(
+    `select c.relrowsecurity from pg_class c where c.oid = 'public.site_theme'::regclass`)).rows[0];
+  if (rls?.relrowsecurity) ok('site_theme has row level security enabled');
+  else bad('site_theme RLS is off: any anon client could rewrite the live theme');
+
+  const check = (await db.query(
+    `select pg_get_constraintdef(oid) as def from pg_constraint
+      where conrelid = 'public.site_theme'::regclass
+        and conname = 'site_theme_published_theme_check'`)).rows[0];
+  const want = ['default', 'christmas', 'sports', 'diwali'];
+  if (check?.def && want.every((t) => check.def.includes(t)))
+    ok('published_theme is constrained to the four editions: ' + check.def);
+  else bad('published_theme CHECK drifted: ' + (check?.def ?? 'missing'));
+}
+
+// -- the seeded singleton reads through the view with NO token at all ----------
+await allowed('a visitor sees the published edition without any session',
+  'anon', '', `select published_theme from public.site_theme_public`, 'select');
+
+// -- writes are refused outside the owner seat. The UPDATE values here are all
+//    legal ones, so a pass can only come from RLS, never from the CHECK
+//    constraint --------------------------------------------------------------
+await denied('anonymous writes cannot change the published theme',
+  'anon', '',
+  `update public.site_theme set published_theme = 'default' where id = 1`, 'update');
+await denied('a Writer cannot publish a theme either',
+  'authenticated', 'tok-writer',
+  `update public.site_theme set published_theme = 'christmas' where id = 1`, 'update');
+
+// -- the Owner CAN publish, and what they publish is what everyone reads -------
+await allowed('the Owner can publish diwali onto the singleton',
+  'authenticated', 'tok-owner',
+  `update public.site_theme
+      set published_theme = 'diwali',
+          published_options = '{"hero":true,"ornaments":true,"label":true,"motion":true}'::jsonb
+    where id = 1`, 'update');
+{
+  const r = await asRole('anon', '', () => db.query(
+    `select published_theme, published_options from public.site_theme_public where id = 1`));
+  const row = r.value?.rows?.[0];
+  const opts = row?.published_options ?? null;
+  if (r.ok && row && row.published_theme === 'diwali'
+      && opts && opts.hero === true && opts.motion === true) {
+    ok('everyone now reads diwali + its options through the view: ' + JSON.stringify(row));
+  } else {
+    bad('what the Owner published did not read back through the view: '
+        + JSON.stringify(row ?? r.error));
+  }
+}
+
+// -- nonsense is rejected by the database, not by trusting the client ----------
+await refused('an unknown theme id is rejected by the CHECK constraint',
+  'authenticated', 'tok-owner',
+  `update public.site_theme set published_theme = 'halloween' where id = 1`);
+
+await allowed('restore-to-default works from the same owner seat',
+  'authenticated', 'tok-owner',
+  `update public.site_theme
+      set published_theme = 'default', published_options = '{}'::jsonb
+    where id = 1`, 'update');
+{
+  const r = await asRole('anon', '', () => db.query(
+    `select published_theme from public.site_theme_public where id = 1`));
+  if (r.ok && r.value?.rows?.[0]?.published_theme === 'default')
+    ok('the view reads back the restored default');
+  else bad('the restored default did not read back: ' + JSON.stringify(r.value?.rows ?? r.error));
+}
+
 await db.close();
 
 console.log('\n------------------------------------------------------------------');
@@ -1337,4 +1424,4 @@ if (problems.length) {
   for (const p of problems) console.log('  - ' + p);
   process.exit(1);
 }
-console.log('RESULT: PASS — all three migrations apply, and the holes stay closed.');
+console.log('RESULT: PASS — all nine shipped migrations apply, and the holes stay closed.');

@@ -568,6 +568,11 @@ export async function boot() {
   }
 
   /* --- 1. Theme ---------------------------------------------------------- */
+  /* The published edition has ONE authority: the site_theme row on Supabase,
+     read through site_theme_public. The reference is held here so the
+     post-hydrate retry below can make one more attempt when the fast boot
+     fetch returned nothing. */
+  let publishedEdition = null;
   if (isPreview) {
     const previewTheme = normaliseThemeId(params.get('theme'));
     let previewOptions = {};
@@ -587,7 +592,6 @@ export async function boot() {
     initThemeControls();
     syncThemeIcon();
 
-    let publishedEdition = null;
     try {
       publishedEdition = await fetchPublishedEdition(800);
     } catch {
@@ -613,18 +617,25 @@ export async function boot() {
     showToast('Some publication data could not be loaded.', { type: 'error' });
   }
 
-  // Reconcile edition with the hydrated store (authoritative when fetch succeeded).
-  // In demo mode there is no server-published theme, so keep the cached edition.
-  // Preview mode never reconciles or caches.
-  if (!isPreview && !config.demoMode) {
+  // The block this replaces consulted store state under `publishedTheme`,
+  // which nothing in the store ever produced -- only the demo seed carried a
+  // hardwired 'default'. On a live site store.hydrate() then re-applied
+  // Default AFTER the boot fetch had applied the Owner's edition, so every
+  // refresh reset the theme for every reader. It is now a bounded honest
+  // retry: if the fast fetch (800ms) returned nothing and we are neither in
+  // preview nor demo mode, try once more with a realistic budget now that
+  // hydration is out of the way. Edition data itself: cache paints first,
+  // the server row always wins when it answers.
+  if (!isPreview && !config.demoMode && !publishedEdition) {
     try {
-      const state = store.getState();
-      if (state?.publishedTheme) {
-        cacheEdition(state.publishedTheme, state.publishedOptions || {});
-        applyEdition(state.publishedTheme, state.publishedOptions || {}, { updateCache: false });
-      }
-    } catch (error) {
-      console.warn('[app] edition reconcile failed', error);
+      publishedEdition = await fetchPublishedEdition(4000);
+    } catch {
+      publishedEdition = null;
+    }
+    if (publishedEdition) {
+      console.log('[app] publishedEdition from server (late)', publishedEdition);
+      cacheEdition(publishedEdition.theme, publishedEdition.options);
+      applyEdition(publishedEdition.theme, publishedEdition.options, { updateCache: false });
     }
   }
 
