@@ -611,7 +611,7 @@ function aboutTemplate(sections) {
   return `
     <div class="mx-auto max-w-5xl px-4 py-10 md:py-14">
       <header class="about-hero flex flex-col items-center gap-4 md:flex-row md:items-center md:gap-6">
-        <img src="/logo.png" alt="The Pulse crest" class="h-16 w-16 shrink-0 rounded-full object-contain md:h-20 md:w-20" />
+        <img src="/logo.png" alt="The Pulse crest" class="h-16 w-16 shrink-0 rounded-full object-contain md:h-20 md:w-20" ${imageFallbackAttr()} />
         <div class="text-center md:text-left">
           <p class="accent-text text-[0.625rem] font-bold tracking-[0.2em] uppercase">
             About Us | The Pulse
@@ -1777,8 +1777,14 @@ export async function primePublicStaffPortraits() {
  * @param {{tag?: string, cls?: string, suffix?: string, portrait?: string|null}} [opts]
  */
 export function bylineSticker(name, { tag = 'p', cls = '', suffix = '', portrait } = {}) {
-  const face = safeUrl(portrait) || portraitFor(name);
-  const label = escapeHtml(name || 'The Pulse staff');
+  // Callers pass the byline NAME directly, or the hydrated article.author
+  // object ({full_name, avatar_url}); both resolve to the printed name.
+  const who =
+    typeof name === 'string'
+      ? name
+      : String(name?.full_name || name?.name || '').trim();
+  const face = safeUrl(portrait) || portraitFor(who);
+  const label = escapeHtml(who || 'The Pulse staff');
   const tail = suffix ? escapeHtml(suffix) : '';
 
   if (!face) {
