@@ -2432,9 +2432,20 @@ function renderThemesTab() {
       { key: 'ornaments', label: 'Ornaments', desc: 'Chevron marks and clay rule segment' },
       { key: 'label', label: 'Edition label', desc: 'Sports Edition bib under the dateline' },
       { key: 'motion', label: 'Speed streak', desc: 'Animated streak across the hero' }
+    ],
+    diwali: [
+      { key: 'hero', label: 'Hero banner', desc: 'Festival hero between the breaking bar and content' },
+      { key: 'ornaments', label: 'Ornaments', desc: 'Rangoli marks beside the masthead' },
+      { key: 'label', label: 'Edition label', desc: 'Diwali Edition stamp under the dateline' },
+      { key: 'motion', label: 'Embers & flames', desc: 'Rising ember particles and the diya flame flicker' }
     ]
   };
   const defs = optionDefs[draftTheme] || [];
+  /* Name the draft in the empty-state message: "No optional effects for
+     Default." used to be hardcoded, which lied whenever a theme WITHOUT
+     optional effects was drafted -- and hid the real bug (diwali simply had
+     no defs at all and showed this same line). */
+  const noOptionsMsg = `<span class="ink-muted text-xs">No optional effects for ${escapeHtml(draftTheme)}.</span>`;
   const opts = defs
     .map((d) => {
       const checked = selectedOptions[d.key] !== false ? 'checked' : '';
@@ -2474,7 +2485,7 @@ function renderThemesTab() {
 
       <div class="panel-raised space-y-2 p-4">
         <p class="text-xs font-semibold uppercase">Options</p>
-        <div class="flex flex-wrap gap-4">${opts || '<span class="ink-muted text-xs">No optional effects for Default.</span>'}</div>
+        <div class="flex flex-wrap gap-4">${opts || noOptionsMsg}</div>
       </div>
 
       <div class="panel-raised space-y-3 p-4">

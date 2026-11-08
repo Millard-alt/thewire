@@ -3654,8 +3654,8 @@ class because the ratio is the whole point.
 @keyframes dash { 0%,65% { left: -140px; } 100% { left: 105%; } }
 /* optional switches */
 [data-off~='hero'] #edition-hero, [data-off~='hero'] .hero { display: none !important; }
-[data-off~='orn'] .spr, [data-off~='orn'] .holly { display: none !important; }
-[data-off~='fx'] .snow, [data-off~='fx'] .hero.s::after { display: none !important; }
+[data-off~='orn'] .spr, [data-off~='orn'] .holly, [data-off~='orn'] .rg { display: none !important; }
+[data-off~='fx'] .snow, [data-off~='fx'] .hero.s::after, [data-off~='fx'] .embers { display: none !important; }
 /* responsive */
 @media (max-width: 900px) { .spr { display: none; } }
 @media (max-width: 700px) { .hero { height: 84px; } .hero.x .h { font-size: 20px; margin-top: 5px; } .hero.x .s, .hero.x .k { display: none; } .hero.s .t { left: 36px; } .hero.s .h { font-size: 24px; padding: 2px 10px; } }
