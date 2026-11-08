@@ -8,7 +8,10 @@
    than opening a duplicate one, then routes the reader to the broadcast link.
    ========================================================================== */
 
-const SHELL_CACHE = 'thewire-shell-v1';
+// v2: the v1 shell could be cached from a months-old deployment (the activate
+// handler can only delete caches it creates on this update), so the name bumps
+// whenever the shell's meaning changes and the old copy is evicted here.
+const SHELL_CACHE = 'thewire-shell-v2';
 
 /**
  * Static assets that make the publication look correct. They are same-origin and
