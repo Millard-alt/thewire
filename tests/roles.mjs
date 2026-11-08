@@ -83,6 +83,9 @@ const EXPECTED = {
     'accounts',
     'changelog',
     'branding',
+    // Website Themes — Owner-only surface that publishes the editorial edition
+    // (Default / Christmas / Sports / Diwali) and its option toggles.
+    'themes',
     'security'
   ]
 };
