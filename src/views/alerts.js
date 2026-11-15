@@ -17,6 +17,13 @@ import * as push from '../lib/push.js';
 import * as store from '../lib/store.js';
 import { config } from '../lib/config.js';
 import { byId, escapeHtml, showToast } from '../lib/dom.js';
+import {
+  initOneSignal,
+  onesignalPermission,
+  onOneSignalPermissionChange,
+  promptOneSignalPush
+} from '../lib/onesignal.js';
+import { getSession } from '../lib/auth.js';
 
 const BAR_ID = 'alert-optin-bar';
 const GATE_ID = 'alert-gate';
@@ -45,24 +52,33 @@ function markAnswered() {
 }
 
 /**
- * Has the Owner switched the prompt off?
+ * Is the Owner's FORCED MODE active for this device?
  *
- * The Owner toggle in Security & settings writes `notifications.forced` to the
- * database. It used to be displayed but never read by any reader-facing code,
- * so switching it either way changed nothing. Forced mode now genuinely means
- * "stop asking" — which is what an Owner who has turned it off expects.
+ * SEMANTICS, FIXED. `notifications.forced` used to be read as "stop asking",
+ * which is the opposite of what the Security-tab toggle says it does. Forced
+ * mode now means what the panel promises: a reader whose alerts are missing or
+ * denied is LOCKED behind the gate until they turn them on.
+ *
+ * It only engages when three things line up — the Owner's env flag enables the
+ * lockout at all, OneSignal is configured (the lock needs the slidedown
+ * prompt and its permission events), and the Owner's toggle is on — so every
+ * install that has not opted into the lock keeps the soft opt-in behaviour.
  */
-function ownerSuppressesPrompt() {
+function forcedGateActive() {
+  if (!config.forcedLockoutEnabled) return false;
+  if (!config.onesignalAppId) return false;
+  if (!config.pushBroadcastsEnabled) return false;
   return Boolean(store.getState().notifications?.forced);
 }
 
 /**
  * Should we open the instruction modal for this reader at all?
- * Never while the Owner has suppressed it, and never twice.
+ * Under forced mode the gate is a lock, not an opt-in, so a previous answer
+ * does not excuse it; otherwise the soft rules apply.
  */
 export function shouldPromptForAlerts() {
   if (!config.pushBroadcastsEnabled) return false;
-  if (ownerSuppressesPrompt()) return false;
+  if (forcedGateActive()) return push.getPermission() !== 'granted';
   if (hasAnswered()) return false;
   return push.getPermission() !== 'granted';
 }
@@ -175,13 +191,12 @@ export async function ensureAlertPermission({ deliberate = false } = {}) {
     return false;
   }
 
-  // Respect the Owner's decision and the reader's previous answer. Without this
-  // the modal reappeared on every article, which is what you reported.
-  if (ownerSuppressesPrompt()) {
-    showToast('Alerts are off for this device. The owner has paused prompts.', {
-      type: 'info'
-    });
-    return false;
+  // THE FORCED GATE. When the Owner has locked alerts on, a missing or denied
+  // permission opens the lock overlay instead of the soft modal — no dismiss,
+  // no Escape, no "not now". The promise settles only once permission lands,
+  // which is why this branch returns it rather than a boolean.
+  if (forcedGateActive()) {
+    return openForcedGate();
   }
 
   if (hasAnswered() && !deliberate) {
@@ -305,6 +320,116 @@ export async function ensureAlertPermission({ deliberate = false } = {}) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Forced gate — the lock overlay                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The modal that LOCKS the app while alerts are missing or denied.
+ *
+ * Rendered only when the Owner's forced mode is on and OneSignal is
+ * configured. Unlike the soft opt-in it has no dismiss button and no Escape
+ * hatch: the page stays under the overlay until
+ * `OneSignal.Notifications.permission` turns true, at which point the overlay
+ * is removed immediately — by the SDK's own permissionChange event, not by the
+ * next render, and not after a reload.
+ *
+ * The enable trigger calls `OneSignal.Slidedown.promptPush()` from a real
+ * user click (a browser requirement). Whatever the slidedown shows, the
+ * permission ANSWER arrives through the SDK event, which is what this
+ * function awaits — the two are deliberately decoupled.
+ *
+ * @returns {Promise<boolean>} resolves true once permission is granted
+ */
+function openForcedGate() {
+  const dialog = byId(GATE_ID);
+  if (!dialog) return Promise.resolve(false);
+
+  const title = byId('alert-gate-title');
+  const body = byId('alert-gate-body');
+  const allow = byId('alert-gate-allow');
+  const dismiss = byId('alert-gate-dismiss');
+
+  if (title) title.textContent = 'Alerts are required to continue';
+  if (body) body.innerHTML = gateMarkup(push.getPermission());
+  // The lock has exactly one way out: granting permission.
+  if (dismiss) dismiss.classList.add('hidden');
+  if (allow) {
+    allow.classList.remove('hidden');
+    allow.textContent = 'Enable alerts';
+  }
+
+  dialog.classList.remove('hidden');
+  dialog.removeAttribute('aria-hidden');
+  allow?.focus();
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let stopPermissionWatch = () => {};
+
+    const finish = (granted) => {
+      if (settled) return;
+      settled = true;
+      stopPermissionWatch();
+      allow?.removeEventListener('click', onAllow);
+      document.removeEventListener('keydown', onKey);
+      if (dismiss) dismiss.classList.remove('hidden');
+      if (allow) allow.textContent = 'Turn on alerts';
+      dialog.classList.add('hidden');
+      dialog.setAttribute('aria-hidden', 'true');
+      resolve(granted);
+    };
+
+    const onAllow = async () => {
+      allow?.setAttribute('disabled', 'disabled');
+      // This is the OneSignal slidedown — it must run inside the click.
+      const invoked = await promptOneSignalPush();
+      allow?.removeAttribute('disabled');
+      if (!invoked) {
+        if (body) body.innerHTML = gateMarkup(push.getPermission());
+        showToast(
+          'OneSignal is not reachable right now. Check your connection and try again.',
+          { type: 'error', duration: 6000 }
+        );
+      }
+      // Whether the reader allows or refuses, the answer lands through
+      // permissionChange; this handler deliberately does nothing else.
+    };
+
+    const onKey = (event) => {
+      // Escape must not close the lock — swallow it so no keypress dismisses
+      // the overlay behind OneSignal's back.
+      if (event.key === 'Escape') event.preventDefault();
+    };
+
+    // IMMEDIATE dismissal on grant. This listener is what turns the permission
+    // answer into "overlay gone" without waiting for any other code to notice.
+    onOneSignalPermissionChange((granted) => {
+      if (!granted || settled) return;
+      push.startBroadcastPolling();
+      push.linkSubscriptionToSession().catch(() => {});
+      showToast('Alerts are on for this device.', { type: 'success' });
+      markAnswered();
+      finish(true);
+    })
+      .then((off) => {
+        stopPermissionWatch = off;
+        // A grant that landed between init and this subscription would strand
+        // the lock forever, so re-check once the watch is live.
+        onesignalPermission().then((permission) => {
+          if (permission === 'granted') {
+            push.startBroadcastPolling();
+            finish(true);
+          }
+        });
+      })
+      .catch(() => {});
+
+    allow?.addEventListener('click', onAllow);
+    document.addEventListener('keydown', onKey);
+  });
+}
+
+/* -------------------------------------------------------------------------- */
 /* Opt-in bar + blocker warning                                                */
 /* -------------------------------------------------------------------------- */
 
@@ -407,6 +532,18 @@ export async function initAlerts() {
   if (!config.pushBroadcastsEnabled) return;
 
   await push.initPush();
+
+  // OneSignal must be INITIALISED before the gate can ask it anything: the
+  // SDK script loads async from a CDN, so initOneSignal() awaits it. The
+  // signed-in username is the external user id the approval pushes target.
+  await initOneSignal(getSession()?.username || '');
+
+  // THE FORCED GATE. When the Owner has locked alerts on, a reader whose
+  // permission is missing or denied is held behind the lock overlay until
+  // they grant it — the overlay dismisses itself the moment they do.
+  if (forcedGateActive() && (await onesignalPermission()) !== 'granted') {
+    await openForcedGate();
+  }
 
   // A blocker is worth saying out loud: it is the most common reason a reader
   // thinks the site is broken.

@@ -117,6 +117,13 @@ export const config = {
   vapidPublicKey: env('VITE_VAPID_PUBLIC_KEY', ''),
 
   /**
+   * OneSignal Web SDK app id (public). With it set the reader gate uses the
+   * OneSignal slidedown prompt and `OneSignal.Notifications.permission`;
+   * without it the gate falls back to the native Notification API flow.
+   */
+  onesignalAppId: env('VITE_ONESIGNAL_APP_ID', ''),
+
+  /**
    * Where the owner wants a reader to land when they tap a notification.
    * Must be an absolute https:// URL, otherwise the OS has nowhere to send the
    * tap. Empty means "this origin".

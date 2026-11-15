@@ -2230,8 +2230,10 @@ function renderSecurityTab() {
           </label>
         </div>
         <p class="ink-muted text-xs">
-          When enabled, the publication records that the browser notification
-          permission was granted so opt-in prompts are never shown again.
+          When enabled, readers whose alerts are missing or blocked are held
+          behind the notifications gate until they turn alerts on. Requires
+          OneSignal to be configured (VITE_ONESIGNAL_APP_ID) and
+          VITE_ENABLE_FORCED_NOTIFICATION_LOCKOUT set to true.
         </p>
         <div class="flex justify-end">
           <button class="btn btn-ghost" data-action="toggle-forced">
