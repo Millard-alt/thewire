@@ -1505,3 +1505,40 @@ export async function dispatchWebPush({
     return { ok: false, delivered: 0, reason: 'network', detail: error.message };
   }
 }
+
+/**
+ * Send a OneSignal push notification to a single user by their external id.
+ *
+ * Used by the Owner Panel's approval workflow (account approval, portrait
+ * approval) so a staffer is told their request has been actioned even when the
+ * app is closed. The REST API key never leaves the server: this helper posts
+ * to /api/send-onesignal, which holds the key and re-checks the Owner seat.
+ *
+ * @param {{externalId: string, title: string, message?: string}} opts
+ * @returns {Promise<{ok: boolean, id?: string|null, reason?: string}>}
+ */
+export async function sendOneSignalNotification({ externalId, title, message = '' } = {}) {
+  const id = String(externalId || '').trim();
+  const t = String(title || '').trim();
+  if (!id) return { ok: false, reason: 'missing_external_id' };
+  if (!t) return { ok: false, reason: 'missing_title' };
+
+  try {
+    const response = await fetch('/api/send-onesignal', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(getSessionToken() ? { 'x-wire-token': getSessionToken() } : {})
+      },
+      body: JSON.stringify({ externalId: id, title: t, message: String(message || '') })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.ok) {
+      return { ok: false, reason: data?.code || 'request_failed', detail: data?.detail || null };
+    }
+    return { ok: true, id: data.id || null, recipients: data.recipients ?? null };
+  } catch (error) {
+    console.warn('[push] OneSignal notification failed', error);
+    return { ok: false, reason: 'network', detail: error?.message || String(error) };
+  }
+}

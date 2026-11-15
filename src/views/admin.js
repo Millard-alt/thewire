@@ -1780,7 +1780,7 @@ function renderPortraitReview(member) {
         <button class="btn btn-accent" data-action="portrait-approve"
           data-id="${escapeHtml(member.id)}"
           data-name="${escapeHtml(member.name)}"
-          aria-label="Approve ${escapeHtml(member.name)}'s portrait">
+          data-username="${escapeHtml(member.username)}" aria-label="Approve ${escapeHtml(member.name)}'s portrait">
           <i class="fa-solid fa-check" aria-hidden="true"></i> Approve
         </button>
         <button class="btn btn-quiet" data-action="portrait-reject"
@@ -8247,6 +8247,13 @@ function handleClick(event) {
           showToast(result.message, { type: 'error', duration: 6000 });
           return;
         }
+        if (approving && username) {
+          push.sendOneSignalNotification({
+            externalId: username,
+            title: 'Portrait approved',
+            message: `${name || 'Your'} portrait is now live beside your bylines.`
+          }).catch((error) => console.warn('[admin] OneSignal notify failed', error));
+        }
         // primePortraits() re-reads the sticker cache so the byline photo and
         // the Credits page reflect the decision without a page reload.
         await primePortraits();
@@ -8770,6 +8777,14 @@ case 'gallery-category-delete': {
       guard(async () => {
         await approveAccount(id, role);
         showToast(`Account approved as ${role}.`, { type: 'success' });
+        // Tell the staffer their account is live, even if the app is closed.
+        if (username) {
+          push.sendOneSignalNotification({
+            externalId: username,
+            title: 'Account approved',
+            message: `Your account has been approved as ${role}. You can now sign in.`
+          }).catch((error) => console.warn('[admin] OneSignal notify failed', error));
+        }
         await reloadAccounts();
       });
       break;
