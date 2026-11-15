@@ -3282,8 +3282,9 @@ function accountsPanel(rows) {
       ${
         staff.length
           ? `<p class="ink-muted text-xs">
-               Removing somebody signs them out and deletes their account; they
-               would have to register again. To keep somebody on the books but
+               Removing somebody signs them out and deletes their account together
+               with their Staff roster profile; they would have to register again.
+               To keep somebody on the books but
                lock them out, change their role to <strong>Writer</strong>
                instead, which is the weakest role on the board.
              </p>`
@@ -3471,6 +3472,71 @@ async function reloadAccounts() {
   paintActiveTab();
   accountsCache = await loadAccounts();
   if (activeTab === 'accounts') paintActiveTab();
+}
+
+/**
+ * Remove a person from BOTH tabs with one database mutation.
+ *
+ * `staff_accounts` is the parent table: public.staff points at it through the
+ * `staff_account_id_fkey` foreign key with ON DELETE CASCADE (migration 045),
+ * so removing the ACCOUNT row deletes the matching STAFF profile in the same
+ * statement. That makes the database the single source of truth for who is on
+ * the team, and both delete buttons funnel through here:
+ *
+ *   - from the Accounts tab the account id is already in hand;
+ *   - from the Staff tab the profile row is the child, so it is resolved to
+ *     its account by username first and deleted THROUGH the parent -- deleting
+ *     the child directly would strand a live, sign-in-capable account.
+ *
+ * Only the Owner may delete through the parent: `wire_reject_account`
+ * re-checks `is_owner()` in Postgres, so a Board Manager using the Staff tab
+ * (minRole 'Board Manager') deletes the profile row directly and leaves the
+ * account untouched, exactly as the panel behaved before the cascade existed.
+ *
+ * The in-memory roster is then trimmed to match, so the Staff tab is correct
+ * the moment it is painted: no manual refresh, and no second copy of the
+ * username-scavenging sync logic that could drift from this one.
+ */
+async function removePersonGlobally({ accountId = null, staffId = null, username = '' } = {}) {
+  const wanted = String(username || '').trim().toLowerCase();
+  const owner = isOwner();
+
+  // 1. Resolve the account id when the caller only knows the profile row.
+  let targetAccountId = owner ? accountId : null;
+  if (!targetAccountId && owner && wanted) {
+    const accounts = await listAccounts();
+    targetAccountId =
+      (accounts || []).find(
+        (a) => String(a.username || '').trim().toLowerCase() === wanted
+      )?.id || null;
+  }
+
+  // 2. Delete through the parent; the cascade removes the staff profile.
+  if (targetAccountId) {
+    await rejectAccount(targetAccountId);
+  }
+
+  // 3. Mirror the cascade in the in-memory roster so the other tab repaints
+  //    correctly. When the cascade fired, the database row is already gone and
+  //    `deleteStaff` is a harmless no-op against Supabase -- its real job here
+  //    is dropping the row from local state and writing the audit line.
+  const roster = store.listStaff();
+  const doomed = roster.find(
+    (m) =>
+      (staffId && m.id === staffId) ||
+      (wanted && String(m.username || '').trim().toLowerCase() === wanted)
+  );
+  if (doomed?.id) {
+    try {
+      await store.deleteStaff(doomed.id);
+    } catch (error) {
+      console.warn('[admin] could not trim the local roster', error);
+    }
+  } else if (!targetAccountId && staffId) {
+    // No account, no cascade: a seeded roster entry with no sign-in. The
+    // profile row is the only row there is, so delete it directly.
+    await store.deleteStaff(staffId);
+  }
 }
 
 /** The account whose password is being reset, and the id it will be written to. */
@@ -7265,7 +7331,8 @@ const CONFIRM_COPY = {
   interview:
     'Delete this interview permanently? Any published videos go with it. This cannot be undone.',
   assignment: 'Close and delete this assignment?',
-  staff: 'Remove this staff member from the roster?',
+  staff:
+    'Remove this staff member? Their newsroom account and roster profile are removed together.',
   media: 'Remove this image from the media library?',
   broadcast: 'Remove this broadcast from the delivery history?',
   reset: 'Reset all locally stored data back to the seed content?'
@@ -8073,21 +8140,14 @@ function handleClick(event) {
     case 'staff-delete':
       if (askToDelete('staff', name)) {
         guard(async () => {
-          await store.deleteStaff(id);
-          // Keep the Accounts tab in sync: the same person may have an auth
-          // account keyed by the same username, and deleting only the staff
-          // profile leaves a dangling, sign-in-capable account behind.
-          if (username) {
-            try {
-              const accounts = await listAccounts();
-              const match = (accounts || []).find(
-                (a) => String(a.username || '').toLowerCase() === String(username).toLowerCase()
-              );
-              if (match?.id) await rejectAccount(match.id);
-            } catch (error) {
-              console.warn('[admin] could not remove the matching account', error);
-            }
-          }
+          // ONE delete, ONE source of truth. Where the staffer has an account,
+          // removePersonGlobally deletes the ACCOUNT row and the
+          // staff_account_id_fkey cascade (migration 045) removes the profile
+          // in the same statement; only accountless roster entries are deleted
+          // directly. Either way the local roster is trimmed, so this tab and
+          // the Accounts tab both repaint from a consistent state.
+          await removePersonGlobally({ staffId: id, username });
+          // The matching sign-in account, if there was one, went with them.
           await reloadAccounts();
           showToast('Staff member removed.', { type: 'success' });
         });
@@ -8658,27 +8718,16 @@ case 'gallery-category-delete': {
     case 'account-remove':
       if (
         window.confirm(
-          `Remove @${username}? They will be signed out immediately and will have to register again.`
+          `Remove @${username}? They will be signed out immediately, their Staff roster profile goes with them, and they will have to register again.`
         )
       ) {
         guard(async () => {
-          await rejectAccount(id);
-          // Keep the Staff tab in sync: drop the matching newsroom profile too,
-          // so the two tabs never disagree about who is on the team.
-          if (username) {
-            const match = store
-              .listStaff()
-              .find(
-                (m) => String(m.username || '').toLowerCase() === String(username).toLowerCase()
-              );
-            if (match?.id) {
-              try {
-                await store.deleteStaff(match.id);
-              } catch (error) {
-                console.warn('[admin] could not remove the matching staff profile', error);
-              }
-            }
-          }
+          // ONE delete, ONE source of truth. Deleting the account row fires
+          // the staff_account_id_fkey cascade (migration 045), which removes
+          // the matching staff profile server-side in the same statement;
+          // removePersonGlobally mirrors that into the in-memory roster so
+          // the Staff tab is correct the moment it is painted. No reload.
+          await removePersonGlobally({ accountId: id, username });
           showToast(`@${username} removed.`, { type: 'success' });
           await reloadAccounts();
         });
