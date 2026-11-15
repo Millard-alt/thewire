@@ -3794,3 +3794,20 @@ class because the ratio is the whole point.
     right: calc(100% + 0.5rem);
   }
 }
+
+.staff-portrait-preview-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 0.5rem 0;
+}
+.staff-portrait-preview {
+  width: 96px;
+  height: 96px;
+  border-radius: 9999px;
+  background: var(--color-surface-sunken, #f3f3f3);
+  border: 1px solid var(--color-rule, #ddd);
+  object-fit: cover;
+}
+.staff-portrait-preview[src=''] {
+  visibility: hidden;
+}

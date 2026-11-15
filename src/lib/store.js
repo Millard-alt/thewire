@@ -724,7 +724,8 @@ export async function hydrate() {
         role: row.role,
         status: row.status,
         portrait_url: row.portrait_url || '',
-        portrait_status: row.portrait_status || 'none'
+        portrait_status: row.portrait_status || 'none',
+        portraitPosition: row.portrait_position || '50% 50%'
       })),
       topPerformers: (performers.data || []).map((row) => ({
         id: row.id,
@@ -2186,7 +2187,8 @@ export async function createStaff(input) {
     username: input.username?.trim().toLowerCase() || 'staffer',
     email: input.email?.trim().toLowerCase() || '',
     role: input.role || 'Writer',
-    status: input.status || 'Active'
+    status: input.status || 'Active',
+    portraitPosition: input.portraitPosition || '50% 50%'
   };
 
   if (!config.demoMode && db()) {
@@ -2199,7 +2201,8 @@ export async function createStaff(input) {
           email: member.email,
           role: member.role,
           status: member.status,
-          auth_user_id: input.authUserId || null
+          auth_user_id: input.authUserId || null,
+          portrait_position: input.portraitPosition || '50% 50%'
         })
         .select()
         .single(),
@@ -2227,6 +2230,7 @@ export async function updateStaff(id, patch) {
     if (patch.email !== undefined) row.email = patch.email;
     if (patch.role !== undefined) row.role = patch.role;
     if (patch.status !== undefined) row.status = patch.status;
+    if (patch.portraitPosition !== undefined) row.portrait_position = patch.portraitPosition;
     if (Object.keys(row).length) {
       assertOk(
         await db()

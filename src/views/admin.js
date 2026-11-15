@@ -2982,11 +2982,32 @@ function staffEditorDialog() {
                 placeholder="https://…"
               />
             </div>
-            <p class="text-xs ink-muted">
-              <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
-              This portrait appears beside every story they write, and on the
-              public Credits page. A square, face-cropped image works best.
-            </p>
+            <div>
+              <label class="field-label" for="staff-portrait-position">
+                Vertical framing <span class="ink-muted font-normal">(0 = top, 100 = bottom)</span>
+              </label>
+              <div class="flex items-center gap-3">
+                <input
+                  id="staff-portrait-position"
+                  class="field"
+                  type="range"
+                  min="0"
+                  max="100"
+                  value="50"
+                  aria-label="Vertical framing offset"
+                />
+                <span id="staff-portrait-position-value" class="ink-muted text-xs tabular-nums w-10 text-right">50%</span>
+              </div>
+            </div>
+            <div class="staff-portrait-preview-wrap">
+              <img
+                id="staff-portrait-preview"
+                class="staff-portrait-preview"
+                alt="Portrait preview"
+                src=""
+                style="object-fit: cover; object-position: 50% 50%;"
+              />
+            </div>
           </div>
 
           <div class="flex justify-end gap-2 pt-2">
@@ -6265,7 +6286,8 @@ async function saveStaffFromForm(form) {
     name: byId('staff-name').value,
     username: byId('staff-username').value,
     email: byId('staff-email').value,
-    role: byId('staff-role').value
+    role: byId('staff-role').value,
+    portraitPosition
   };
 
   // The status is the one field a save must never invent. This dialog is opened
@@ -6296,6 +6318,8 @@ async function saveStaffFromForm(form) {
   const isNew = !editingStaffId;
   const urlField = byId('staff-portrait-url');
   const pendingFile = byId('staff-portrait-file')?.files?.[0];
+  const positionValue = Number(byId('staff-portrait-position')?.value ?? 50);
+  const portraitPosition = `50% ${Math.max(0, Math.min(100, positionValue))}%`;
 
   if (isNew && !pendingFile && !urlField.value.trim()) {
     showToast('Add a portrait — it appears with everything they publish.', {
@@ -6316,7 +6340,7 @@ async function saveStaffFromForm(form) {
       const squared = new File([await squareUpImage(pendingFile)], "portrait.jpg", {
         type: "image/jpeg"
       });
-      const { url, isLocal } = await uploadImage(squared);
+      const { url, isLocal } = await uploadImage(squared, { metadata: { portrait_position: portraitPosition } });
       portraitUrl = url;
       busy.remove();
       if (isLocal) {
@@ -6335,7 +6359,7 @@ async function saveStaffFromForm(form) {
   if (editingStaffId) {
     member = await store.updateStaff(editingStaffId, payload);
     if (member && portraitUrl) {
-      const result = await assignPortrait(editingStaffId, portraitUrl);
+      const result = await assignPortrait(editingStaffId, portraitUrl, portraitPosition);
       if (!result.ok) showToast(result.message, { type: 'error' });
     }
     showToast('Staff record updated.', { type: 'success' });
@@ -6345,7 +6369,7 @@ async function saveStaffFromForm(form) {
     // Attach the portrait to the row the database just gave us. Without the id
     // returned by createStaff there is nothing to attach it to.
     if (member?.id && portraitUrl) {
-      const result = await assignPortrait(member.id, portraitUrl);
+      const result = await assignPortrait(member.id, portraitUrl, portraitPosition);
       if (result.ok) {
         showToast('Staffer added, with portrait.', { type: 'success' });
       } else {
@@ -7607,6 +7631,23 @@ async function saveInterviewFromForm() {
   paintActiveTab();
 }
 
+/**
+ * Extract the vertical percentage from an `object-position` string such as
+ * "50% 20%". Falls back to 50 when the value is missing or unparseable.
+ */
+function parseVerticalPercent(position) {
+  const match = String(position || '').match(/(\d+(?:\.\d+)?)\s*%/g);
+  if (match && match.length >= 2) {
+    const v = parseFloat(match[1]);
+    if (Number.isFinite(v)) return Math.max(0, Math.min(100, Math.round(v)));
+  }
+  if (match && match.length === 1) {
+    const v = parseFloat(match[0]);
+    if (Number.isFinite(v)) return Math.max(0, Math.min(100, Math.round(v)));
+  }
+  return 50;
+}
+
 /** Open the staff editor. */
 function openStaffEditor(staffId) {
   const member = staffId
@@ -7634,6 +7675,45 @@ function openStaffEditor(staffId) {
   // would silently attach to the next person the Owner hires.
   byId('staff-portrait-url').value = '';
   if (byId('staff-portrait-file')) byId('staff-portrait-file').value = '';
+
+  // Live portrait preview + vertical framing. The slider drives object-position
+  // on the preview image; the stored value is read back in saveStaffFromForm().
+  const preview = byId('staff-portrait-preview');
+  const slider = byId('staff-portrait-position');
+  const valueLabel = byId('staff-portrait-position-value');
+  const initialPos = member?.portraitPosition || '50% 50%';
+  const initialVertical = parseVerticalPercent(initialPos);
+  if (slider) slider.value = String(initialVertical);
+  if (valueLabel) valueLabel.textContent = `${initialVertical}%`;
+  if (preview) {
+    const existingUrl = member?.portrait_url ? safeUrl(member.portrait_url) : '';
+    if (existingUrl) {
+      preview.src = existingUrl;
+      preview.style.objectPosition = `50% ${initialVertical}%`;
+    } else {
+      preview.removeAttribute('src');
+      preview.style.objectPosition = '50% 50%';
+    }
+  }
+
+  // Wire the live updates (idempotent: remove first).
+  if (slider) {
+    slider.oninput = () => {
+      const v = Number(slider.value);
+      if (valueLabel) valueLabel.textContent = `${v}%`;
+      if (preview) preview.style.objectPosition = `50% ${v}%`;
+    };
+  }
+  const fileInput = byId('staff-portrait-file');
+  if (fileInput) {
+    fileInput.onchange = () => {
+      const file = fileInput.files?.[0];
+      if (!file || !preview) return;
+      const objectUrl = URL.createObjectURL(file);
+      preview.src = objectUrl;
+      preview.onload = () => URL.revokeObjectURL(objectUrl);
+    };
+  }
 
   openDialog('staff-editor', { initialFocus: '#staff-name' });
 }
