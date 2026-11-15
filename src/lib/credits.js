@@ -1184,13 +1184,14 @@ export async function resetPortrait(staffId) {
  * @param {string} staffId
  * @param {string} url
  */
-export async function assignPortrait(staffId, url) {
+export async function assignPortrait(staffId, url, position = null) {
   const client = getSupabase();
   if (!client) return { ok: false, message: 'Not connected to the newsroom server.' };
 
   const { error } = await client.rpc('wire_assign_portrait', {
     p_staff_id: staffId,
-    p_url: String(url || '').trim()
+    p_url: String(url || '').trim(),
+    p_position: position == null ? null : String(position).trim()
   });
 
   if (error) {

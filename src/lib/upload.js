@@ -85,7 +85,7 @@ function objectName(file) {
  * @param {File} file
  * @returns {Promise<{url: string, isLocal: boolean}>}
  */
-export async function uploadImage(file) {
+export async function uploadImage(file, opts = {}) {
   const problem = validateImageFile(file);
   if (problem) throw new Error(problem);
 
@@ -94,9 +94,13 @@ export async function uploadImage(file) {
   if (client) {
     try {
       const path = objectName(file);
+      const uploadOpts = { cacheControl: '31536000', upsert: false };
+      if (opts && opts.metadata && typeof opts.metadata === 'object') {
+        uploadOpts.metadata = opts.metadata;
+      }
       const { error } = await client.storage
         .from(BUCKET)
-        .upload(path, file, { cacheControl: '31536000', upsert: false });
+        .upload(path, file, uploadOpts);
 
       if (error) throw error;
 

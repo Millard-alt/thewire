@@ -3645,6 +3645,14 @@ class because the ratio is the whole point.
 .hero.s .h span { display: inline-block; transform: skewX(10deg); }
 .spr { position: absolute; top: 22px; width: 130px; height: 44px; color: var(--mast-orn); --berry: var(--mast-berry); }
 .spr.l { left: 20px; } .spr.r { right: 20px; transform: scaleX(-1); }
+/* The holly ornament straddles the rule (top:-12px) and paints an opaque --bg
+   box so it can sit "on" the divider line. Tailwind's preflight removes the
+   h2 margin the design spec (docs/design/pulse-editions.html) relied on for
+   clearance, so that box was painting over the bottom of the section title
+   above it ("LATEST PODCASTS" etc.). The ornament rises 12px above the line,
+   so a 20px top gap keeps clear air between the title text and the ornament
+   box at every breakpoint while the ornament stays centred on the line. */
+[data-theme="christmas"] .rule { margin-top: 20px; }
 .holly { position: absolute; left: 50%; top: -12px; transform: translateX(-50%); width: 68px; height: 24px; padding: 0 10px; background: var(--bg); color: var(--orn); box-sizing: content-box; }
 .snow { position: absolute; left: 0; right: 0; top: 0; overflow: hidden; pointer-events: none; z-index: 3; -webkit-mask-image: linear-gradient(#000 65%, transparent); mask-image: linear-gradient(#000 65%, transparent); }
 .snow { --flake: #F2F5F0; }
@@ -3793,4 +3801,21 @@ class because the ratio is the whole point.
     height: 2.75rem;
     right: calc(100% + 0.5rem);
   }
+}
+
+.staff-portrait-preview-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 0.5rem 0;
+}
+.staff-portrait-preview {
+  width: 96px;
+  height: 96px;
+  border-radius: 9999px;
+  background: var(--color-surface-sunken, #f3f3f3);
+  border: 1px solid var(--color-rule, #ddd);
+  object-fit: cover;
+}
+.staff-portrait-preview[src=''] {
+  visibility: hidden;
 }

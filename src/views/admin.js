@@ -1780,7 +1780,7 @@ function renderPortraitReview(member) {
         <button class="btn btn-accent" data-action="portrait-approve"
           data-id="${escapeHtml(member.id)}"
           data-name="${escapeHtml(member.name)}"
-          aria-label="Approve ${escapeHtml(member.name)}'s portrait">
+          data-username="${escapeHtml(member.username)}" aria-label="Approve ${escapeHtml(member.name)}'s portrait">
           <i class="fa-solid fa-check" aria-hidden="true"></i> Approve
         </button>
         <button class="btn btn-quiet" data-action="portrait-reject"
@@ -2230,8 +2230,10 @@ function renderSecurityTab() {
           </label>
         </div>
         <p class="ink-muted text-xs">
-          When enabled, the publication records that the browser notification
-          permission was granted so opt-in prompts are never shown again.
+          When enabled, readers whose alerts are missing or blocked are held
+          behind the notifications gate until they turn alerts on. Requires
+          OneSignal to be configured (VITE_ONESIGNAL_APP_ID) and
+          VITE_ENABLE_FORCED_NOTIFICATION_LOCKOUT set to true.
         </p>
         <div class="flex justify-end">
           <button class="btn btn-ghost" data-action="toggle-forced">
@@ -2982,11 +2984,32 @@ function staffEditorDialog() {
                 placeholder="https://…"
               />
             </div>
-            <p class="text-xs ink-muted">
-              <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
-              This portrait appears beside every story they write, and on the
-              public Credits page. A square, face-cropped image works best.
-            </p>
+            <div>
+              <label class="field-label" for="staff-portrait-position">
+                Vertical framing <span class="ink-muted font-normal">(0 = top, 100 = bottom)</span>
+              </label>
+              <div class="flex items-center gap-3">
+                <input
+                  id="staff-portrait-position"
+                  class="field"
+                  type="range"
+                  min="0"
+                  max="100"
+                  value="50"
+                  aria-label="Vertical framing offset"
+                />
+                <span id="staff-portrait-position-value" class="ink-muted text-xs tabular-nums w-10 text-right">50%</span>
+              </div>
+            </div>
+            <div class="staff-portrait-preview-wrap">
+              <img
+                id="staff-portrait-preview"
+                class="staff-portrait-preview"
+                alt="Portrait preview"
+                src=""
+                style="object-fit: cover; object-position: 50% 50%;"
+              />
+            </div>
           </div>
 
           <div class="flex justify-end gap-2 pt-2">
@@ -3282,8 +3305,9 @@ function accountsPanel(rows) {
       ${
         staff.length
           ? `<p class="ink-muted text-xs">
-               Removing somebody signs them out and deletes their account; they
-               would have to register again. To keep somebody on the books but
+               Removing somebody signs them out and deletes their account together
+               with their Staff roster profile; they would have to register again.
+               To keep somebody on the books but
                lock them out, change their role to <strong>Writer</strong>
                instead, which is the weakest role on the board.
              </p>`
@@ -3471,6 +3495,71 @@ async function reloadAccounts() {
   paintActiveTab();
   accountsCache = await loadAccounts();
   if (activeTab === 'accounts') paintActiveTab();
+}
+
+/**
+ * Remove a person from BOTH tabs with one database mutation.
+ *
+ * `staff_accounts` is the parent table: public.staff points at it through the
+ * `staff_account_id_fkey` foreign key with ON DELETE CASCADE (migration 045),
+ * so removing the ACCOUNT row deletes the matching STAFF profile in the same
+ * statement. That makes the database the single source of truth for who is on
+ * the team, and both delete buttons funnel through here:
+ *
+ *   - from the Accounts tab the account id is already in hand;
+ *   - from the Staff tab the profile row is the child, so it is resolved to
+ *     its account by username first and deleted THROUGH the parent -- deleting
+ *     the child directly would strand a live, sign-in-capable account.
+ *
+ * Only the Owner may delete through the parent: `wire_reject_account`
+ * re-checks `is_owner()` in Postgres, so a Board Manager using the Staff tab
+ * (minRole 'Board Manager') deletes the profile row directly and leaves the
+ * account untouched, exactly as the panel behaved before the cascade existed.
+ *
+ * The in-memory roster is then trimmed to match, so the Staff tab is correct
+ * the moment it is painted: no manual refresh, and no second copy of the
+ * username-scavenging sync logic that could drift from this one.
+ */
+async function removePersonGlobally({ accountId = null, staffId = null, username = '' } = {}) {
+  const wanted = String(username || '').trim().toLowerCase();
+  const owner = isOwner();
+
+  // 1. Resolve the account id when the caller only knows the profile row.
+  let targetAccountId = owner ? accountId : null;
+  if (!targetAccountId && owner && wanted) {
+    const accounts = await listAccounts();
+    targetAccountId =
+      (accounts || []).find(
+        (a) => String(a.username || '').trim().toLowerCase() === wanted
+      )?.id || null;
+  }
+
+  // 2. Delete through the parent; the cascade removes the staff profile.
+  if (targetAccountId) {
+    await rejectAccount(targetAccountId);
+  }
+
+  // 3. Mirror the cascade in the in-memory roster so the other tab repaints
+  //    correctly. When the cascade fired, the database row is already gone and
+  //    `deleteStaff` is a harmless no-op against Supabase -- its real job here
+  //    is dropping the row from local state and writing the audit line.
+  const roster = store.listStaff();
+  const doomed = roster.find(
+    (m) =>
+      (staffId && m.id === staffId) ||
+      (wanted && String(m.username || '').trim().toLowerCase() === wanted)
+  );
+  if (doomed?.id) {
+    try {
+      await store.deleteStaff(doomed.id);
+    } catch (error) {
+      console.warn('[admin] could not trim the local roster', error);
+    }
+  } else if (!targetAccountId && staffId) {
+    // No account, no cascade: a seeded roster entry with no sign-in. The
+    // profile row is the only row there is, so delete it directly.
+    await store.deleteStaff(staffId);
+  }
 }
 
 /** The account whose password is being reset, and the id it will be written to. */
@@ -6199,7 +6288,8 @@ async function saveStaffFromForm(form) {
     name: byId('staff-name').value,
     username: byId('staff-username').value,
     email: byId('staff-email').value,
-    role: byId('staff-role').value
+    role: byId('staff-role').value,
+    portraitPosition
   };
 
   // The status is the one field a save must never invent. This dialog is opened
@@ -6230,6 +6320,8 @@ async function saveStaffFromForm(form) {
   const isNew = !editingStaffId;
   const urlField = byId('staff-portrait-url');
   const pendingFile = byId('staff-portrait-file')?.files?.[0];
+  const positionValue = Number(byId('staff-portrait-position')?.value ?? 50);
+  const portraitPosition = `50% ${Math.max(0, Math.min(100, positionValue))}%`;
 
   if (isNew && !pendingFile && !urlField.value.trim()) {
     showToast('Add a portrait — it appears with everything they publish.', {
@@ -6250,7 +6342,7 @@ async function saveStaffFromForm(form) {
       const squared = new File([await squareUpImage(pendingFile)], "portrait.jpg", {
         type: "image/jpeg"
       });
-      const { url, isLocal } = await uploadImage(squared);
+      const { url, isLocal } = await uploadImage(squared, { metadata: { portrait_position: portraitPosition } });
       portraitUrl = url;
       busy.remove();
       if (isLocal) {
@@ -6269,7 +6361,7 @@ async function saveStaffFromForm(form) {
   if (editingStaffId) {
     member = await store.updateStaff(editingStaffId, payload);
     if (member && portraitUrl) {
-      const result = await assignPortrait(editingStaffId, portraitUrl);
+      const result = await assignPortrait(editingStaffId, portraitUrl, portraitPosition);
       if (!result.ok) showToast(result.message, { type: 'error' });
     }
     showToast('Staff record updated.', { type: 'success' });
@@ -6279,7 +6371,7 @@ async function saveStaffFromForm(form) {
     // Attach the portrait to the row the database just gave us. Without the id
     // returned by createStaff there is nothing to attach it to.
     if (member?.id && portraitUrl) {
-      const result = await assignPortrait(member.id, portraitUrl);
+      const result = await assignPortrait(member.id, portraitUrl, portraitPosition);
       if (result.ok) {
         showToast('Staffer added, with portrait.', { type: 'success' });
       } else {
@@ -7265,7 +7357,8 @@ const CONFIRM_COPY = {
   interview:
     'Delete this interview permanently? Any published videos go with it. This cannot be undone.',
   assignment: 'Close and delete this assignment?',
-  staff: 'Remove this staff member from the roster?',
+  staff:
+    'Remove this staff member? Their newsroom account and roster profile are removed together.',
   media: 'Remove this image from the media library?',
   broadcast: 'Remove this broadcast from the delivery history?',
   reset: 'Reset all locally stored data back to the seed content?'
@@ -7540,6 +7633,23 @@ async function saveInterviewFromForm() {
   paintActiveTab();
 }
 
+/**
+ * Extract the vertical percentage from an `object-position` string such as
+ * "50% 20%". Falls back to 50 when the value is missing or unparseable.
+ */
+function parseVerticalPercent(position) {
+  const match = String(position || '').match(/(\d+(?:\.\d+)?)\s*%/g);
+  if (match && match.length >= 2) {
+    const v = parseFloat(match[1]);
+    if (Number.isFinite(v)) return Math.max(0, Math.min(100, Math.round(v)));
+  }
+  if (match && match.length === 1) {
+    const v = parseFloat(match[0]);
+    if (Number.isFinite(v)) return Math.max(0, Math.min(100, Math.round(v)));
+  }
+  return 50;
+}
+
 /** Open the staff editor. */
 function openStaffEditor(staffId) {
   const member = staffId
@@ -7567,6 +7677,45 @@ function openStaffEditor(staffId) {
   // would silently attach to the next person the Owner hires.
   byId('staff-portrait-url').value = '';
   if (byId('staff-portrait-file')) byId('staff-portrait-file').value = '';
+
+  // Live portrait preview + vertical framing. The slider drives object-position
+  // on the preview image; the stored value is read back in saveStaffFromForm().
+  const preview = byId('staff-portrait-preview');
+  const slider = byId('staff-portrait-position');
+  const valueLabel = byId('staff-portrait-position-value');
+  const initialPos = member?.portraitPosition || '50% 50%';
+  const initialVertical = parseVerticalPercent(initialPos);
+  if (slider) slider.value = String(initialVertical);
+  if (valueLabel) valueLabel.textContent = `${initialVertical}%`;
+  if (preview) {
+    const existingUrl = member?.portrait_url ? safeUrl(member.portrait_url) : '';
+    if (existingUrl) {
+      preview.src = existingUrl;
+      preview.style.objectPosition = `50% ${initialVertical}%`;
+    } else {
+      preview.removeAttribute('src');
+      preview.style.objectPosition = '50% 50%';
+    }
+  }
+
+  // Wire the live updates (idempotent: remove first).
+  if (slider) {
+    slider.oninput = () => {
+      const v = Number(slider.value);
+      if (valueLabel) valueLabel.textContent = `${v}%`;
+      if (preview) preview.style.objectPosition = `50% ${v}%`;
+    };
+  }
+  const fileInput = byId('staff-portrait-file');
+  if (fileInput) {
+    fileInput.onchange = () => {
+      const file = fileInput.files?.[0];
+      if (!file || !preview) return;
+      const objectUrl = URL.createObjectURL(file);
+      preview.src = objectUrl;
+      preview.onload = () => URL.revokeObjectURL(objectUrl);
+    };
+  }
 
   openDialog('staff-editor', { initialFocus: '#staff-name' });
 }
@@ -8073,21 +8222,14 @@ function handleClick(event) {
     case 'staff-delete':
       if (askToDelete('staff', name)) {
         guard(async () => {
-          await store.deleteStaff(id);
-          // Keep the Accounts tab in sync: the same person may have an auth
-          // account keyed by the same username, and deleting only the staff
-          // profile leaves a dangling, sign-in-capable account behind.
-          if (username) {
-            try {
-              const accounts = await listAccounts();
-              const match = (accounts || []).find(
-                (a) => String(a.username || '').toLowerCase() === String(username).toLowerCase()
-              );
-              if (match?.id) await rejectAccount(match.id);
-            } catch (error) {
-              console.warn('[admin] could not remove the matching account', error);
-            }
-          }
+          // ONE delete, ONE source of truth. Where the staffer has an account,
+          // removePersonGlobally deletes the ACCOUNT row and the
+          // staff_account_id_fkey cascade (migration 045) removes the profile
+          // in the same statement; only accountless roster entries are deleted
+          // directly. Either way the local roster is trimmed, so this tab and
+          // the Accounts tab both repaint from a consistent state.
+          await removePersonGlobally({ staffId: id, username });
+          // The matching sign-in account, if there was one, went with them.
           await reloadAccounts();
           showToast('Staff member removed.', { type: 'success' });
         });
@@ -8106,6 +8248,13 @@ function handleClick(event) {
         if (!result.ok) {
           showToast(result.message, { type: 'error', duration: 6000 });
           return;
+        }
+        if (approving && username) {
+          push.sendOneSignalNotification({
+            externalId: username,
+            title: 'Portrait approved',
+            message: `${name || 'Your'} portrait is now live beside your bylines.`
+          }).catch((error) => console.warn('[admin] OneSignal notify failed', error));
         }
         // primePortraits() re-reads the sticker cache so the byline photo and
         // the Credits page reflect the decision without a page reload.
@@ -8630,6 +8779,14 @@ case 'gallery-category-delete': {
       guard(async () => {
         await approveAccount(id, role);
         showToast(`Account approved as ${role}.`, { type: 'success' });
+        // Tell the staffer their account is live, even if the app is closed.
+        if (username) {
+          push.sendOneSignalNotification({
+            externalId: username,
+            title: 'Account approved',
+            message: `Your account has been approved as ${role}. You can now sign in.`
+          }).catch((error) => console.warn('[admin] OneSignal notify failed', error));
+        }
         await reloadAccounts();
       });
       break;
@@ -8658,27 +8815,16 @@ case 'gallery-category-delete': {
     case 'account-remove':
       if (
         window.confirm(
-          `Remove @${username}? They will be signed out immediately and will have to register again.`
+          `Remove @${username}? They will be signed out immediately, their Staff roster profile goes with them, and they will have to register again.`
         )
       ) {
         guard(async () => {
-          await rejectAccount(id);
-          // Keep the Staff tab in sync: drop the matching newsroom profile too,
-          // so the two tabs never disagree about who is on the team.
-          if (username) {
-            const match = store
-              .listStaff()
-              .find(
-                (m) => String(m.username || '').toLowerCase() === String(username).toLowerCase()
-              );
-            if (match?.id) {
-              try {
-                await store.deleteStaff(match.id);
-              } catch (error) {
-                console.warn('[admin] could not remove the matching staff profile', error);
-              }
-            }
-          }
+          // ONE delete, ONE source of truth. Deleting the account row fires
+          // the staff_account_id_fkey cascade (migration 045), which removes
+          // the matching staff profile server-side in the same statement;
+          // removePersonGlobally mirrors that into the in-memory roster so
+          // the Staff tab is correct the moment it is painted. No reload.
+          await removePersonGlobally({ accountId: id, username });
           showToast(`@${username} removed.`, { type: 'success' });
           await reloadAccounts();
         });
