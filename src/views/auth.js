@@ -92,8 +92,7 @@ export function renderAuthSlot(session, { onOpenAdmin } = {}) {
         aria-controls="account-menu"
       >
         <span
-          class="flex h-5 w-5 items-center justify-center rounded-full font-mono text-[0.625rem] font-bold"
-          style="background: var(--accent); color: var(--accent-contrast)"
+          class="badge-step flex h-5 w-5 items-center justify-center rounded-full font-mono text-[0.625rem] font-bold"
           aria-hidden="true"
         >${escapeHtml(initials)}</span>
         <span class="hidden sm:inline">${label}</span>

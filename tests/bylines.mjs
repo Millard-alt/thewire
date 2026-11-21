@@ -184,7 +184,7 @@ report(
 );
 report(
   'the fallback disarms itself, so a dead image cannot loop',
-  /this\.onerror=null;/.test(read('src/lib/dom.js'))
+  /data-fallback-applied/.test(read('src/lib/dom.js'))
 );
 
 console.log('\ncredits.js — only APPROVED portraits reach a byline\n');

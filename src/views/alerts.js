@@ -133,8 +133,7 @@ function gateMarkup(permission) {
       (step, index) => `
         <li class="flex gap-3">
           <span
-            class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[0.65rem] font-bold"
-            style="background: var(--accent); color: var(--accent-contrast)"
+            class="badge-step flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[0.65rem] font-bold"
             aria-hidden="true"
           >${index + 1}</span>
           <span class="text-sm leading-relaxed">${escapeHtml(step)}</span>

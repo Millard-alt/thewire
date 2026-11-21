@@ -147,16 +147,40 @@ export const AVATAR_FALLBACK =
   );
 
 /**
- * The `onerror` attribute for a rendered `<img>`.
+ * The `data-fallback` attribute for a rendered `<img>`.
  *
- * `this.onerror = null` first, so the swap happens exactly once: without it a
- * fallback that itself fails re-enters the handler forever.
+ * Carries the fallback URL as data instead of an inline `onerror` handler,
+ * because the strict CSP in vercel.json forbids inline event-handler
+ * attributes (`script-src` has no `'unsafe-inline'`). A single
+ * document-level capture-phase `error` listener (installed below at module
+ * load) performs the swap exactly once: it sets `data-fallback-applied` so a
+ * fallback that itself fails cannot re-enter the handler.
  *
  * @param {string} [fallback] any URL the browser can always fetch
  * @returns {string} an attribute fragment, safe to interpolate into a template
  */
 export function imageFallbackAttr(fallback = AVATAR_FALLBACK) {
-  return `onerror="this.onerror=null;this.src='${escapeAttr(fallback)}'"`;
+  return `data-fallback="${escapeAttr(fallback)}"`;
+}
+
+// One listener for the whole document, installed once on import. Capture
+// phase is required: the `error` event does not bubble, but it does travel
+// through the capture phase, so a listener on `document` catches every <img>
+// failure -- including images inserted after this module loads.
+if (typeof document !== 'undefined') {
+  document.addEventListener(
+    'error',
+    (event) => {
+      const img = event.target;
+      if (!(img instanceof HTMLImageElement)) return;
+      const fallback = img.dataset?.fallback;
+      if (!fallback || img.dataset.fallbackApplied === 'true') return;
+      img.dataset.fallbackApplied = 'true';
+      img.removeAttribute('data-fallback');
+      img.src = fallback;
+    },
+    true
+  );
 }
 
 /* -------------------------------------------------------------------------- */

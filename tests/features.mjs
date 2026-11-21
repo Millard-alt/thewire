@@ -129,7 +129,7 @@ report(
    phrase swap renamed a function inside a comment. */
 const wireTokens = (() => {
   const found = new Map();
-  for (const file of ['src/app.js', 'src/lib/store.js', 'src/lib/auth.js', 'src/lib/credits.js', 'src/lib/podcasts.js', 'src/views/public.js', 'src/views/admin.js', 'src/views/alerts.js', 'src/lib/push.js', 'supabase/credentials.sql']) {
+  for (const file of ['src/app.js', 'src/lib/store.js', 'src/lib/auth.js', 'src/lib/credits.js', 'src/lib/podcasts.js', 'src/lib/theme.js', 'src/views/public.js', 'src/views/admin.js', 'src/views/alerts.js', 'src/lib/push.js', 'supabase/credentials.sql']) {
     const text = read(file);
     for (const m of text.matchAll(/\bwire[_-][A-Za-z0-9_-]+/gi)) {
       found.set(m[0], (found.get(m[0]) || 0) + 1);

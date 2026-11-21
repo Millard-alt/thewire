@@ -1334,6 +1334,56 @@ body.admin-active.dialog-locked {
   }
   .emergency-pulse {
     animation: pulseGlow 2.5s infinite ease-in-out;
+    /* Painted from the breaking-banner theme tokens. These were inline style
+       attributes once; they are classes now so the strict CSP in vercel.json
+       can drop 'unsafe-inline' from style-src entirely. */
+    background: var(--brk-bg);
+    color: var(--brk-ink);
+  }
+  /* The severity chip inside the breaking bar: white on the banner colour. */
+  .badge-breaking {
+    background: #fff;
+    color: var(--brk-bg);
+  }
+  /* Numbered step badges (alerts gate) and the initials chip (account menu)
+     share one accent-on-surface treatment. */
+  .badge-step {
+    background: var(--accent);
+    color: var(--accent-contrast);
+  }
+  /* Auth modal: the icon chip and the tab switcher used to be inline style
+     attributes. Moved here so style-src can stay free of 'unsafe-inline'. */
+  .auth-modal-icon {
+    background: var(--accent);
+    color: var(--accent-contrast);
+  }
+  .auth-tablist {
+    background: var(--surface-sunken);
+  }
+  .auth-error-box {
+    background: color-mix(in srgb, #b3261a 14%, transparent);
+    color: #b3261a;
+    border: 1px solid color-mix(in srgb, #b3261a 35%, transparent);
+  }
+  .auth-success-box {
+    background: color-mix(in srgb, #10b981 14%, transparent);
+    color: #047857;
+    border: 1px solid color-mix(in srgb, #10b981 35%, transparent);
+  }
+  /* Owner-panel theme preview. The 1280x800 iframe is scaled down by JS via
+     the CSSOM transform on the frame; its static geometry lives here rather
+     than in style attributes, for the same CSP reason as above. */
+  .theme-preview-wrap {
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+    height: 600px;
+  }
+  .theme-preview-frame {
+    width: 1280px;
+    height: 800px;
+    border: 1px solid var(--rule-soft);
+    transform-origin: top left;
   }
   .spin-slow {
     animation: spin 1.1s linear infinite;
@@ -3815,6 +3865,9 @@ class because the ratio is the whole point.
   background: var(--color-surface-sunken, #f3f3f3);
   border: 1px solid var(--color-rule, #ddd);
   object-fit: cover;
+  /* Centre default; the framing slider overrides this via the CSSOM
+     (preview.style.objectPosition), which CSP permits. */
+  object-position: 50% 50%;
 }
 .staff-portrait-preview[src=''] {
   visibility: hidden;

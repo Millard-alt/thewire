@@ -8,20 +8,22 @@
    than opening a duplicate one, then routes the reader to the broadcast link.
    ========================================================================== */
 
-// v2: the v1 shell could be cached from a months-old deployment (the activate
-// handler can only delete caches it creates on this update), so the name bumps
-// whenever the shell's meaning changes and the old copy is evicted here.
-const SHELL_CACHE = 'thewire-shell-v2';
+// v3: the shell now includes /theme-boot.js (moved out of index.html for CSP)
+// and an index.html that references it, so the name bumps and the old copy is
+// evicted here.
+const SHELL_CACHE = 'thewire-shell-v3';
 
 /**
  * Static assets that make the publication look correct. They are same-origin and
  * immutable-ish, so they are safe to serve from cache when the network fails.
  * Fonts and the icon sheet are included deliberately: a blocked CDN request must
- * never be able to strip the page of its typography or icons.
+ * never be able to strip the page of its typography or icons. /theme-boot.js is
+ * included so an offline start still paints in the reader's chosen theme.
  */
 const SHELL_ASSETS = [
   '/',
   '/index.html',
+  '/theme-boot.js',
   '/vendor/fontawesome/all.min.css',
   '/icons/icon-192.png',
   '/manifest.webmanifest'

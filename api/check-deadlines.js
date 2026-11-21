@@ -24,6 +24,7 @@
 import crypto from 'node:crypto';
 import webpush from 'web-push';
 import { createClient } from '@supabase/supabase-js';
+import { applySecurityHeaders } from './_security.js';
 
 const TAG = '[api/check-deadlines]';
 
@@ -85,6 +86,9 @@ function hoursUntil(dueAt) {
 }
 
 export default async function handler(req, res) {
+  // Security headers first, so every branch below carries them.
+  applySecurityHeaders(res);
+
   console.log(`${TAG} invoked`, {
     method: req.method,
     hasPushToken: Boolean(PUSH_TOKEN),

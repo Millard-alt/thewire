@@ -33,6 +33,8 @@ function loadSdk() {
       const script = document.createElement('script');
       script.src = SDK_URL;
       script.defer = true;
+      script.integrity = 'sha384-qOZAgMhG6XuXkezYVIeLdYtonxw+lNknfWfvbPbBWH5cSO5T6nSshFPzEfUoL7ZV';
+      script.crossOrigin = 'anonymous';
       script.setAttribute('data-onesignal-sdk', 'true');
       script.addEventListener('error', () => reject(new Error('OneSignal SDK failed to load.')));
       document.head.appendChild(script);

@@ -50,6 +50,7 @@
 import crypto from 'node:crypto';
 import webpush from 'web-push';
 import { createClient } from '@supabase/supabase-js';
+import { applySecurityHeaders } from './_security.js';
 
 const TAG = '[api/send-push]';
 
@@ -253,6 +254,10 @@ function payloadFor(broadcast) {
 }
 
 export default async function handler(req, res) {
+  // Security headers first, so every branch below (including the early error
+  // returns) carries them.
+  applySecurityHeaders(res);
+
   console.log(`${TAG} invoked`, {
     method: req.method,
     hasToken: Boolean(PUSH_TOKEN),

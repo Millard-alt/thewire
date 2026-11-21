@@ -69,6 +69,8 @@ export function applyEdition(themeId, options, { updateCache = false } = {}) {
       link.id = 'sports-font';
       link.rel = 'stylesheet';
       link.href = 'https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@1,800&display=swap';
+      link.integrity = 'sha384-e3E9KcOHaEsJJt8Iq1lBjDF7wWhHYryBhtFuC1at2vykVb7adnJ8v+y1Uz14tvrc';
+      link.crossOrigin = 'anonymous';
       document.head.appendChild(link);
     }
     if (theme !== 'sports' && existing) existing.remove();

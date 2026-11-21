@@ -2509,8 +2509,8 @@ function renderThemesTab() {
           </select>
           <button type="button" class="btn btn-ghost" data-action="theme-preview-refresh">Refresh preview</button>
         </div>
-        <div id="theme-preview-wrapper" style="position:relative;overflow:hidden;width:100%;height:600px;">
-          <iframe id="theme-preview-frame" src="${previewSrc}" style="width:1280px;height:800px;border:1px solid var(--rule-soft);transform-origin:top left;"></iframe>
+        <div id="theme-preview-wrapper" class="theme-preview-wrap">
+          <iframe id="theme-preview-frame" class="theme-preview-frame" src="${previewSrc}"></iframe>
         </div>
       </div>
     </div>
@@ -3007,7 +3007,7 @@ function staffEditorDialog() {
                 class="staff-portrait-preview"
                 alt="Portrait preview"
                 src=""
-                style="object-fit: cover; object-position: 50% 50%;"
+                ${imageFallbackAttr()}
               />
             </div>
           </div>
@@ -3723,6 +3723,29 @@ function renderCreditsTab() {
 }
 
 /**
+ * Apply the per-band `--band` colour custom property for every rendered band.
+ *
+ * The band sections carry their colour in `data-band-colour` rather than an
+ * inline `style="--band:…"` attribute, because the strict CSP in vercel.json
+ * forbids inline style attributes. Writing through the CSSOM (`el.style`)
+ * here is the CSP-permitted equivalent, and it must run after every paint of
+ * the roster panel — both the initial `paintActiveTab()` render and the async
+ * re-render in `renderRosterTab()` once the roster has loaded.
+ *
+ * A band missing the attribute keeps the stylesheet's own `--band` fallback,
+ * so a future render path that forgets this call degrades to the default red
+ * rather than to an unstyled band.
+ *
+ * @param {HTMLElement} root element that contains the band sections
+ */
+function applyBandColours(root) {
+  if (!root) return;
+  root.querySelectorAll('[data-band-colour]').forEach((el) => {
+    el.style.setProperty('--band', el.dataset.bandColour);
+  });
+}
+
+/**
  * One page's editor: an "add" form plus one card per person on THAT page.
  *
  * Both tabs land here. The differences are all data — the scope, which order
@@ -3762,6 +3785,7 @@ function renderRosterTab(scope) {
     creditsPeople = people;
     if (!body.isConnected || body.dataset.tab !== tabId) return;
     body.innerHTML = rosterPanel(people, scope);
+    applyBandColours(body);
   });
 
   return `<div class="panel-sunken p-10 text-center">
@@ -3946,7 +3970,7 @@ function aboutCategorySection(people, category) {
   };
 
   return `
-    <section class="credits-band-editor" style="--band:${colour}"
+    <section class="credits-band-editor" data-band-colour="${escapeHtml(colour)}"
       data-about-section="${escapeHtml(category)}">
       <div class="credits-band-editor__head">
         <span class="credits-band-editor__name">${escapeHtml(category)}</span>
@@ -3999,7 +4023,7 @@ function creditsRoleBand(band, index, total) {
     normaliseColour(band.members.find((m) => m.role_color)?.role_color) || DEFAULT_ROLE_COLOR;
 
   return `
-    <section class="credits-band-editor" style="--band:${colour}" data-credits-band="${role}">
+    <section class="credits-band-editor" data-band-colour="${escapeHtml(colour)}" data-credits-band="${role}">
       <div class="credits-band-editor__head">
         <span class="credits-band__rail" aria-hidden="true"></span>
         <span class="credits-band-editor__name">${role}</span>
@@ -4082,7 +4106,7 @@ function rosterPersonCard(person, scope) {
       <form class="space-y-3" data-credits-form="${id}"
         data-roster-scope="${onAbout ? 'about_us' : 'credits'}" novalidate>
         <div class="flex items-start gap-3">
-          ${avatar(person, 56)}
+          ${avatar(person)}
 
           <div class="min-w-0 flex-1">
             <label class="field-label" for="credits-name-${id}">Name</label>
@@ -4398,12 +4422,14 @@ function rosterAddForm(people, scope) {
  * `safeUrl` rejects anything that is not an http(s) or data image, so a hostile
  * `portrait_url` cannot become a javascript: link.
  *
+ * The size is a Tailwind class (`h-14 w-14`, 56px) rather than an interpolated
+ * style attribute: the strict CSP in vercel.json forbids inline style
+ * attributes, and every roster card renders at the same 56px edge.
+ *
  * @param {{name: string, portrait_url: string}} person
- * @param {number} size  rendered edge in px
  */
-function avatar(person, size) {
+function avatar(person) {
   const url = safeUrl(person.portrait_url);
-  const style = `width:${size}px;height:${size}px`;
 
   if (url) {
     // escapeHtml on the URL too: safeUrl() accepts any root-relative path, and
@@ -4413,12 +4439,12 @@ function avatar(person, size) {
     return `<img src="${escapeHtml(url)}" ${imageFallbackAttr()} alt="${escapeHtml(
       person.name || ''
     )}" loading="lazy"
-      class="shrink-0 rounded-full object-cover" style="${style}" />`;
+      class="h-14 w-14 shrink-0 rounded-full object-cover" />`;
   }
 
   return `<span aria-hidden="true"
-    class="grid shrink-0 place-items-center rounded-full bg-ink/10 font-black ink-muted"
-    style="${style}">${escapeHtml(initialsOf(person.name))}</span>`;
+    class="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-ink/10 font-black ink-muted"
+    >${escapeHtml(initialsOf(person.name))}</span>`;
 }
 
 /** First letters of the first and last name, e.g. "Amina Mohamed" -> "AM". */
@@ -5570,6 +5596,9 @@ function paintActiveTab() {
   // late response, so it must be stamped for every tab, not just that one.
   body.dataset.tab = tab.id;
   body.innerHTML = tab.render();
+  // Roster bands (About Us / Credits) carry their colours in data attributes;
+  // apply them through the CSSOM now that the markup exists.
+  applyBandColours(body);
   body.classList.remove('animate-rise');
   void body.offsetWidth; // restart the entrance animation
   body.classList.add('animate-rise');

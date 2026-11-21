@@ -19,6 +19,7 @@
  *   VITE_SUPABASE_ANON_KEY / SUPABASE_ANON_KEY   (for the owner-session check)
  */
 import { createClient } from '@supabase/supabase-js';
+import { applySecurityHeaders } from './_security.js';
 
 const TAG = '[api/send-onesignal]';
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
@@ -48,6 +49,9 @@ async function isOwnerSession(req, ownerCheck) {
 }
 
 export default async function handler(req, res) {
+  // Security headers first, so every branch below carries them.
+  applySecurityHeaders(res);
+
   if (req.method !== 'POST') {
     return fail(res, 405, 'method_not_allowed', 'Use POST.');
   }
@@ -57,7 +61,11 @@ export default async function handler(req, res) {
 
   const ownerAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
   let ownerCheck = null;
-  if (ownerAnonKey && SUPABASE_URL) {
+  if (!SUPABASE_URL) {
+    // No Supabase URL: the owner-session check cannot run. Leave ownerCheck
+    // null so isOwnerSession() resolves false instead of throwing inside
+    // createClient() and surfacing as a bare 500.
+  } else if (ownerAnonKey) {
     ownerCheck = createClient(SUPABASE_URL, ownerAnonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
       global: {
