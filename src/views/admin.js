@@ -4585,6 +4585,8 @@ function inlineMarkdown(text) {
 
 /** The queue is fetched once per visit and re-fetched after every decision. */
 let podcastQueue = null;
+let podcastMixer = null;
+let podcastMixerStatus = 'idle';
 
 /**
  * THE WRITER VIEW OF THE PODCASTS TAB: submit, and see your own queue.
@@ -4659,6 +4661,47 @@ function podcastSubmitPanel() {
           </div>
         </div>
 
+        <div class="podcast-mixer" id="podcast-sub-mixer">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label class="field-label" for="podcast-sub-bg-file">Background music (optional)</label>
+              <input id="podcast-sub-bg-file" class="field" type="file" accept=".mp3,.wav,.m4a,audio/*" />
+              <p class="mt-1 text-[0.6875rem] ink-muted">
+                MP3/WAV/M4A. Looped under your voice during playback and the final mix.
+              </p>
+              <button type="button" id="podcast-sub-bg-clear" class="btn btn-ghost mt-2 text-xs" disabled>
+                <i class="fa-solid fa-xmark" aria-hidden="true"></i> Remove background track
+              </button>
+            </div>
+            <div>
+              <label class="field-label" for="podcast-sub-bg-volume">Background volume</label>
+              <div class="flex items-center gap-3">
+                <input id="podcast-sub-bg-volume" type="range" min="0" max="100" value="20" class="flex-1" />
+                <span id="podcast-sub-bg-volume-readout" class="ink-muted text-xs tabular-nums w-10 text-right">20%</span>
+              </div>
+              <p class="mt-1 text-[0.6875rem] ink-muted">
+                Adjusts the music bed level in the live preview and the final mix.
+              </p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3 mt-3">
+            <button type="button" id="podcast-sub-preview-play" class="btn btn-ghost" disabled>
+              <i class="fa-solid fa-play" aria-hidden="true"></i> Preview mix
+            </button>
+            <button type="button" id="podcast-sub-preview-stop" class="btn btn-ghost" disabled>
+              <i class="fa-solid fa-stop" aria-hidden="true"></i> Stop
+            </button>
+            <span id="podcast-sub-preview-status" class="ink-muted text-xs">Select a voice track to enable preview.</span>
+          </div>
+          <div class="mt-2">
+            <div class="h-1.5 w-full rounded-full bg-ink/10 overflow-hidden">
+              <div id="podcast-sub-preview-progress" class="h-full bg-accent" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="field-label" for="podcast-sub-cover">Cover image URL</label>
         <div>
           <label class="field-label" for="podcast-sub-cover">Cover image URL</label>
           <input id="podcast-sub-cover" class="field" type="url"
@@ -5093,6 +5136,125 @@ async function openPodcastUpload() {
  *
  * @param {HTMLFormElement} form
  */
+/**
+ * Wire the background-music mixer UI in the Writer's podcast submit form.
+ *
+ * Creates (or reuses) a mixer instance, binds the voice file input, the
+ * background file input + clear button, the volume slider, and the preview
+ * play/stop controls. Safe to call repeatedly (idempotent via dataset.bound).
+ */
+function wirePodcastMixer() {
+  const voiceInput = byId('podcast-sub-file');
+  const bgInput = byId('podcast-sub-bg-file');
+  const clearBtn = byId('podcast-sub-bg-clear');
+  const volSlider = byId('podcast-sub-bg-volume');
+  const volReadout = byId('podcast-sub-bg-volume-readout');
+  const playBtn = byId('podcast-sub-preview-play');
+  const stopBtn = byId('podcast-sub-preview-stop');
+  const statusEl = byId('podcast-sub-preview-status');
+  const progressEl = byId('podcast-sub-preview-progress');
+  if (!voiceInput || !bgInput) return;
+
+  if (!podcastMixer) {
+    podcastMixer = createPodcastMixer({
+      onState: (st) => {
+        podcastMixerStatus = st.status;
+        if (statusEl) {
+          const labels = {
+            idle: 'Select a voice track to enable preview.',
+            decoding: 'Decoding audio…',
+            ready: 'Ready. Press Preview mix to listen.',
+            playing: 'Playing…',
+            paused: 'Paused.',
+            rendering: 'Rendering mixed file…',
+            error: st.error || 'Audio error.'
+          };
+          statusEl.textContent = labels[st.status] || st.status;
+        }
+        const hasVoice = !!st.voiceBuffer;
+        if (playBtn) playBtn.disabled = !hasVoice;
+        if (stopBtn) stopBtn.disabled = !hasVoice;
+        if (clearBtn) clearBtn.disabled = !st.bgBuffer;
+      },
+      onProgress: (pos, dur) => {
+        if (progressEl && dur > 0) {
+          progressEl.style.width = Math.min(100, (pos / dur) * 100) + '%';
+        }
+      }
+    });
+  }
+  const mixer = podcastMixer;
+
+  if (voiceInput.dataset.mixerBound !== 'true') {
+    voiceInput.dataset.mixerBound = 'true';
+    voiceInput.addEventListener('change', async () => {
+      const f = voiceInput.files?.[0] || null;
+      if (f) await mixer.loadVoice(f);
+      else { mixer.stop(); }
+    });
+  }
+
+  if (bgInput.dataset.mixerBound !== 'true') {
+    bgInput.dataset.mixerBound = 'true';
+    bgInput.addEventListener('change', async () => {
+      const f = bgInput.files?.[0] || null;
+      if (f) await mixer.loadBackground(f);
+      else mixer.clearBackground();
+    });
+  }
+
+  if (clearBtn && clearBtn.dataset.mixerBound !== 'true') {
+    clearBtn.dataset.mixerBound = 'true';
+    clearBtn.addEventListener('click', () => {
+      bgInput.value = '';
+      mixer.clearBackground();
+    });
+  }
+
+  if (volSlider && volSlider.dataset.mixerBound !== 'true') {
+    volSlider.dataset.mixerBound = 'true';
+    volSlider.addEventListener('input', () => {
+      const v = Number(volSlider.value) / 100;
+      mixer.setVolume(v);
+      if (volReadout) volReadout.textContent = volSlider.value + '%';
+    });
+    mixer.setVolume(Number(volSlider.value) / 100);
+  }
+
+  if (playBtn && playBtn.dataset.mixerBound !== 'true') {
+    playBtn.dataset.mixerBound = 'true';
+    playBtn.addEventListener('click', () => {
+      if (mixer.state.status === 'playing') mixer.pause();
+      else mixer.play();
+      // update icon
+      const icon = playBtn.querySelector('i');
+      if (icon) icon.className = mixer.state.status === 'playing' ? 'fa-solid fa-pause' : 'fa-solid fa-play';
+      playBtn.innerHTML = (mixer.state.status === 'playing'
+        ? '<i class="fa-solid fa-pause" aria-hidden="true"></i> Pause'
+        : '<i class="fa-solid fa-play" aria-hidden="true"></i> Preview mix');
+    });
+  }
+
+  if (stopBtn && stopBtn.dataset.mixerBound !== 'true') {
+    stopBtn.dataset.mixerBound = 'true';
+    stopBtn.addEventListener('click', () => {
+      mixer.stop();
+      if (playBtn) playBtn.innerHTML = '<i class="fa-solid fa-play" aria-hidden="true"></i> Preview mix';
+    });
+  }
+}
+
+async function getMixedPodcastFile(mixer) {
+  // Returns a File ready for upload, or null if no mixing needed.
+  if (!mixer || !mixer.hasVoice() || !mixer.hasBackground()) return null;
+  try {
+    const blob = await mixer.renderMixed();
+    const name = (mixer.state.voiceFile?.name || 'episode.mp3').replace(/\.[^.]+$/, '') + '-mixed.wav';
+    return new File([blob], name, { type: 'audio/wav' });
+  } catch (e) {
+    return null;
+  }
+}
 async function submitPodcastFromWriterForm(form) {
   const title = byId('podcast-sub-title')?.value.trim() || '';
   if (!title) {
@@ -5109,10 +5271,19 @@ async function submitPodcastFromWriterForm(form) {
     return;
   }
 
+  // If a background track was selected, render the voice + looped music into a
+  // single mixed file first, so the upload carries the blend at the chosen
+  // volume. Falls back to the raw voice track if mixing fails or no bg chosen.
+  let uploadFile = file;
+  if (file && podcastMixer && podcastMixer.hasBackground()) {
+    const mixed = await getMixedPodcastFile(podcastMixer);
+    if (mixed) uploadFile = mixed;
+  }
+
   const result = await submitPodcast({
     title,
     description: byId('podcast-sub-description')?.value.trim() || '',
-    file,
+    file: uploadFile,
     audioUrl,
     // `podcast-sub-host` was rendered by this form from the beginning and never
     // read. `podcasts.author_name` IS the public byline, so this is where a
@@ -5462,6 +5633,7 @@ import {
   validateAudioFile,
   MAX_DESCRIPTION
 } from '../lib/podcasts.js';
+import { createPodcastMixer, DEFAULT_BG_VOLUME } from '../lib/podcast-mixer.js';
 
 /**
  * Every tab the Newsroom Panel offers, with the role that can see it.
@@ -5599,6 +5771,11 @@ function paintActiveTab() {
   // Roster bands (About Us / Credits) carry their colours in data attributes;
   // apply them through the CSSOM now that the markup exists.
   applyBandColours(body);
+  // Background-music mixer (Podcasts tab, Writer view).
+  if (activeTab === 'podcasts') {
+    // defer to next tick so the DOM is settled
+    setTimeout(wirePodcastMixer, 0);
+  }
   body.classList.remove('animate-rise');
   void body.offsetWidth; // restart the entrance animation
   body.classList.add('animate-rise');
