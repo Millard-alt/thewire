@@ -4587,6 +4587,7 @@ function inlineMarkdown(text) {
 let podcastQueue = null;
 let podcastMixer = null;
 let podcastMixerStatus = 'idle';
+let podcastMixerOwner = null;
 
 /**
  * THE WRITER VIEW OF THE PODCASTS TAB: submit, and see your own queue.
@@ -5077,6 +5078,41 @@ function podcastUploadDialog() {
             </p>
           </div>
 
+        <div class="podcast-mixer" id="podcast-up-mixer">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label class="field-label" for="podcast-up-bg-file">Background music (optional)</label>
+              <input id="podcast-up-bg-file" class="field" type="file" accept=".mp3,.wav,.m4a,audio/*" />
+              <button type="button" id="podcast-up-bg-clear" class="btn btn-ghost mt-2 text-xs" disabled>
+                <i class="fa-solid fa-xmark" aria-hidden="true"></i> Remove background track
+              </button>
+            </div>
+            <div>
+              <label class="field-label" for="podcast-up-bg-volume">Background volume</label>
+              <div class="flex items-center gap-3">
+                <input id="podcast-up-bg-volume" type="range" min="0" max="100" value="20" class="flex-1" />
+                <span id="podcast-up-bg-volume-readout" class="ink-muted text-xs tabular-nums w-10 text-right">20%</span>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3 mt-3">
+            <button type="button" id="podcast-up-preview-play" class="btn btn-ghost" disabled>
+              <i class="fa-solid fa-play" aria-hidden="true"></i> Preview mix
+            </button>
+            <button type="button" id="podcast-up-preview-stop" class="btn btn-ghost" disabled>
+              <i class="fa-solid fa-stop" aria-hidden="true"></i> Stop
+            </button>
+            <span id="podcast-up-preview-status" class="ink-muted text-xs">Select a voice track to enable preview.</span>
+          </div>
+          <div class="mt-2">
+            <div class="h-1.5 w-full rounded-full bg-ink/10 overflow-hidden">
+              <div id="podcast-up-preview-progress" class="h-full bg-accent" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="field-label" for="podcast-up-cover">Cover image URL</label>
           <div>
             <label class="field-label" for="podcast-up-cover">Cover image URL</label>
             <input id="podcast-up-cover" class="field" type="url"
@@ -5390,6 +5426,113 @@ async function submitMediaFromWriterForm(form) {
   paintActiveTab();
 }
 
+function wirePodcastMixerOwner() {
+  const voiceInput = byId('podcast-up-file');
+  const bgInput = byId('podcast-up-bg-file');
+  const clearBtn = byId('podcast-up-bg-clear');
+  const volSlider = byId('podcast-up-bg-volume');
+  const volReadout = byId('podcast-up-bg-volume-readout');
+  const playBtn = byId('podcast-up-preview-play');
+  const stopBtn = byId('podcast-up-preview-stop');
+  const statusEl = byId('podcast-up-preview-status');
+  const progressEl = byId('podcast-up-preview-progress');
+  if (!voiceInput || !bgInput) return;
+
+  if (!podcastMixerOwner) {
+    podcastMixerOwner = createPodcastMixer({
+      onState: (st) => {
+        if (statusEl) {
+          const labels = {
+            idle: 'Select a voice track to enable preview.',
+            decoding: 'Decoding audio…',
+            ready: 'Ready. Press Preview mix to listen.',
+            playing: 'Playing…',
+            paused: 'Paused.',
+            rendering: 'Rendering mixed file…',
+            error: st.error || 'Audio error.'
+          };
+          statusEl.textContent = labels[st.status] || st.status;
+        }
+        const hasVoice = !!st.voiceBuffer;
+        if (playBtn) playBtn.disabled = !hasVoice;
+        if (stopBtn) stopBtn.disabled = !hasVoice;
+        if (clearBtn) clearBtn.disabled = !st.bgBuffer;
+      },
+      onProgress: (pos, dur) => {
+        if (progressEl && dur > 0) {
+          progressEl.style.width = Math.min(100, (pos / dur) * 100) + '%';
+        }
+      }
+    });
+  }
+  const mixer = podcastMixerOwner;
+
+  if (voiceInput.dataset.mixerBound !== 'true') {
+    voiceInput.dataset.mixerBound = 'true';
+    voiceInput.addEventListener('change', async () => {
+      const f = voiceInput.files?.[0] || null;
+      if (f) await mixer.loadVoice(f);
+      else { mixer.stop(); }
+    });
+  }
+
+  if (bgInput.dataset.mixerBound !== 'true') {
+    bgInput.dataset.mixerBound = 'true';
+    bgInput.addEventListener('change', async () => {
+      const f = bgInput.files?.[0] || null;
+      if (f) await mixer.loadBackground(f);
+      else mixer.clearBackground();
+    });
+  }
+
+  if (clearBtn && clearBtn.dataset.mixerBound !== 'true') {
+    clearBtn.dataset.mixerBound = 'true';
+    clearBtn.addEventListener('click', () => {
+      bgInput.value = '';
+      mixer.clearBackground();
+    });
+  }
+
+  if (volSlider && volSlider.dataset.mixerBound !== 'true') {
+    volSlider.dataset.mixerBound = 'true';
+    volSlider.addEventListener('input', () => {
+      const v = Number(volSlider.value) / 100;
+      mixer.setVolume(v);
+      if (volReadout) volReadout.textContent = volSlider.value + '%';
+    });
+    mixer.setVolume(Number(volSlider.value) / 100);
+  }
+
+  if (playBtn && playBtn.dataset.mixerBound !== 'true') {
+    playBtn.dataset.mixerBound = 'true';
+    playBtn.addEventListener('click', () => {
+      if (mixer.state.status === 'playing') mixer.pause();
+      else mixer.play();
+      playBtn.innerHTML = (mixer.state.status === 'playing'
+        ? '<i class="fa-solid fa-pause" aria-hidden="true"></i> Pause'
+        : '<i class="fa-solid fa-play" aria-hidden="true"></i> Preview mix');
+    });
+  }
+
+  if (stopBtn && stopBtn.dataset.mixerBound !== 'true') {
+    stopBtn.dataset.mixerBound = 'true';
+    stopBtn.addEventListener('click', () => {
+      mixer.stop();
+      if (playBtn) playBtn.innerHTML = '<i class="fa-solid fa-play" aria-hidden="true"></i> Preview mix';
+    });
+  }
+}
+
+async function getMixedPodcastFileOwner() {
+  if (!podcastMixerOwner || !podcastMixerOwner.hasVoice() || !podcastMixerOwner.hasBackground()) return null;
+  try {
+    const blob = await podcastMixerOwner.renderMixed();
+    const name = (podcastMixerOwner.state.voiceFile?.name || 'episode.mp3').replace(/\.[^.]+$/, '') + '-mixed.wav';
+    return new File([blob], name, { type: 'audio/wav' });
+  } catch (e) {
+    return null;
+  }
+}
 async function savePodcastUploadFromForm() {
   const title = byId('podcast-up-title')?.value.trim() || '';
   const description = byId('podcast-up-description')?.value.trim() || '';
@@ -5404,13 +5547,19 @@ async function savePodcastUploadFromForm() {
     return;
   }
 
+  let uploadFile = file;
+  if (podcastMixerOwner && podcastMixerOwner.hasBackground()) {
+    const mixed = await getMixedPodcastFileOwner();
+    if (mixed) uploadFile = mixed;
+  }
+
   const busy = showToast('Uploading the episode…', { type: 'info', duration: 0 });
   try {
-    const durationSeconds = await readAudioDuration(file);
+    const durationSeconds = await readAudioDuration(uploadFile);
     const result = await publishPodcast({
       title,
       description,
-      file,
+      file: uploadFile,
       durationSeconds,
       authorName: byId('podcast-up-host')?.value.trim() || '',
       coverUrl: byId('podcast-up-cover')?.value.trim() || ''
@@ -5775,6 +5924,7 @@ function paintActiveTab() {
   if (activeTab === 'podcasts') {
     // defer to next tick so the DOM is settled
     setTimeout(wirePodcastMixer, 0);
+    setTimeout(wirePodcastMixerOwner, 0);
   }
   body.classList.remove('animate-rise');
   void body.offsetWidth; // restart the entrance animation
