@@ -4703,8 +4703,6 @@ function podcastSubmitPanel() {
 
         <div>
           <label class="field-label" for="podcast-sub-cover">Cover image URL</label>
-        <div>
-          <label class="field-label" for="podcast-sub-cover">Cover image URL</label>
           <input id="podcast-sub-cover" class="field" type="url"
             placeholder="https://example.com/cover.jpg" />
           <p class="mt-1 text-[0.6875rem] ink-muted">
@@ -5113,8 +5111,6 @@ function podcastUploadDialog() {
 
         <div>
           <label class="field-label" for="podcast-up-cover">Cover image URL</label>
-          <div>
-            <label class="field-label" for="podcast-up-cover">Cover image URL</label>
             <input id="podcast-up-cover" class="field" type="url"
               placeholder="https://example.com/cover.jpg" />
             <p class="mt-1 text-[0.6875rem] ink-muted">

@@ -131,7 +131,10 @@ export function createPodcastMixer({ onState, onProgress } = {}) {
     if (onState) onState({ ...state });
   }
 
+  let hardStopTimer = null;
+
   function stopSources() {
+    if (hardStopTimer) { clearTimeout(hardStopTimer); hardStopTimer = null; }
     try { voiceSource?.stop(); } catch {}
     try { bgSource?.stop(); } catch {}
     voiceSource = null;
@@ -163,7 +166,8 @@ export function createPodcastMixer({ onState, onProgress } = {}) {
     if (state.bgBuffer) {
       bgSource = c.createBufferSource();
       bgSource.buffer = state.bgBuffer;
-      bgSource.loop = true;
+      // Only loop when the bed is shorter than the voice track, per spec.
+      bgSource.loop = state.bgBuffer.duration < state.voiceBuffer.duration;
       bgGain = c.createGain();
       bgGain.gain.value = state.volume;
       bgSource.connect(bgGain).connect(c.destination);
@@ -184,6 +188,10 @@ export function createPodcastMixer({ onState, onProgress } = {}) {
     playing = true;
     emit('playing');
     raf = requestAnimationFrame(tick);
+    // Hard stop backup in case onended does not fire in some browsers.
+    hardStopTimer = setTimeout(() => {
+      if (playing) stop();
+    }, Math.ceil(state.duration * 1000) + 250);
   }
 
   function pause() {
